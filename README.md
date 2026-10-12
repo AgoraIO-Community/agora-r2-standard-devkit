@@ -357,20 +357,26 @@ left eye, a round right eye, and a smile. These are the default faces; hangup re
 Wi-Fi setup alone does not bypass authentication or pairing: the
 idle face appears only when the SDK actually reaches `READY`.
 
-Normal idle and conversation screens retain the simulator's four terminal rows:
+Normal idle and conversation screens retain four terminal rows. In READY:
 
 ```text
 > OIM / R2
 > mood: neutral
-> state: online
+> state: ready
 > agora / realtime
 ```
 
-The mood follows the selected expression in lowercase; state is `standby` for `SLEEP` and
-`online` for the other faces. The `</>` signature and last-row cursor remain. These are visual
-decorations, not connectivity or SDK state reports. Voiceprint and
-`listening`/`thinking`/`speaking` indicators remain SDK events but do not alter the face or show
-status overlays. Chinese and English startup, provisioning, web-console pairing, error, and
+The mood follows the selected expression in lowercase, independently of the actual SDK state.
+The third row reports that state; during a conversation it shows, for example,
+`> state: listening | vp:pending`, with `thinking` or `speaking` as reported by the SDK.
+If multiple phase indicators are active, priority is `speaking` > `thinking` > `listening`.
+When no phase is active, it falls back to `in_conversation`. `vp:ok` means the current session
+has received a successful voiceprint notification; `vp:pending` means it has not yet been confirmed.
+These session fields appear only when the runtime state and display page are both
+`IN_CONVERSATION`; selecting the SLEEP artwork does not replace the actual state with `standby`.
+The `</>` signature and last-row cursor remain. Voiceprint and phase updates change only text,
+preserving the selected face and its transition; no separate status overlay is shown.
+Chinese and English startup, provisioning, web-console pairing, error, and
 factory-reset instructions remain available. GPU and touch stay disabled, and the display does
 not show a camera preview or control gimbal movement.
 
@@ -397,6 +403,13 @@ With animations enabled, face
 changes use a short transition, animated expressions retain their motion, and the cursor blinks every 500 ms. Indicator-only updates do
 not restart the transition.
 
+The application publishes the current SDK state from its existing 100 ms observation loop through
+the native `bk7259_lcd.h` copied snapshot interface; existing SDK LCD callbacks supply phase and
+voiceprint indicators. Provisioning guidance stays visible while the SDK is `STOPPED`. Synchronous
+SDK stop uses the existing STOPPING guidance page, then publishes the observed stopped state after
+stop completes. Factory-reset guidance retains priority over all status updates; its third row is
+`> state: factory_reset`, a product-flow label that removes session phase/VP fields rather than
+adding an SDK state.
 SDK render calls copy their content into one latest-state mailbox and wake the `mybot_ui` task.
 That task alone updates the live view, advances LVGL timers, and flushes pixels. Intermediate
 pending states may coalesce into the newest state. SDK LCD init/destroy only attach to and detach

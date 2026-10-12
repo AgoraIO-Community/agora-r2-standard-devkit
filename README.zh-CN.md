@@ -316,19 +316,23 @@ LVGL 9.5.0 渲染器采用用户提供模拟器的 `process`（工艺灰）皮�
 `#f1ca79` 暖金镜框、左弧眼、右圆点眼和微笑。这是默认映射，挂断后回到中性待机。
 Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到 `READY` 才显示待机表情。
 
-正常待机和会话界面恢复模拟器的四行终端文字：
+正常待机和会话界面保留四行终端文字，READY 状态下为：
 
 ```text
 > OIM / R2
 > mood: neutral
-> state: online
+> state: ready
 > agora / realtime
 ```
 
-`mood` 随当前表情显示小写名称；`state` 在 `SLEEP` 时显示 `standby`，其余表情为 `online`。
-`</>` 签名和最后一行的光标保留。这些文字是视觉装饰，不代表连接状态或 SDK 状态。
-声纹和服务端 `listening`、`thinking`、`speaking` 事件继续由 SDK 处理，
-不再改变表情或弹出状态提示。启动、配网、网页控制台配对、错误和恢复出厂仍保留必要的
+`mood` 随当前表情显示小写名称，与真实 SDK 状态独立。第三行显示实际状态；会话中例如
+`> state: listening | vp:pending`，阶段随 SDK 更新为 `listening`、`thinking` 或 `speaking`；
+多个阶段 indicator 同时有效时按 `speaking` > `thinking` > `listening` 显示；
+没有有效阶段时显示 `in_conversation`。`vp:ok` 表示本次会话已收到声纹成功通知，
+`vp:pending` 表示尚未确认。仅真实状态和页面均为 `IN_CONVERSATION` 时显示会话阶段和声纹，
+选择 SLEEP 图案不会将真实状态改为 `standby`。`</>` 签名和最后一行的光标保留。
+声纹与阶段更新只改文字，保留当前表情与覆盖，不重播过渡，不弹独立状态提示。
+启动、配网、网页控制台配对、错误和恢复出厂仍保留必要的
 中英文引导。GPU 与触摸关闭，不显示摄像头预览，也不控制云台动作。
 
 模拟器全部 23 个表情通过独立模块
@@ -349,6 +353,11 @@ MCP/RTM 命令映射或 UART 动作。完整列表和调用示例见
 开启动画时，表情切换使用短过渡并保留表情动态效果，光标每 500 ms
 闪烁；仅 indicator 更新不会重播过渡。
 
+应用通过现有 100 ms 状态观测循环，经原生 `bk7259_lcd.h` 接口发布复制后的 SDK 状态快照；
+会话阶段和声纹 indicator 仍由现有 SDK LCD 回调提供。SDK 为 `STOPPED` 时配网引导继续可见，
+同步停止期间沿用 STOPPING 引导页，停止完成后立即发布观测到的 stopped 状态；
+恢复出厂提示始终优先于状态更新；恢复页第三行固定为 `> state: factory_reset`，移除会话阶段和
+VP 字段。这是产品流程文字，不是新增 SDK 状态。
 SDK 的 render 调用将内容复制到一个保存最新状态的 mailbox，并唤醒 `mybot_ui` 任务。
 只有该任务更新运行中的视图、执行 LVGL timer 和刷屏；来不及处理的中间状态可以合并为
 最新状态。SDK 的 LCD init/destroy 只做产品自有显示的挂接与解挂，所以 SDK 停止后，UI
