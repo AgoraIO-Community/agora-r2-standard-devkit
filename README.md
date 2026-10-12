@@ -101,7 +101,7 @@ Conversation hangup now stops local video/RTC, clears session PCM, and publishes
 sending one HTTPS stop notification. Notification failure is logged without retry; the notification
 still runs synchronously on the control worker, so subsequent controls can wait for HTTP completion.
 It includes the RTM server-state LCD
-indicators and the optional video uplink contract. Video is disabled by default in the BK7259 AP build.
+indicators and the optional video uplink contract. Video is enabled by default in the BK7259 AP build.
 `SDK_REVISION` records the selected commit, target patch, and deterministic `include/` and `src/` digest. AOSL is based on commit
 `84e086084ebcd0ae2455a0ce5721950c5fe2e656` with its five documented BK7259 HAL fixes. The build has
 no `MYBOT_SDK_DIR` or external AOSL source-path input.
@@ -162,8 +162,8 @@ make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
 ```
 
 `scripts/build_all.py` supports separate Chinese and English AP/CP builds with
-`releases/bk7259-zh-CN.bin` and `releases/bk7259-en-US.bin` filenames by default.
-When `CONFIG_MYBOT_VIDEO=y` is set, the filenames include the `-video` suffix.
+`releases/bk7259-zh-CN-video.bin` and `releases/bk7259-en-US-video.bin` filenames by default.
+When `CONFIG_MYBOT_VIDEO` is disabled, the filenames omit the `-video` suffix.
 Its Chinese endpoint check still expects `https://mybot.sh2.agoralab.co/api`, while
 the current R2 platform uses `https://botstation.shengwang.cn/api`. Until that check
 is updated, build Chinese firmware with the original-project `make` command above
@@ -239,7 +239,8 @@ The `MyBot BK7259 platform` Kconfig menu provides:
 - `CONFIG_MYBOT_LANGUAGE_EN_US`: English service region, LCD text, and prompt assets.
 - `CONFIG_MYBOT_LVGL_UI_ANIMATIONS`: pixel-face transitions, expression motion, and the 500 ms terminal cursor,
   enabled by default. The UI uses the fixed process-gray appearance.
-- `CONFIG_MYBOT_VIDEO`: encoded H.264 video uplink; disabled by default. Set it to `y` to enable video.
+- `CONFIG_MYBOT_VIDEO`: encoded H.264 video uplink; enabled by default. Use
+  `# CONFIG_MYBOT_VIDEO is not set` to disable video, then run a clean rebuild.
 - `CONFIG_MYBOT_VIDEO_WIDTH` / `CONFIG_MYBOT_VIDEO_HEIGHT`: `640x480` encoded output.
 - `CONFIG_MYBOT_VIDEO_SENSOR_WIDTH` / `CONFIG_MYBOT_VIDEO_SENSOR_HEIGHT` /
   `CONFIG_MYBOT_VIDEO_SENSOR_FPS`: `1280x720` sensor input at `5` fps.
@@ -452,8 +453,9 @@ default. Audio and AEC have passed user device testing.
 
 ## Video uplink
 
-Video is disabled by default. To enable it, set `CONFIG_MYBOT_VIDEO=y` in the AP defconfig and
-run a clean rebuild. With video enabled, the `1280x720` MIPI CSI sensor runs at `5` fps, the ISP MP
+Video is enabled by default (`CONFIG_MYBOT_VIDEO=y`). To disable it, use
+`# CONFIG_MYBOT_VIDEO is not set` in the AP defconfig and run a clean rebuild.
+With video enabled, the `1280x720` MIPI CSI sensor runs at `5` fps, the ISP MP
 path produces `640x480` NV12 frames, and the hardware FLEXA H.264 encoder sends
 complete access units through the high-quality Agora RTSA stream. The device does not receive or
 render remote video; its audio path remains full duplex.

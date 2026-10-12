@@ -80,7 +80,7 @@ BK7259 固件采用 AP/CP 双核架构：
 `cfd178a02fa94775cf01dc77e344f4ce5930225c`（`main`，SDK 版本仍为 1.2.0）的完整源码快照
 为基线，新增控制事件非阻塞投递、重新配对时清理开聊请求、提示音代次跟踪及 HTTP/JSON
 边界修复。同时包含视频控制串行化、提示音延后销毁、统一的 RTM 到 LCD 状态处理，以及 RTM
-`listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建默认关闭
+`listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建默认开启
 视频。该上游快照已经包含 `RTC_LOG_ERROR` 和恢复 AOSL 日志门限的修复；`SDK_REVISION` 另记录
 打印 HTTPS 请求与响应 body 的 BK7259 目标 patch。
 挂断会先停止本地视频与 RTC、清理会话 PCM 并恢复 READY，再发送一次 HTTPS 停止通知。
@@ -145,7 +145,7 @@ make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
 `scripts/build_all.py` 在独立工程副本中编译 AP/CP，保留原工程配置和构建目录，
 支持 `--language`、`--dry-run`、`--no-clean`、`--build-root` 和 `--output-root`。
 英文版可用 `python3 scripts/build_all.py --language en-US`，默认产物为
-`releases/bk7259-en-US.bin`；启用 `CONFIG_MYBOT_VIDEO=y` 后文件名增加 `-video` 后缀。
+`releases/bk7259-en-US-video.bin`；关闭 `CONFIG_MYBOT_VIDEO` 后文件名不包含 `-video` 后缀。
 脚本的中文 ELF 地址校验仍使用旧的
 `mybot.sh2.agoralab.co`，尚未跟随当前生产地址更新；中文版请使用上面的原工程 `make`
 命令。中文校验同步前，默认一次构建两种语言的脚本不会发布所选固件。
@@ -214,7 +214,8 @@ GPIO 分配以及显示、音频和摄像头外设连接属于板级配置。移
 - `CONFIG_MYBOT_LANGUAGE_EN_US`：英文服务区域、LCD 文案与提示音资源。
 - `CONFIG_MYBOT_LVGL_UI_ANIMATIONS`：像素表情切换过渡、表情动态效果与 500 ms 光标闪烁，默认启用；
   UI 固定采用工艺灰风格。
-- `CONFIG_MYBOT_VIDEO`：编码视频上行，默认关闭；设为 `y` 即可启用。
+- `CONFIG_MYBOT_VIDEO`：编码视频上行，默认开启；改为
+  `# CONFIG_MYBOT_VIDEO is not set` 并 clean 后重新编译即可关闭。
 - `CONFIG_MYBOT_VIDEO_WIDTH` / `CONFIG_MYBOT_VIDEO_HEIGHT`：ISP 编码输出，参考值为
   `640x480`。
 - `CONFIG_MYBOT_VIDEO_SENSOR_WIDTH` / `CONFIG_MYBOT_VIDEO_SENSOR_HEIGHT` /
@@ -392,7 +393,8 @@ ADC 的 `aec_en=0`，避免追加数字 DAC 参考通道。
 
 ## 视频上行
 
-视频默认关闭。在 AP defconfig 中设置 `CONFIG_MYBOT_VIDEO=y` 并 clean 后重新编译即可启用。
+视频默认开启（`CONFIG_MYBOT_VIDEO=y`）。在 AP defconfig 中改为
+`# CONFIG_MYBOT_VIDEO is not set` 并 clean 后重新编译即可关闭。
 启用后的 H.264 链路仅上行：`1280x720` MIPI CSI sensor 以 `5` fps 运行，ISP MP
 生成 `640x480` NV12 帧，硬件 FLEXA H.264 编码器通过 Agora RTSA 主视频流发送完整 access
 unit。设备不接收或渲染远端视频，音频链路仍为全双工。
