@@ -19,10 +19,18 @@ COMPONENTS = ROOT / "bk_solution_ai/components"
 SDK = ROOT / "bk_avdk_smp"
 LANGUAGES = ("zh-CN", "en-US")
 MARKER = "mybot-bk7259-build-all-v1\n"
-ENDPOINTS = {
-    "zh-CN": b"https://mybot.sh2.agoralab.co/api",
-    "en-US": b"https://mybot.sg3.agoralab.co/api",
+SERVICE_HOSTS = {
+    "zh-CN": "botstation.shengwang.cn",
+    "en-US": "mybot.sg3.agoralab.co",
 }
+
+
+def endpoint(language, https):
+    return f"{'https' if https else 'http'}://{SERVICE_HOSTS[language]}/api".encode("ascii")
+
+
+def firmware_name(language, video, https):
+    return f"bk7259-{language}{'-video' if video else ''}{'' if https else '-http'}"
 
 
 def elapsed(seconds):
@@ -54,7 +62,12 @@ def source_config():
     video = re.findall(r"(?m)^CONFIG_MYBOT_VIDEO=y$", "".join(lines))
     if len(video) > 1:
         raise RuntimeError(f"duplicate video configuration in {path}")
-    return lines, found, options, bool(video)
+    https = [line.rstrip("\r\n") for line in lines
+             if line.rstrip("\r\n") in
+             ("CONFIG_MYBOT_HTTPS=y", "# CONFIG_MYBOT_HTTPS is not set")]
+    if len(https) != 1:
+        raise RuntimeError(f"expected one HTTPS setting in {path}")
+    return lines, found, options, bool(video), https[0] == "CONFIG_MYBOT_HTTPS=y"
 
 
 def select_python():
@@ -123,7 +136,7 @@ def prepare_variant(path, config, clean):
     return copy
 
 
-def check_firmware(project, language, video):
+def check_firmware(project, language, video, https):
     built = project / "build/bk7259/mybot"
     image = built / "package/all-app.bin"
     ap_config = built / "bk7259_ap/config/sdkconfig.h"
@@ -137,10 +150,14 @@ def check_firmware(project, language, video):
     other = "EN_US" if language == "zh-CN" else "ZH_CN"
     if f"#define CONFIG_MYBOT_LANGUAGE_{selected} 1" not in config or \
             f"#define CONFIG_MYBOT_LANGUAGE_{other} 1" in config or \
-            ("#define CONFIG_MYBOT_VIDEO 1" in config) != video:
+            ("#define CONFIG_MYBOT_VIDEO 1" in config) != video or \
+            ("#define CONFIG_MYBOT_HTTPS 1" in config) != https:
         raise RuntimeError(f"generated AP configuration does not match {language}")
     elf = ap_elf.read_bytes()
-    if ENDPOINTS[language] not in elf or ENDPOINTS["en-US" if language == "zh-CN" else "zh-CN"] in elf:
+    if endpoint(language, https) not in elf or any(
+            endpoint(choice, mode) in elf
+            for choice in LANGUAGES for mode in (False, True)
+            if (choice, mode) != (language, https)):
         raise RuntimeError(f"AP firmware has the wrong device-service endpoint for {language}")
     return image
 
@@ -190,7 +207,7 @@ def main():
     args = parse_args()
     if not (SDK / "tools/build_tools/build_files/project_main.mk").is_file():
         raise RuntimeError(f"BK7259 SDK is unavailable at {SDK}")
-    lines, found, options, video = source_config()
+    lines, found, options, video, https = source_config()
     python = select_python() if not args.dry_run else None
     build_root = args.build_root.expanduser().resolve()
     output_root = args.output_root.expanduser().resolve()
@@ -210,7 +227,7 @@ def main():
     outputs = []
     started = time.perf_counter()
     for language in languages:
-        name = f"bk7259-{language}{'-video' if video else ''}"
+        name = firmware_name(language, video, https)
         variant = build_root / f"build-{name}"
         if output_root == variant or output_root.is_relative_to(variant):
             raise RuntimeError("output directory cannot be inside a variant build")
@@ -221,7 +238,7 @@ def main():
                if not args.dry_run else nullcontext())
     with staging as staged:
         for language in languages:
-            name = f"bk7259-{language}{'-video' if video else ''}"
+            name = firmware_name(language, video, https)
             variant = build_root / f"build-{name}"
             image_name = f"{name}.bin"
             command = ["make", "-C", str(variant / "solution/projects/mybot"),
@@ -233,7 +250,7 @@ def main():
                 project = prepare_variant(
                     variant, variant_config(lines, found, options, language), not args.no_clean)
                 subprocess.run(command, env=env, check=True)
-                image = check_firmware(project, language, video)
+                image = check_firmware(project, language, video, https)
                 shutil.copyfile(image, Path(staged) / image_name)
                 print(f"[OK] {name} ({elapsed(time.perf_counter() - variant_started)})", flush=True)
             outputs.append(output_root / image_name)

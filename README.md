@@ -98,7 +98,7 @@ unified RTM-to-LCD indicators, and the
 `RTC_LOG_ERROR` and AOSL log-gate preservation; the remaining BK7259 target patch records debug
 HTTPS request and response body logging in `SDK_REVISION`.
 Conversation hangup now stops local video/RTC, clears session PCM, and publishes READY before
-sending one HTTPS stop notification. Notification failure is logged without retry; the notification
+sending one HTTP(S) stop notification. Notification failure is logged without retry; the notification
 still runs synchronously on the control worker, so subsequent controls can wait for HTTP completion.
 It includes the RTM server-state LCD
 indicators and the optional video uplink contract. Video is enabled by default in the BK7259 AP build.
@@ -164,10 +164,11 @@ make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
 `scripts/build_all.py` supports separate Chinese and English AP/CP builds with
 `releases/bk7259-zh-CN-video.bin` and `releases/bk7259-en-US-video.bin` filenames by default.
 When `CONFIG_MYBOT_VIDEO` is disabled, the filenames omit the `-video` suffix.
-Its Chinese endpoint check still expects `https://mybot.sh2.agoralab.co/api`, while
-the current R2 platform uses `https://botstation.shengwang.cn/api`. Until that check
-is updated, build Chinese firmware with the original-project `make` command above
-and English firmware with `python3 scripts/build_all.py --language en-US`.
+The script uses the selected device-service protocol for both languages and checks the generated
+configuration and ELF endpoint. HTTP builds add `-http` to the image name, for example
+`releases/bk7259-zh-CN-video-http.bin`; with video disabled, the name is `bk7259-zh-CN-http.bin`.
+Build both languages with `python3 scripts/build_all.py`, or select one with
+`python3 scripts/build_all.py --language zh-CN` / `--language en-US`.
 `--dry-run`, `--no-clean`, `--build-root`, and `--output-root` are also supported.
 The script keeps the original project configuration and build directory intact;
 images are published only after all requested variants succeed.
@@ -237,6 +238,9 @@ The `MyBot BK7259 platform` Kconfig menu provides:
 
 - `CONFIG_MYBOT_LANGUAGE_ZH_CN`: Chinese service region, LCD text, and prompt assets.
 - `CONFIG_MYBOT_LANGUAGE_EN_US`: English service region, LCD text, and prompt assets.
+- `CONFIG_MYBOT_HTTPS`: device-service REST transport; enabled by default for HTTPS. Use
+  `# CONFIG_MYBOT_HTTPS is not set` in the AP defconfig to select HTTP, then clean and rebuild
+  with the commands above. Restore `CONFIG_MYBOT_HTTPS=y` and clean rebuild to select HTTPS again.
 - `CONFIG_MYBOT_LVGL_UI_ANIMATIONS`: pixel-face transitions, expression motion, and the 500 ms terminal cursor,
   enabled by default. The UI uses the fixed process-gray appearance.
 - `CONFIG_MYBOT_VIDEO`: encoded H.264 video uplink; enabled by default. Use
@@ -250,8 +254,12 @@ The `MyBot BK7259 platform` Kconfig menu provides:
   and electrical active level.
 
 The language option selects the LCD text, service region, and prompt asset directory: Chinese
-(`https://botstation.shengwang.cn/api`) or English (`https://mybot.sg3.agoralab.co/api`). Exactly one
-of the two language options must be enabled.
+(`https://botstation.shengwang.cn/api`) or English (`https://mybot.sg3.agoralab.co/api`) with
+the default HTTPS configuration. Exactly one of the two language options must be enabled.
+HTTP mode changes only the scheme to `http://`, retaining the hostname and `/api` path.
+The transport switch maps to the SDK's `MYBOT_ENABLE_HTTPS` and inverse
+`MYBOT_ALLOW_INSECURE_HTTP` compile definitions; it does not change RTC/RTM or the local
+HTTP provisioning portal.
 
 Everything else about the device identity is fixed by the port rather than configured:
 [ap_main.c](bk_solution_ai/projects/mybot/ap/ap_main.c) derives the device id at runtime from the

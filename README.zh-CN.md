@@ -83,7 +83,7 @@ BK7259 固件采用 AP/CP 双核架构：
 `listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建默认开启
 视频。该上游快照已经包含 `RTC_LOG_ERROR` 和恢复 AOSL 日志门限的修复；`SDK_REVISION` 另记录
 打印 HTTPS 请求与响应 body 的 BK7259 目标 patch。
-挂断会先停止本地视频与 RTC、清理会话 PCM 并恢复 READY，再发送一次 HTTPS 停止通知。
+挂断会先停止本地视频与 RTC、清理会话 PCM 并恢复 READY，再发送一次 HTTP(S) 停止通知。
 通知失败只记录日志、不重试；通知仍在控制线程同步执行，后续控制操作可能等待 HTTP 完成。
 `SDK_REVISION` 同时记录
 `include/`、`src/` 的确定性聚合摘要。AOSL 基线为 commit
@@ -144,11 +144,12 @@ make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
 
 `scripts/build_all.py` 在独立工程副本中编译 AP/CP，保留原工程配置和构建目录，
 支持 `--language`、`--dry-run`、`--no-clean`、`--build-root` 和 `--output-root`。
-英文版可用 `python3 scripts/build_all.py --language en-US`，默认产物为
+执行 `python3 scripts/build_all.py` 编译中英文两个版本，也可用 `--language zh-CN`
+或 `--language en-US` 单独选择。默认产物为 `releases/bk7259-zh-CN-video.bin` 和
 `releases/bk7259-en-US-video.bin`；关闭 `CONFIG_MYBOT_VIDEO` 后文件名不包含 `-video` 后缀。
-脚本的中文 ELF 地址校验仍使用旧的
-`mybot.sh2.agoralab.co`，尚未跟随当前生产地址更新；中文版请使用上面的原工程 `make`
-命令。中文校验同步前，默认一次构建两种语言的脚本不会发布所选固件。
+两种语言沿用所选的设备服务协议，脚本校验生成配置及 ELF 中的服务器地址。
+HTTP 固件增加 `-http` 后缀，例如 `releases/bk7259-zh-CN-video-http.bin`；关闭视频时为
+`bk7259-zh-CN-http.bin`。
 
 验证不同打包时长时可设置 `MYBOT_AUDIO_PTIME_MS` 为 `20`、`40` 或 `60`，默认 `60`。
 切换取值前必须先 clean，使该值在重新执行 CMake configure 时生效：
@@ -212,6 +213,9 @@ GPIO 分配以及显示、音频和摄像头外设连接属于板级配置。移
 
 - `CONFIG_MYBOT_LANGUAGE_ZH_CN`：中文服务区域、LCD 文案与提示音资源。
 - `CONFIG_MYBOT_LANGUAGE_EN_US`：英文服务区域、LCD 文案与提示音资源。
+- `CONFIG_MYBOT_HTTPS`：设备服务 REST 请求协议，默认开启 HTTPS。在 AP defconfig 中改为
+  `# CONFIG_MYBOT_HTTPS is not set`，按上面的命令 clean 后重新编译即可切换为 HTTP；
+  恢复 `CONFIG_MYBOT_HTTPS=y`，再次 clean 后重新编译即可切回 HTTPS。
 - `CONFIG_MYBOT_LVGL_UI_ANIMATIONS`：像素表情切换过渡、表情动态效果与 500 ms 光标闪烁，默认启用；
   UI 固定采用工艺灰风格。
 - `CONFIG_MYBOT_VIDEO`：编码视频上行，默认开启；改为
@@ -224,9 +228,12 @@ GPIO 分配以及显示、音频和摄像头外设连接属于板级配置。移
   `256000` 到 `512000` bit/s。
 - `CONFIG_MYBOT_KEY_GPIO`、`CONFIG_MYBOT_KEY_ACTIVE_LEVEL`：单个对话键的 GPIO 和有效电平。
 
-语言选项同时决定 LCD 文案、服务区域和提示音资源目录：中文
-（`https://botstation.shengwang.cn/api`）或英文（`https://mybot.sg3.agoralab.co/api`）。
+语言选项同时决定 LCD 文案、服务区域和提示音资源目录；默认 HTTPS 配置下，中文地址为
+`https://botstation.shengwang.cn/api`，英文地址为 `https://mybot.sg3.agoralab.co/api`。
 两个语言选项必须且只能启用一个。
+HTTP 模式仅将协议改为 `http://`，保留相同的域名与 `/api` 路径。协议开关同时映射为 SDK 的
+`MYBOT_ENABLE_HTTPS` 及取反的 `MYBOT_ALLOW_INSECURE_HTTP` 编译定义；不改变 RTC/RTM
+以及本地 HTTP 配网门户。
 
 设备身份不由配置决定：[ap_main.c](bk_solution_ai/projects/mybot/ap/ap_main.c) 在运行时
 读取由 CP 提供的芯片唯一 UID，使用 HMAC-SHA256 和 `mybot-bk7259-device-id-v1` 派生密钥，
