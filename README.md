@@ -91,9 +91,16 @@ remotes.
   `lib/arm/libagora-rtc-sdk.a`).
 
 The solution vendors the mybot SDK from upstream commit
-`cfd178a02fa94775cf01dc77e344f4ce5930225c` on `main` (SDK version 1.2.0). This snapshot adds
-nonblocking control-event delivery, re-pairing cancellation, prompt-generation tracking, and
-HTTP/JSON boundary fixes. It also includes serialized video control, deferred prompt teardown,
+`19a40777768b7384549b46949ef6bb6310923463` on `main` (PR #111; SDK version remains 1.2.0).
+This snapshot retains DeviceCommand v1 reception over RTM P2P and channel messages, volume set/adjust,
+speaker PCM mute, and happy/sad/angry/surprised scene commands. Execution checks the active sender,
+channel, conversation, and conversation generation. `issued_at` and `expires_at` may be omitted or
+provided but are ignored; there is no expiry or clock check. Each session deduplicates the most
+recent 16 distinct `command_id` values in FIFO order. Duplicates do not refresh their position;
+new IDs evict the oldest, so an evicted ID may execute again.
+The existing voiceprint and server-phase flow is retained, as are nonblocking control-event delivery,
+re-pairing cancellation, prompt-generation tracking, and HTTP/JSON boundary fixes.
+It also includes serialized video control, deferred prompt teardown,
 unified RTM-to-LCD indicators, and the
 `RTC_LOG_ERROR` and AOSL log-gate preservation; the remaining BK7259 target patch records debug
 HTTPS request and response body logging in `SDK_REVISION`.
@@ -105,6 +112,11 @@ indicators and the optional video uplink contract. Video is enabled by default i
 `SDK_REVISION` records the selected commit, target patch, and deterministic `include/` and `src/` digest. AOSL is based on commit
 `84e086084ebcd0ae2455a0ce5721950c5fe2e656` with its five documented BK7259 HAL fixes. The build has
 no `MYBOT_SDK_DIR` or external AOSL source-path input.
+
+MCP volume set/adjust uses the existing BK7259 volume adapter, and mute silences speaker PCM;
+the MCP command path still needs hardware validation. The BK7259 view handles indicator bits 0-3 (voiceprint and
+server phases) and ignores the new emotion bits 4-7; mapping those commands to the 23 local expressions
+and UART/gimbal actions is also pending. This SDK refresh does not implement those platform features.
 
 ## Requirements
 

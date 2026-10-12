@@ -77,9 +77,14 @@ BK7259 固件采用 AP/CP 双核架构：
   `lib/arm/libagora-rtc-sdk.a`）。
 
 解决方案内嵌的 mybot SDK 以上游 commit
-`cfd178a02fa94775cf01dc77e344f4ce5930225c`（`main`，SDK 版本仍为 1.2.0）的完整源码快照
-为基线，新增控制事件非阻塞投递、重新配对时清理开聊请求、提示音代次跟踪及 HTTP/JSON
-边界修复。同时包含视频控制串行化、提示音延后销毁、统一的 RTM 到 LCD 状态处理，以及 RTM
+`19a40777768b7384549b46949ef6bb6310923463`（`main`，PR #111，SDK 版本仍为 1.2.0）的完整源码快照
+为基线，保留经 RTM P2P 与频道消息接收 DeviceCommand v1，包含音量设置/增减、扬声器 PCM
+静音及开心/失落/愤怒/惊讶四种场景命令。执行前核对当前发送者、频道、会话及会话代次。
+`issued_at`/`expires_at` 可以省略或提供，均忽略，不检查时钟或有效期。
+本会话最近 16 个不同的 `command_id` 按 FIFO 去重，重复不会刷新位置，新 ID 替换最老记录，
+已被淘汰的 ID 可能再次执行。原有声纹与服务端阶段处理保持不变，控制事件非阻塞投递、
+重新配对时清理开聊请求、提示音代次跟踪及 HTTP/JSON 边界修复也保留。
+同时包含视频控制串行化、提示音延后销毁、统一的 RTM 到 LCD 状态处理，以及 RTM
 `listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建默认开启
 视频。该上游快照已经包含 `RTC_LOG_ERROR` 和恢复 AOSL 日志门限的修复；`SDK_REVISION` 另记录
 打印 HTTPS 请求与响应 body 的 BK7259 目标 patch。
@@ -89,6 +94,11 @@ BK7259 固件采用 AP/CP 双核架构：
 `include/`、`src/` 的确定性聚合摘要。AOSL 基线为 commit
 `84e086084ebcd0ae2455a0ce5721950c5fe2e656`，另有五处已记录的 BK7259 HAL 修改。构建过程不接受
 `MYBOT_SDK_DIR` 或外部 AOSL 源码路径。
+
+MCP 音量设置/增减复用已有 BK7259 音量适配，静音通过清零扬声器 PCM 实现；
+MCP 命令通路尚需真机验证。
+BK7259 视图仅处理声纹与服务端阶段 indicator 的 bit 0-3，忽略新增表情 bit 4-7；
+到本地 23 表情及 UART/云台动作的映射也尚未实现。本次 SDK 同步不展开这些平台功能。
 
 ## 环境要求
 
