@@ -25,9 +25,9 @@
 - BK7259 AP/CP 双核启动、内存和 Flash 分区配置。
 - Wi-Fi APSTA 配网（含强制门户）、网络重连和凭据持久化。
 - 双模拟麦克风采集、ADC2 功放回采参考 AEC、扬声器播放、音量控制和音频功耗管理。
-- MIPI 摄像头采集、ISP 图像处理、硬件 FLEXA H.264 编码和 RTC 视频上行。
+- 可选的 MIPI 摄像头采集、ISP 图像处理、硬件 FLEXA H.264 编码和 RTC 视频上行。
 - 单个 GPIO 按键短按切换对话、长按 5 秒恢复出厂，以及 MIPI 显示、EasyFlash KV、HTTPS 和设备 UID 适配。
-- 基于 Agora RTSA 的全双工音频和 H.264 视频上行 AI 多模态会话。
+- 基于 Agora RTSA 的全双工音频和可选 H.264 视频上行 AI 多模态会话。
 - 内嵌中英文 OGG 资源，用于配网提示音和配对码播报。
 - 包含 CP 与 AP 固件的完整烧录镜像和 OTA 包。
 
@@ -80,7 +80,7 @@ BK7259 固件采用 AP/CP 双核架构：
 `cfd178a02fa94775cf01dc77e344f4ce5930225c`（`main`，SDK 版本仍为 1.2.0）的完整源码快照
 为基线，新增控制事件非阻塞投递、重新配对时清理开聊请求、提示音代次跟踪及 HTTP/JSON
 边界修复。同时包含视频控制串行化、提示音延后销毁、统一的 RTM 到 LCD 状态处理，以及 RTM
-`listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建已启用
+`listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建默认关闭
 视频。该上游快照已经包含 `RTC_LOG_ERROR` 和恢复 AOSL 日志门限的修复；`SDK_REVISION` 另记录
 打印 HTTPS 请求与响应 body 的 BK7259 目标 patch。
 挂断会先停止本地视频与 RTC、清理会话 PCM 并恢复 READY，再发送一次 HTTPS 停止通知。
@@ -144,8 +144,9 @@ make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
 
 `scripts/build_all.py` 在独立工程副本中编译 AP/CP，保留原工程配置和构建目录，
 支持 `--language`、`--dry-run`、`--no-clean`、`--build-root` 和 `--output-root`。
-英文版可用 `python3 scripts/build_all.py --language en-US`，当前启用视频的产物为
-`releases/bk7259-en-US-video.bin`。脚本的中文 ELF 地址校验仍使用旧的
+英文版可用 `python3 scripts/build_all.py --language en-US`，默认产物为
+`releases/bk7259-en-US.bin`；启用 `CONFIG_MYBOT_VIDEO=y` 后文件名增加 `-video` 后缀。
+脚本的中文 ELF 地址校验仍使用旧的
 `mybot.sh2.agoralab.co`，尚未跟随当前生产地址更新；中文版请使用上面的原工程 `make`
 命令。中文校验同步前，默认一次构建两种语言的脚本不会发布所选固件。
 
@@ -184,7 +185,7 @@ CP 与 AP 的独立镜像分别位于：
 3. STA 链路获取到 IPv4 地址后，门户和 SoftAP 停止，设备启动 mybot SDK 完成注册、配对
    和鉴权。
 4. 未绑定的设备会显示并播报配对码，在网页控制台输入该码；绑定完成后，短按松手发起
-   带全双工音频和摄像头视频上行的 AI 多模态对话，再次短按松手结束对话。
+   全双工音频 AI 对话，再次短按松手结束对话；启用 `CONFIG_MYBOT_VIDEO=y` 后同时提供摄像头视频上行。
 5. 按住同一按键 5 秒恢复本地出厂设置并重启，随后重新配网。
 
 若存在有效的恢复出厂标记，设备先完成清理并重启，之后才走上述联网流程。
@@ -213,7 +214,7 @@ GPIO 分配以及显示、音频和摄像头外设连接属于板级配置。移
 - `CONFIG_MYBOT_LANGUAGE_EN_US`：英文服务区域、LCD 文案与提示音资源。
 - `CONFIG_MYBOT_LVGL_UI_ANIMATIONS`：像素表情切换过渡、表情动态效果与 500 ms 光标闪烁，默认启用；
   UI 固定采用工艺灰风格。
-- `CONFIG_MYBOT_VIDEO`：启用编码视频上行，参考固件中已设为 `y`。
+- `CONFIG_MYBOT_VIDEO`：编码视频上行，默认关闭；设为 `y` 即可启用。
 - `CONFIG_MYBOT_VIDEO_WIDTH` / `CONFIG_MYBOT_VIDEO_HEIGHT`：ISP 编码输出，参考值为
   `640x480`。
 - `CONFIG_MYBOT_VIDEO_SENSOR_WIDTH` / `CONFIG_MYBOT_VIDEO_SENSOR_HEIGHT` /
@@ -287,7 +288,7 @@ CP 启动 AP 后，AP 调用 `bk_init()`、打印版本并初始化媒体服务�
 3. 检查持久恢复意图；有效标记先续做恢复，可检测的异常标记等待新的长按。
 4. 无恢复任务时注册平台描述符，再连接已存 Wi-Fi 或进入 APSTA 门户。
 5. 获取 STA IPv4 并关闭门户、SoftAP 后调用 `mybot_start()`。
-6. 产品循环处理短按、恢复请求和 SDK 状态日志；会话由 SDK 管理，RTC 连接后启动视频。
+6. 产品循环处理短按、恢复请求和 SDK 状态日志；会话由 SDK 管理，启用视频时在 RTC 连接后启动采集和编码。
 
 正常网络设置或 SDK 启动失败后，产品保留已准备好的显示和按键，等待长按恢复出厂。
 媒体、平台准备或描述符注册等更早的初始化错误会退出产品任务。
@@ -391,7 +392,8 @@ ADC 的 `aec_en=0`，避免追加数字 DAC 参考通道。
 
 ## 视频上行
 
-当前 AP 构建提供只上行的 H.264 链路：`1280x720` MIPI CSI sensor 以 `5` fps 运行，ISP MP
+视频默认关闭。在 AP defconfig 中设置 `CONFIG_MYBOT_VIDEO=y` 并 clean 后重新编译即可启用。
+启用后的 H.264 链路仅上行：`1280x720` MIPI CSI sensor 以 `5` fps 运行，ISP MP
 生成 `640x480` NV12 帧，硬件 FLEXA H.264 编码器通过 Agora RTSA 主视频流发送完整 access
 unit。设备不接收或渲染远端视频，音频链路仍为全双工。
 

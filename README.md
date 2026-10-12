@@ -31,10 +31,10 @@ to run mybot on the BK7259 platform:
 - Wi-Fi APSTA provisioning with a captive portal, network reconnection, and credential persistence.
 - Microphone capture with on-device hardware AEC, speaker playback, volume control, and audio power
   management.
-- MIPI CSI camera capture, ISP MP scaling, hardware FLEXA H.264 encoding, and encoded video uplink.
+- Optional MIPI CSI camera capture, ISP MP scaling, hardware FLEXA H.264 encoding, and encoded video uplink.
 - Single GPIO conversation/factory-reset key, MIPI display, EasyFlash KV, HTTPS, and device identity
   adapters.
-- Full-duplex audio and uplink video for AI multimodal sessions over Agora RTSA.
+- Full-duplex audio and optional uplink video for AI multimodal sessions over Agora RTSA.
 - Embedded Chinese and English OGG assets for provisioning prompts and pairing-code announcements.
 - A complete flash image and an OTA package containing both the CP and AP firmware.
 
@@ -101,8 +101,8 @@ Conversation hangup now stops local video/RTC, clears session PCM, and publishes
 sending one HTTPS stop notification. Notification failure is logged without retry; the notification
 still runs synchronously on the control worker, so subsequent controls can wait for HTTP completion.
 It includes the RTM server-state LCD
-indicators and the video uplink contract, which the current BK7259 AP build enables. `SDK_REVISION` records the
-selected commit, target patch, and deterministic `include/` and `src/` digest. AOSL is based on commit
+indicators and the optional video uplink contract. Video is disabled by default in the BK7259 AP build.
+`SDK_REVISION` records the selected commit, target patch, and deterministic `include/` and `src/` digest. AOSL is based on commit
 `84e086084ebcd0ae2455a0ce5721950c5fe2e656` with its five documented BK7259 HAL fixes. The build has
 no `MYBOT_SDK_DIR` or external AOSL source-path input.
 
@@ -162,7 +162,8 @@ make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
 ```
 
 `scripts/build_all.py` supports separate Chinese and English AP/CP builds with
-`releases/bk7259-zh-CN-video.bin` and `releases/bk7259-en-US-video.bin` filenames.
+`releases/bk7259-zh-CN.bin` and `releases/bk7259-en-US.bin` filenames by default.
+When `CONFIG_MYBOT_VIDEO=y` is set, the filenames include the `-video` suffix.
 Its Chinese endpoint check still expects `https://mybot.sh2.agoralab.co/api`, while
 the current R2 platform uses `https://botstation.shengwang.cn/api`. Until that check
 is updated, build Chinese firmware with the original-project `make` command above
@@ -209,8 +210,8 @@ The reference device workflow is:
    mybot SDK for registration, pairing, and authentication.
 4. An unclaimed device displays and announces its pairing code for entry in the web console. After
    the device is claimed, briefly press and release the conversation button to start an AI
-   multimodal conversation with full-duplex audio and camera video uplink; press and release again
-   to stop it.
+   conversation with full-duplex audio; camera video uplink is included when `CONFIG_MYBOT_VIDEO=y`.
+   Press and release again to stop it.
 5. Hold the same button for five seconds to reset the local device settings and restart Wi-Fi setup.
 
 The Yunqu V1.0 product exposes one firmware-visible direct GPIO conversation key:
@@ -238,7 +239,7 @@ The `MyBot BK7259 platform` Kconfig menu provides:
 - `CONFIG_MYBOT_LANGUAGE_EN_US`: English service region, LCD text, and prompt assets.
 - `CONFIG_MYBOT_LVGL_UI_ANIMATIONS`: pixel-face transitions, expression motion, and the 500 ms terminal cursor,
   enabled by default. The UI uses the fixed process-gray appearance.
-- `CONFIG_MYBOT_VIDEO`: encoded H.264 video uplink; it is enabled in the current AP build.
+- `CONFIG_MYBOT_VIDEO`: encoded H.264 video uplink; disabled by default. Set it to `y` to enable video.
 - `CONFIG_MYBOT_VIDEO_WIDTH` / `CONFIG_MYBOT_VIDEO_HEIGHT`: `640x480` encoded output.
 - `CONFIG_MYBOT_VIDEO_SENSOR_WIDTH` / `CONFIG_MYBOT_VIDEO_SENSOR_HEIGHT` /
   `CONFIG_MYBOT_VIDEO_SENSOR_FPS`: `1280x720` sensor input at `5` fps.
@@ -451,8 +452,9 @@ default. Audio and AEC have passed user device testing.
 
 ## Video uplink
 
-The current AP build provides an uplink-only H.264 path: the `1280x720` MIPI CSI sensor runs at
-`5` fps, the ISP MP path produces `640x480` NV12 frames, and the hardware FLEXA H.264 encoder sends
+Video is disabled by default. To enable it, set `CONFIG_MYBOT_VIDEO=y` in the AP defconfig and
+run a clean rebuild. With video enabled, the `1280x720` MIPI CSI sensor runs at `5` fps, the ISP MP
+path produces `640x480` NV12 frames, and the hardware FLEXA H.264 encoder sends
 complete access units through the high-quality Agora RTSA stream. The device does not receive or
 render remote video; its audio path remains full duplex.
 
