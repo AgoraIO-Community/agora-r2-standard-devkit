@@ -336,8 +336,9 @@ The product owns one GC9503CV MIPI display from platform preparation through pla
 Wi-Fi provisioning and reset status remain visible while the mybot SDK is stopped. The native
 480x640 panel is rendered as a 640x480 logical RGB565 surface. GPIO20 enables the 3.3 V rail,
 GPIO29 enables the shared LCD/camera 2.8 V rail, GPIO42 drives reset, and the GPIO40 backlight is
-active low. The LCD owner keeps the shared rail on; conversation/video teardown resets the sensor
-without cutting display power.
+active low. GPIO27 enables the external camera 1.2 V rail at a high level during platform
+preparation. The LCD board-power owner keeps both rails on until full platform shutdown;
+conversation/video teardown resets the camera through GPIO30 without cutting board power.
 
 The LVGL 9.5.0 renderer follows the user-supplied simulator's `process` (process gray) skin and
 `geek` (pixel glasses) face. It uses a fixed `#050708` black glass background and gray decorations,
@@ -462,8 +463,11 @@ render remote video; its audio path remains full duplex.
 
 Starting mybot initializes the video context but leaves the camera and encoder off. They are opened
 and started only after RTC reports a connected session. Conversation teardown stops the video
-worker, encoder, and camera before leaving RTC; the sensor is reset while the LCD keeps the shared
-2.8 V rail powered. Full SDK shutdown also stops and destroys the source as a fallback. RTSA
+worker, encoder, and camera before leaving RTC; GPIO30 holds the sensor in reset while the LCD
+board-power owner keeps GPIO29/2.8 V and GPIO27/1.2 V enabled. The external 1.2 V rail is enabled
+before sensor detection; the boot log reports `camera 1.2V power enabled: gpio=27 level=1`.
+Full SDK shutdown also stops and destroys the source as a fallback, retaining board power until
+full platform shutdown. RTSA
 bandwidth-estimation callbacks update the encoder target
 bitrate, clamped to `256000`-`512000` bits per second; the initial target is `384000` bits per second.
 An RTSA key-frame request forces an IDR frame.
