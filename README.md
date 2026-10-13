@@ -91,7 +91,7 @@ remotes.
   `lib/arm/libagora-rtc-sdk.a`).
 
 The solution vendors the mybot SDK from upstream commit
-`19a40777768b7384549b46949ef6bb6310923463` on `main` (PR #111; SDK version remains 1.2.0).
+`7a10696ff27dd947da0558104da6c5414929ea09` on `main` (PR #112; SDK version remains 1.2.0).
 This snapshot retains DeviceCommand v1 reception over RTM P2P and channel messages, volume set/adjust,
 speaker PCM mute, and happy/sad/angry/surprised scene commands. Execution checks the active sender,
 channel, conversation, and conversation generation. `issued_at` and `expires_at` may be omitted or
@@ -112,6 +112,11 @@ indicators and the optional video uplink contract. Video is enabled by default i
 `SDK_REVISION` records the selected commit, target patch, and deterministic `include/` and `src/` digest. AOSL is based on commit
 `84e086084ebcd0ae2455a0ce5721950c5fe2e656` with its five documented BK7259 HAL fixes. The build has
 no `MYBOT_SDK_DIR` or external AOSL source-path input.
+
+The SDK removes the 512-byte RTM text preview and fixed 64-byte RTC error storage, passing full
+content to the logging layer and copying borrowed RTC error text while it is valid. The BK7259
+AOSL HAL still has an 8 KiB buffer for the entire log line, so larger lines may be truncated.
+Ordinary RTM message logs remain DEBUG and are omitted at the default NOTICE level.
 
 MCP volume set/adjust uses the existing BK7259 volume adapter, and mute silences speaker PCM;
 the MCP command path still needs hardware validation. The BK7259 view handles indicator bits 0-3 (voiceprint and
