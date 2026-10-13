@@ -77,7 +77,7 @@ BK7259 固件采用 AP/CP 双核架构：
   `lib/arm/libagora-rtc-sdk.a`）。
 
 解决方案内嵌的 mybot SDK 以上游 commit
-`7a10696ff27dd947da0558104da6c5414929ea09`（`main`，PR #112，SDK 版本仍为 1.2.0）的完整源码快照
+`e7793eba88f721304dc00d421706d4d788b81a43`（`main`，PR #113，SDK 版本仍为 1.2.0）的完整源码快照
 为基线，保留经 RTM P2P 与频道消息接收 DeviceCommand v1，包含音量设置/增减、扬声器 PCM
 静音及开心/失落/愤怒/惊讶四种场景命令。执行前核对当前发送者、频道、会话及会话代次。
 `issued_at`/`expires_at` 可以省略或提供，均忽略，不检查时钟或有效期。
@@ -88,8 +88,10 @@ BK7259 固件采用 AP/CP 双核架构：
 `listening/thinking/speaking` 服务端状态 LCD indicator 和可选视频上行契约；BK7259 构建默认开启
 视频。该上游快照已经包含 `RTC_LOG_ERROR` 和恢复 AOSL 日志门限的修复；`SDK_REVISION` 另记录
 打印 HTTPS 请求与响应 body 的 BK7259 目标 patch。
-挂断会先停止本地视频与 RTC、清理会话 PCM 并恢复 READY，再发送一次 HTTP(S) 停止通知。
-通知失败只记录日志、不重试；通知仍在控制线程同步执行，后续控制操作可能等待 HTTP 完成。
+挂断会先停止本地视频与 RTC、清理会话 PCM 并恢复 READY，再排队发送一次 HTTP(S) 停止通知。
+绑定状态轮询和停止通知由独立的 `service_mpq` 执行，慢响应不会阻塞控制操作或下一次开聊。
+通知失败只记录日志、不重试；开聊、配对码和 token 续期仍同步执行，SDK 关闭时排空后台线程。
+HTTPS 适配支持独立连接并按连接查询 socket 错误状态。
 `SDK_REVISION` 同时记录
 `include/`、`src/` 的确定性聚合摘要。AOSL 基线为 commit
 `84e086084ebcd0ae2455a0ce5721950c5fe2e656`，另有五处已记录的 BK7259 HAL 修改。构建过程不接受

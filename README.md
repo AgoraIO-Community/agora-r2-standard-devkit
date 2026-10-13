@@ -91,7 +91,7 @@ remotes.
   `lib/arm/libagora-rtc-sdk.a`).
 
 The solution vendors the mybot SDK from upstream commit
-`7a10696ff27dd947da0558104da6c5414929ea09` on `main` (PR #112; SDK version remains 1.2.0).
+`e7793eba88f721304dc00d421706d4d788b81a43` on `main` (PR #113; SDK version remains 1.2.0).
 This snapshot retains DeviceCommand v1 reception over RTM P2P and channel messages, volume set/adjust,
 speaker PCM mute, and happy/sad/angry/surprised scene commands. Execution checks the active sender,
 channel, conversation, and conversation generation. `issued_at` and `expires_at` may be omitted or
@@ -105,8 +105,11 @@ unified RTM-to-LCD indicators, and the
 `RTC_LOG_ERROR` and AOSL log-gate preservation; the remaining BK7259 target patch records debug
 HTTPS request and response body logging in `SDK_REVISION`.
 Conversation hangup now stops local video/RTC, clears session PCM, and publishes READY before
-sending one HTTP(S) stop notification. Notification failure is logged without retry; the notification
-still runs synchronously on the control worker, so subsequent controls can wait for HTTP completion.
+queuing one HTTP(S) stop notification. Binding-status polls and stop notifications run on a separate
+`service_mpq`, so slow responses do not block control handling or the next conversation trigger.
+Notification failure is logged without retry. Conversation start, pairing-code and token-renewal
+requests remain synchronous; SDK shutdown drains the background worker before releasing resources.
+The HTTPS adapter supports independent connections and reads socket errors per connection.
 It includes the RTM server-state LCD
 indicators and the optional video uplink contract. Video is enabled by default in the BK7259 AP build.
 `SDK_REVISION` records the selected commit, target patch, and deterministic `include/` and `src/` digest. AOSL is based on commit
