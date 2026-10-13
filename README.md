@@ -271,7 +271,7 @@ The `MyBot BK7259 platform` Kconfig menu provides:
   and electrical active level.
 
 The language option selects the LCD text, service region, and prompt asset directory: Chinese
-(`https://botstation.shengwang.cn/api`) or English (`https://mybot.sg3.agoralab.co/api`) with
+(`https://botstation.shengwang.cn/api`) or English (`https://botstation.agora.io/api`) with
 the default HTTPS configuration. Exactly one of the two language options must be enabled.
 HTTP mode changes only the scheme to `http://`, retaining the hostname and `/api` path.
 The transport switch maps to the SDK's `MYBOT_ENABLE_HTTPS` and inverse

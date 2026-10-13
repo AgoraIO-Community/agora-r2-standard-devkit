@@ -21,7 +21,7 @@ LANGUAGES = ("zh-CN", "en-US")
 MARKER = "mybot-bk7259-build-all-v1\n"
 SERVICE_HOSTS = {
     "zh-CN": "botstation.shengwang.cn",
-    "en-US": "mybot.sg3.agoralab.co",
+    "en-US": "botstation.agora.io",
 }
 
 

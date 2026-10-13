@@ -243,7 +243,7 @@ GPIO 分配以及显示、音频和摄像头外设连接属于板级配置。移
 - `CONFIG_MYBOT_KEY_GPIO`、`CONFIG_MYBOT_KEY_ACTIVE_LEVEL`：单个对话键的 GPIO 和有效电平。
 
 语言选项同时决定 LCD 文案、服务区域和提示音资源目录；默认 HTTPS 配置下，中文地址为
-`https://botstation.shengwang.cn/api`，英文地址为 `https://mybot.sg3.agoralab.co/api`。
+`https://botstation.shengwang.cn/api`，英文地址为 `https://botstation.agora.io/api`。
 两个语言选项必须且只能启用一个。
 HTTP 模式仅将协议改为 `http://`，保留相同的域名与 `/api` 路径。协议开关同时映射为 SDK 的
 `MYBOT_ENABLE_HTTPS` 及取反的 `MYBOT_ALLOW_INSECURE_HTTP` 编译定义；不改变 RTC/RTM
