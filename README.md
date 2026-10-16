@@ -122,9 +122,10 @@ AOSL HAL still has an 8 KiB buffer for the entire log line, so larger lines may 
 Ordinary RTM message logs remain DEBUG and are omitted at the default NOTICE level.
 
 MCP volume set/adjust uses the existing BK7259 volume adapter, and mute silences speaker PCM;
-the MCP command path still needs hardware validation. The BK7259 view handles indicator bits 0-3 (voiceprint and
-server phases) and ignores the new emotion bits 4-7; mapping those commands to the 23 local expressions
-and UART/gimbal actions is also pending. This SDK refresh does not implement those platform features.
+the MCP command path still needs hardware validation. The BK7259 view handles indicator bits 0-3
+(voiceprint and server phases), while one-shot bits 4-7 select local LCD expressions without
+triggering EB521 UART/gimbal movement. Manual CLI gimbal control is available only with
+`CONFIG_MYBOT_GIMBAL=y`; the current audio comparison build disables that option.
 
 ## Requirements
 
@@ -372,10 +373,12 @@ The LVGL 9.5.0 renderer follows the user-supplied simulator's `process` (process
 `geek` (pixel glasses) face. It uses a fixed `#050708` black glass background and gray decorations,
 avoiding visible dark-gradient banding in RGB565.
 `READY` shows the neutral idle face: off-white `#f1f1ee` glasses, two curved eyes, and a smile.
-Entering `IN_CONVERSATION` switches to the greeting face: warm-gold `#f1ca79` glasses, a curved
-left eye, a round right eye, and a smile. These are the default faces; hangup returns to neutral.
+Entering `IN_CONVERSATION` shows SURPRISED for 300 ms after its entering transition,
+then selects the latest server phase: LISTENING shows the listening face; THINKING
+shows the thinking face and changes to PROCESSING after three continuous seconds;
+SPEAKING or no active phase shows NEUTRAL. Hangup returns to neutral idle.
 Wi-Fi setup alone does not bypass authentication or pairing: the
-idle face appears only when the SDK actually reaches `READY`.
+ordinary idle page appears only when the SDK actually reaches `READY`.
 
 Normal idle and conversation screens retain four terminal rows. In READY:
 
@@ -394,20 +397,30 @@ When no phase is active, it falls back to `in_conversation`. `vp:ok` means the c
 has received a successful voiceprint notification; `vp:pending` means it has not yet been confirmed.
 These session fields appear only when the runtime state and display page are both
 `IN_CONVERSATION`; selecting the SLEEP artwork does not replace the actual state with `standby`.
-The `</>` signature and last-row cursor remain. Voiceprint and phase updates change only text,
-preserving the selected face and its transition; no separate status overlay is shown.
+The `</>` signature and last-row cursor remain. Voiceprint updates affect text; phase updates
+also select the underlying automatic face. Repeated updates do not restart its animation or
+the three-second thinking clock, and do not cancel an explicit expression. No separate status
+overlay is shown.
 Chinese and English startup, provisioning, web-console pairing, error, and
 factory-reset instructions remain available. GPU and touch stay disabled, and the display does
 not show a camera preview or control gimbal movement.
 
 All 23 simulator expressions are available through the independent
 [bk7259_expression.h](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_expression.h)
-module. `bk7259_lcd_set_expression()` copies a request to the display owner;
-`bk7259_lcd_clear_expression()` restores the current workflow's default face. Overrides are accepted
-only on `READY`/`IN_CONVERSATION` pages and are cleared by workflow screen changes. Factory-reset
-and operating guidance retain priority, while indicator-only updates retain the selected face.
-The additional 21 expressions are prepared for later integration; there is no automatic cycling,
-MCP/RTM command mapping, or UART action. Names, examples, and visual mappings are in the
+module. `bk7259_lcd_set_expression()` copies a persistent local override to the display owner;
+`bk7259_lcd_clear_expression()` restores the latest automatic face. Overrides are accepted only
+on `READY`/`IN_CONVERSATION` pages; workflow changes clear them, and factory-reset and operating
+guidance retain priority. Repeating a local request does not restart it. A later MCP emotion
+replaces the local override.
+
+MCP HAPPY/SAD/ANGRY/SURPRISED select HAPPY/SAD/ANNOYED/SURPRISED on the LCD for
+2 s/3 s/1.2 s/0.8 s, then restore the latest automatic face. Each hold excludes the entering
+250 ms transition, as does the conversation opener's 300 ms hold; disabling UI animations
+removes that transition time. A new MCP request replays even the same expression; ordinary
+status updates neither restart nor cancel it. Expressions do not cycle automatically or
+control the gimbal; manual UART CLI control remains independent when enabled with
+`CONFIG_MYBOT_GIMBAL=y`. It is disabled in the current audio comparison build.
+Names, examples, and visual mappings are in the
 [project guide](bk_solution_ai/projects/mybot/README.md#6-r2-audio-and-display).
 
 The simulator's 1024x896 artwork is scaled uniformly by 9/16 to a virtual 576x504 area at logical
@@ -420,8 +433,9 @@ triangle-fan seams. They are generated locally from the reference geometry; no f
 additional canvas framebuffer, or UI task are required. The generator and reproduction command
 are documented in [display/SOURCES.md](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks).
 With animations enabled, face
-changes use a short transition, animated expressions retain their motion, and the cursor blinks every 500 ms. Indicator-only updates do
-not restart the transition.
+changes use a 250 ms transition, animated expressions retain their motion, and the cursor blinks
+every 500 ms. Repeated status updates preserve animation clocks; a changed automatic face
+uses the same transition.
 
 The application publishes the current SDK state from its existing 100 ms observation loop through
 the native `bk7259_lcd.h` copied snapshot interface; existing SDK LCD callbacks supply phase and
@@ -474,24 +488,39 @@ Build results, host tests and remaining hardware checks are recorded in
 
 ## Audio
 
-R2 capture reads three differential analog ADC lanes: ADC0/ADC1 are microphones with analog gain
-20 and digital gain 16 dB; ADC2 carries the HT6872 amplifier feedback with both gains set to zero.
-Digital microphones and the ADC stream's appended AEC reference are disabled (`dmic_en=0`,
-`adc_cfg.aec_en=0`). AEC remains enabled in the next pipeline stage:
+The current R2 audio configuration follows the paired Solution and AVDK under `mcp-resource/new`.
+Capture enables three differential analog ADC lanes (`ch_bitmap=0x7`, `chl_num=3`), each with
+20 dB analog and 16 dB digital gain. DMIC is disabled; `adc_cfg.aec_en=3` appends the digital
+playback reference, giving four interleaved lanes: three microphone inputs and reference at lane 3.
+No ADC input is designated as an in-channel hardware reference (`hw_ref_ch=NONE`).
 
 ```text
-ADC0 MIC + ADC1 MIC + ADC2 amplifier reference
-  -> aec_v3_algorithm_v2 (hardware AEC, in-channel reference ADC2, dual-mic processing)
+ADC0 + ADC1 + ADC2 + appended digital playback reference
+  -> aec_v3_algorithm_v2 (hardware AEC, APPEND/AUTO reference, three-microphone processing)
   -> raw stream -> 16 kHz mono signed 16-bit PCM -> MyBot RTC uplink
 ```
 
-The AEC stage uses three ADC channels, `dual_ch=1`, traditional noise suppression, and no VAD.
-The main output includes AEC, microphone processing, and noise suppression. Speaker playback uses
+AEC uses `adc_ch_num=3`, `dual_ch=2`, traditional noise suppression, VAD disabled
+(`vad_enable=0`), `ec_only_output=1`, and `multi_output_use_ec_out=1`. Capture uses 640-byte/20 ms blocks and
+two blocks of buffering. The paired AVDK implements three-microphone deinterleaving, the trimic
+flag and SSL3 support, and still calls `aec_proc`; the Solution comment claiming AEC is temporarily
+disabled is stale. The four required AVDK audio wrapper/config/header/library files are
+updated from this reference, together with the AP library checksum manifest computed from the
+actual local library set. No ASR output port or UI direction callback is added.
+
+GPIO12 follows the reference's output/pull-down configuration for ADC comparator discharge.
+GPIO34/35 retain the supplied `SECOND_FUNC_DISABLE + GPIO_OUTPUT` declarations, which leave
+them HIGH-Z at startup. The current audio comparison build also sets
+`# CONFIG_MYBOT_GIMBAL is not set` in the AP defconfig, disabling the gimbal module,
+its UART2 pin mapping and CLI registration. It adds no runtime capture-level logs.
+The current three-input configuration still requires device validation.
+
+Speaker playback uses
 the onboard DAC stream and the active-high GPIO50 amplifier enable. Volume maps 0-100 to speaker
 digital gain and is synchronously saved as `mybot.volume.v1` when changed. A failed save is retried
 on a later set or adapter destruction. The board has no dedicated volume keys. Reset clears that
 record after the adapter's final persistence attempt, so subsequent startup uses the speaker
-default. Audio and AEC have passed user device testing.
+default. Earlier dual-analog-microphone/ADC2-reference audio and AEC passed user device testing.
 
 ## Video uplink
 
@@ -568,7 +597,8 @@ PCM.
 - Vendored AOSL is locked to its recorded base and content digest, including the five declared
   BK7259 HAL modifications.
 - `bk_avdk_smp` is consumed at `release/v4.0.1-mybot-r2`, which adds the product's captive-portal
-  DNS changes and GC9503CV R2 MIPI panel support to upstream `release/v4.0.1`. Mybot audio, video,
+  DNS changes, GC9503CV R2 MIPI panel support, and the current paired reference's three-input AEC
+  audio files and matching library checksum manifest to upstream `release/v4.0.1`. Mybot audio, video,
   APSTA, and display integration use its public component APIs.
 - BK platform sources include mybot only through `<mybot/platform/...>`.
 - `projects/mybot/ap/ap_main.c` is the sole application lifecycle consumer of the public

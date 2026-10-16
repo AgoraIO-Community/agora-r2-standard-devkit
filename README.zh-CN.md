@@ -24,7 +24,7 @@
 
 - BK7259 AP/CP 双核启动、内存和 Flash 分区配置。
 - Wi-Fi APSTA 配网（含强制门户）、网络重连和凭据持久化。
-- 双模拟麦克风采集、ADC2 功放回采参考 AEC、扬声器播放、音量控制和音频功耗管理。
+- 三路模拟输入采集、追加数字播放参考的本地 AEC、扬声器播放、音量控制和音频功耗管理。
 - 可选的 MIPI 摄像头采集、ISP 图像处理、硬件 FLEXA H.264 编码和 RTC 视频上行。
 - 单个 GPIO 按键短按切换对话、长按 5 秒恢复出厂，以及 MIPI 显示、EasyFlash KV、HTTPS 和设备 UID 适配。
 - 基于 Agora RTSA 的全双工音频和可选 H.264 视频上行 AI 多模态会话。
@@ -103,14 +103,15 @@ SDK 移除 RTM 字符串的 512 字节预览限制和 RTC 错误的 64 字节固
 
 MCP 音量设置/增减复用已有 BK7259 音量适配，静音通过清零扬声器 PCM 实现；
 MCP 命令通路尚需真机验证。
-BK7259 视图仅处理声纹与服务端阶段 indicator 的 bit 0-3，忽略新增表情 bit 4-7；
-到本地 23 表情及 UART/云台动作的映射也尚未实现。本次 SDK 同步不展开这些平台功能。
+BK7259 视图处理声纹与服务端阶段 indicator 的 bit 0-3；一次性表情 bit 4-7 仅映射到
+本地 LCD 表情，不触发 EB521 UART/云台动作。手动 CLI 舵机控制需启用
+`CONFIG_MYBOT_GIMBAL=y`，当前音频对比固件已关闭该开关。
 
 ## 环境要求
 
 - 支持 Git submodule 的 Git。
 - Linux 构建环境，以及 `bk_avdk_smp` 所需的交叉编译工具链。
-- 耘趣 V1.0 / Robot R2 接线的 BK7259 开发板，使用 GC9503CV MIPI 屏和双模拟麦。
+- 耘趣 V1.0 / Robot R2 接线的 BK7259 开发板，使用 GC9503CV MIPI 屏；当前三路音频配置见下文。
 - 可访问兼容的 mybot 设备服务和有效的 Agora 服务配置。
 
 板级文档随子模块提供：解决方案与 AVDK 见 `bk_solution_ai/docs/bk7259/`，
@@ -328,9 +329,11 @@ GPIO30 复位摄像头，保留板级电源，保持屏幕点亮。
 
 LVGL 9.5.0 渲染器采用用户提供模拟器的 `process`（工艺灰）皮肤与 `geek`（像素眼镜）画法，
 使用 `#050708` 固定黑色玻璃底与灰色装饰，避免 RGB565 深色渐变色带。实际进入 `READY` 时显示“中性待机”：
-`#f1f1ee` 米白镜框、双弧眼和微笑；进入 `IN_CONVERSATION` 时切换“打招呼”：
-`#f1ca79` 暖金镜框、左弧眼、右圆点眼和微笑。这是默认映射，挂断后回到中性待机。
-Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到 `READY` 才显示待机表情。
+`#f1f1ee` 米白镜框、双弧眼和微笑。进入 `IN_CONVERSATION` 时先显示 SURPRISED，
+进入过渡结束后保持 300 ms，再按最新服务端阶段选择表情：LISTENING 显示认真聆听，
+THINKING 显示专注思考，连续超过 3 秒转 PROCESSING；SPEAKING 或无有效阶段显示 NEUTRAL。
+挂断后回到中性待机。
+Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到 `READY` 才进入待机页面。
 
 正常待机和会话界面保留四行终端文字，READY 状态下为：
 
@@ -347,17 +350,24 @@ Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到
 没有有效阶段时显示 `in_conversation`。`vp:ok` 表示本次会话已收到声纹成功通知，
 `vp:pending` 表示尚未确认。仅真实状态和页面均为 `IN_CONVERSATION` 时显示会话阶段和声纹，
 选择 SLEEP 图案不会将真实状态改为 `standby`。`</>` 签名和最后一行的光标保留。
-声纹与阶段更新只改文字，保留当前表情与覆盖，不重播过渡，不弹独立状态提示。
+声纹更新只改文字；阶段更新也决定后台自动表情。同阶段重复更新不重置动画或三秒思考计时，
+也不取消显式表情覆盖，不弹独立状态提示。
 启动、配网、网页控制台配对、错误和恢复出厂仍保留必要的
 中英文引导。GPU 与触摸关闭，不显示摄像头预览，也不控制云台动作。
 
 模拟器全部 23 个表情通过独立模块
 [bk7259_expression.h](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_expression.h)
-提供。`bk7259_lcd_set_expression()` 复制请求到显示所有者，
-`bk7259_lcd_clear_expression()` 恢复当前流程的默认表情。仅 `READY`/`IN_CONVERSATION`
-表情页面接受覆盖，流程页面切换时清除覆盖；配网等操作引导与恢复出厂保持优先，
-仅 indicator 更新则保留已选表情。新增 21 个表情先供后续集成，没有自动轮播、
-MCP/RTM 命令映射或 UART 动作。完整列表和调用示例见
+提供。`bk7259_lcd_set_expression()` 复制持久本地覆盖请求到显示所有者，
+`bk7259_lcd_clear_expression()` 恢复最新自动表情。仅 `READY`/`IN_CONVERSATION`
+表情页面接受覆盖，流程页面切换时清除覆盖；配网等操作引导与恢复出厂保持优先。
+重复本地请求不重播，后到的 MCP 表情会替换本地覆盖。
+
+MCP 的 HAPPY/SAD/ANGRY/SURPRISED 分别显示 LCD 的 HAPPY/SAD/ANNOYED/SURPRISED，
+保持 2 秒/3 秒/1.2 秒/0.8 秒后恢复最新自动表情。保持时间不包含进入时的 250 ms 过渡，
+会话开场的 300 ms 同样另计进入过渡；关闭 UI 动画时不增加这段过渡时间。
+同名新 MCP 请求会重播，普通状态更新不重置或取消它。表情不自动轮播，
+不触发云台动作；手动 UART CLI 独立保留，仅在 `CONFIG_MYBOT_GIMBAL=y` 时可用，
+当前音频对比固件关闭。完整列表和调用示例见
 [工程说明](bk_solution_ai/projects/mybot/README_CN.md#6-r2-音频与显示)。
 
 模拟器的 1024x896 画布按 9/16 等比缩放为 576x504 虚拟区域，位于 640x480 逻辑屏幕的
@@ -366,8 +376,8 @@ MCP/RTM 命令映射或 UART 动作。完整列表和调用示例见
 心形、星形、椭圆、腮红和泪滴使用五块小型只读 A8 抗锯齿蒙版，合计 13631 字节 Flash，消除三角扇接缝。
 蒙版由参考几何在本地生成，不使用完整表情图片，不增加 canvas 整帧缓冲或 UI 任务。
 生成和复现方法见 [display/SOURCES.md](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks)。
-开启动画时，表情切换使用短过渡并保留表情动态效果，光标每 500 ms
-闪烁；仅 indicator 更新不会重播过渡。
+开启动画时，表情切换使用 250 ms 过渡并保留表情动态效果，光标每 500 ms
+闪烁；重复状态更新保留动画时钟，自动表情变化时使用同样的过渡。
 
 应用通过现有 100 ms 状态观测循环，经原生 `bk7259_lcd.h` 接口发布复制后的 SDK 状态快照；
 会话阶段和声纹 indicator 仍由现有 SDK LCD 回调提供。SDK 为 `STOPPED` 时配网引导继续可见，
@@ -411,13 +421,24 @@ UI 字库现含 152 个字符，覆盖 ASCII、配对及恢复出厂中文文案
 
 ## 音频采集与音量
 
-当前 R2 板使用三通道模拟 ADC 采集：ADC0、ADC1 接两颗模拟麦克风，ADC2 接 HT6872
-功放回采参考。麦克风通道的模拟/数字增益为 20/16 dB，参考通道为 0/0 dB；DMIC 关闭，
-ADC 的 `aec_en=0`，避免追加数字 DAC 参考通道。
+当前 R2 音频以 `mcp-resource/new` 中配套的 Solution 和 AVDK 为唯一参考。启用三路差分
+模拟 ADC（`ch_bitmap=0x7`、`chl_num=3`），ADC0/1/2各使用20 dB模拟及16 dB数字增益，
+按三个MIC输入送入算法；DMIC关闭，`adc_cfg.aec_en=3`追加数字播放参考，形成四条lane：
+MIC[0,1,2]、REF@3。通道内硬件参考设为NONE，不再把ADC2作为参考。
 
 采集链为 `onboard_mic_stream_v2 -> aec_v3_algorithm_v2 -> raw_stream`。AEC 使用硬件
-模式和通道内 ADC2 参考，启用双麦处理与传统降噪，VAD 关闭，最终交给 SDK 的仍是
-16 kHz、单声道、16 位 PCM。扬声器使用 GPIO50 高电平使能功放。
+APPEND模式和默认AUTO参考，`adc_ch_num=3`、`dual_ch=2`，启用传统降噪，关闭VAD（`vad_enable=0`），
+`ec_only_output=1`、`multi_output_use_ec_out=1`。采集块640字节/20 ms、两块缓冲，
+SDK仍接收16 kHz单声道S16 PCM，不增加ASR输出端口或UI方向回调。
+
+配套AVDK包含三麦解交织、trimic标记与SSL3支持，实际仍调用 `aec_proc`；Solution中
+“临时禁用AEC”的注释已过时。本次同步必需的4个AVDK音频wrapper/配置/头文件/算法库，
+及按当前实际AP库集合重新计算的配套库校验清单，
+其他AVDK功能保持。GPIO12按参考配置为输出下拉，供ADC比较器放电；GPIO34/35保留附件的
+`SECOND_FUNC_DISABLE + GPIO_OUTPUT`声明，开机仍为HIGH-Z。当前对比固件在AP defconfig配置
+`# CONFIG_MYBOT_GIMBAL is not set`，不启用舵机模块、对应UART2映射和CLI注册，
+不增加运行期采集电平日志。当前三路输入版本仍待真机验证。
+扬声器继续使用GPIO50高电平使能功放。
 
 音量通过 SDK 的 `audio_volume` ops 控制扬声器数字增益，变更时同步持久化到
 `mybot.volume.v1`；写入失败会在后续设置或销毁音量模块时重试。当前板没有音量加减按键。
@@ -487,8 +508,8 @@ python3 bk_solution_ai/projects/mybot/scripts/generate_assets_c.py \
   BK7259 目标 patch；`platforms/` 是 BK7259 平台适配源码。
 - 内嵌的 AOSL 锁定在记录的版本，包括已声明的五处 BK7259 HAL 修改。
 - `bk_avdk_smp` 使用 `release/v4.0.1-mybot-r2` 分支，在上游 `release/v4.0.1` 基础上包含
-  双核强制门户 DNS 服务和 GC9503CV R2 屏驱动。除此之外本移植不改动它的任何
-  tracked 内容，mybot 的音频、视频、配网和显示集成只使用其公开组件 API。
+  双核强制门户 DNS 服务和 GC9503CV R2 屏驱动；当前音频适配另从配套新参考同步4个
+  三路输入AEC相关文件及配套库校验清单。其他tracked内容保持，mybot的音频、视频、配网和显示集成使用其公开组件API。
 - BK 平台源码只通过 `<mybot/platform/...>` 引用 mybot。
 - `projects/mybot/ap/ap_main.c` 是公开 `<mybot/mybot.h>` API 的唯一应用生命周期使用者，
   也是唯一包含公开头 `<mybot/mybot_version.h>` 的产品源码。
@@ -526,8 +547,8 @@ git diff --submodule=log
   Ogg/Opus 内嵌在 `projects/mybot/assets/`；唤醒词仍关闭。
 - 编码视频链路已配置为 5 fps，但持续出帧节奏、码率自适应、关键帧/GOP 行为和重复会话
   start/stop 仍需在目标摄像头硬件上完成运行时验证。
-- R2 屏幕、结束会话后屏幕保持点亮、双模拟麦上行和 AEC、长按恢复出厂及像素眼镜基础渲染
-  已由用户反馈真机测试通过。四行文字与完整 23 表情尚待用户上板验证；中英文画面、表情过渡、
+- R2 屏幕、结束会话后屏幕保持点亮、此前双模拟麦/ADC2参考的上行和 AEC、长按恢复出厂及像素眼镜基础渲染
+  已由用户反馈真机测试通过；当前三路输入音频版本仍待烧录验证。四行文字与完整 23 表情尚待用户上板验证；中英文画面、表情过渡、
   断电续做、Flash/驱动故障、长时间运行及同时音视频的 HSRAM 和栈峰值仍需专项真机验证。
 - 单个 GPIO 按键采用耘趣 V1.0 的 KEY1/GPIO47 输入配置，CEN 保留硬件复位功能。
 
