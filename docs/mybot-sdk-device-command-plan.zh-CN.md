@@ -1,4 +1,4 @@
-# MyBot SDK DeviceCommand v1 接入方案
+# agent-studio-device-firmware SDK DeviceCommand v1 接入方案
 
 日期：2026-10-12。状态：历史设计稿，描述当时尚未实现的SDK功能。
 
@@ -10,8 +10,8 @@
 
 协议依据：`mcp-resource/EN-2033058587-081026-0608-16.pdf`，重点为第 6–7 页
 §2.2.6/§2.2.7、第 9 页 §2.2.9 和第 10 页 §2.3.4。
-代码依据：固件锁定的 MyBot 1.2.0、`cfd178a02fa94775cf01dc77e344f4ce5930225c`。
-权威 SDK 本地 `dev` 为 `371f29d`，其 `include/src` 与该快照一致，没有 DeviceCommand 实现。
+代码依据：固件锁定的 agent-studio-device-firmware 1.2.0、`cfd178a02fa94775cf01dc77e344f4ce5930225c`。
+当时的 SDK 来源仓库本地 `dev` 为 `371f29d`，其 `include/src` 与该快照一致，没有 DeviceCommand 实现。
 本方案还核对了该版本的 PORTING/EMBEDDED、平台描述符、音频、LCD 和 RTM 生命周期契约。
 
 ## 1. 目标与职责
@@ -379,7 +379,7 @@ coalesce，在关闭时冲刷，避免连续远端调节反复写 Flash；这个
 
 ## 12. 文件与集成清单
 
-在权威 MyBot SDK 仓库实现，建议新增：
+在权威 agent-studio-device-firmware SDK 仓库实现，建议新增：
 
 ```text
 include/mybot/platform/mybot_scene.h

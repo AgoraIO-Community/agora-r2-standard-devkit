@@ -1,6 +1,7 @@
 # EB521 云台四种 MCP 动作接入方案
 
-日期：2026-10-13。目标工程为 `release/v4.0.1-mybot-r2`。
+日期：2026-10-13。本文方案的历史来源分支为 `release/v4.0.1-mybot-r2`。
+当前官方工程为 `agora-r2-standard-devkit`，使用 `main` 分支。
 本文保留当时的云台接入方案与测试方法。2026-10-16的实际配置以
 [工程说明](../bk_solution_ai/projects/mybot/README_CN.md)为准：舵机控制默认关闭，
 重新启用后提供手动CLI；MCP表情仅渲染LCD，不驱动云台。音频已改用三路模拟输入及
@@ -22,7 +23,7 @@ DeviceCommand v1，并通过 `mybot_lcd_content_t.indicators` 的 HAPPY/SAD/ANGR
 ```mermaid
 flowchart LR
     A[服务器 MCP 场景] --> B[RTM DeviceCommand]
-    B --> C[MyBot SDK 会话校验与去重]
+    B --> C[agent-studio-device-firmware SDK 会话校验与去重]
     C --> D[LCD render 一次性表情位]
     D --> E[BK7259 场景请求]
     E --> F[原 UI owner：对应表情]
@@ -211,7 +212,7 @@ SDK detach、退出会话/断网、进入配网或恢复出厂均使未下发的
 已新增 `bk7259_gimbal.c` 与 `include/bk7259_gimbal.h`，在单一模块中实现协议和四种
 轨迹；修改 LCD 的一次性事件入口与视图的重播接口，接入 platform 生命周期。
 组件 CMake 注册该模块，增加 `CONFIG_MYBOT_GIMBAL` 开关并在 R2 AP 配置启用，
-AP GPIO 表接入 UART2。MyBot SDK、AOSL 和 AVDK 不需要修改。
+AP GPIO 表接入 UART2。agent-studio-device-firmware SDK、AOSL 和 AVDK 不需要修改。
 
 正式日志包括 UART 就绪、归零等待/完成、动作接受/启动/完成/回中/取消、超时和结果码；
 不逐帧输出重复轮询。先进行编解码/状态机主机验证，再在原工程编译供烧录。

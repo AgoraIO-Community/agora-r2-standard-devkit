@@ -1,26 +1,26 @@
-# mybot-bk7259
+# agora-r2-standard-devkit
 
-[![License](https://img.shields.io/github/license/junlon2006/mybot-bk7259)](LICENSE)
-[![Upstream](https://img.shields.io/badge/upstream-mybot-0969da)](https://github.com/junlon2006/mybot)
+[![License](https://img.shields.io/github/license/AgoraIO-Community/agora-r2-standard-devkit)](LICENSE)
+[![Upstream](https://img.shields.io/badge/upstream-agent--studio--device--firmware-0969da)](https://github.com/AgoraIO-Community/agent-studio-device-firmware)
 [![Platform](https://img.shields.io/badge/platform-BK7259-2f6f4e)](https://github.com/bekencorp/bk_avdk_smp)
 
 **简体中文 | [English](README.md)**
 
-**mybot-bk7259** 是开源 AI 多模态对话 SDK
-[mybot](https://github.com/junlon2006/mybot) 面向 BK7259 AP/CP 平台的参考实现。
+**agora-r2-standard-devkit** 是开源 AI 多模态对话 SDK
+[agent-studio-device-firmware](https://github.com/AgoraIO-Community/agent-studio-device-firmware) 面向 BK7259 AP/CP 平台的参考实现。
 本仓库将 BK7259 双核 SDK、AI 解决方案、BK7259 平台适配和可直接构建的双核固件工程
 以 Git submodule 方式组织并固定到经过验证的版本，用于复现构建、平台开发和社区协作。
 
 > 本项目当前定位为 BK7259 参考实现，仍在持续开发中。用于量产产品前，请结合实际硬件
 > 完成板级适配、安全审查、稳定性验证，并确认所有第三方组件的许可与商业使用条件。
 
-## 与上游 mybot 的关系
+## 与 agent-studio-device-firmware 的关系
 
-[mybot](https://github.com/junlon2006/mybot) 是面向边缘设备的跨平台 AI 多模态对话 SDK。
+[agent-studio-device-firmware](https://github.com/AgoraIO-Community/agent-studio-device-firmware) 是面向边缘设备的跨平台 AI 多模态对话 SDK。
 其核心采用 C99 编写，依赖 AOSL 提供可移植运行时，并通过平台 `ops` 接口获取 Wi-Fi、
 持久化存储、按键、显示、音频、视频和网络传输等设备能力。
 
-本仓库不重新定义 mybot SDK，而是提供 BK7259 平台所需的完整实现：
+本仓库不重新定义 SDK，而是提供 BK7259 平台所需的完整实现：
 
 - BK7259 AP/CP 双核启动、内存和 Flash 分区配置。
 - Wi-Fi APSTA 配网（含强制门户）、网络重连和凭据持久化。
@@ -32,7 +32,7 @@
 - 包含 CP 与 AP 固件的完整烧录镜像和 OTA 包。
 
 设备服务、Agora RTC 云服务和云端 AI Agent 不在本仓库范围内。要跑通完整流程，
-需要一个兼容 mybot 协议的设备服务。
+需要一个兼容 SDK 协议的设备服务。
 
 ## 系统架构
 
@@ -41,7 +41,7 @@ flowchart LR
     user["User"] <--> device["BK7259 device"]
     camera["MIPI CSI camera"] --> encoder["ISP MP<br/>HW FLEXA H.264"] --> platform
     device --> platform["BK7259 platform port<br/>Wi-Fi · Audio · Video · Key · LCD · KV · HTTPS"]
-    platform --> core["mybot SDK<br/>Provisioning · Pairing · Session state machine"]
+    platform --> core["SDK<br/>Provisioning · Pairing · Session state machine"]
     core <--> rtc["Agora RTC<br/>Audio + H.264 uplink"]
     rtc <--> agent["Cloud AI agent<br/>ASR · Visual understanding · LLM · TTS"]
 ```
@@ -53,30 +53,30 @@ BK7259 固件采用 AP/CP 双核架构：
   视频采集与编码、显示和 RTC 会话。
 - **控制循环**（[ap_main.c](bk_solution_ai/projects/mybot/ap/ap_main.c)）在联网前检查恢复出厂
   标记，再根据已保存的 Wi-Fi 凭据选择 APSTA 配网还是正常 STA 模式；网络就绪后启动
-  mybot SDK，并处理会话切换、恢复出厂请求和生命周期日志。
+  SDK，并处理会话切换、恢复出厂请求和生命周期日志。
 
 ## 仓库结构
 
 | 路径 | 职责 | 跟踪分支 |
 | --- | --- | --- |
 | `bk_avdk_smp/` | BK7259 AP/CP SDK 与平台基础组件 | `release/v4.0.1-mybot-r2` |
-| `bk_solution_ai/` | AI 解决方案、mybot SDK 快照、BK7259 平台适配和固件工程 | `release/v4.0.1-mybot-r2` |
+| `bk_solution_ai/` | AI 解决方案、SDK 快照、BK7259 平台适配和固件工程 | `release/v4.0.1-mybot-r2` |
 | `bk_solution_ai/projects/mybot/` | AP/CP 入口、板级配置、分区表和提示音资源 | 随 `bk_solution_ai` |
-| `bk_solution_ai/components/mybot/` | mybot 核心与 `platforms/bk7259` 实现 | 随 `bk_solution_ai` |
+| `bk_solution_ai/components/mybot/` | SDK 核心与 `platforms/bk7259` 实现 | 随 `bk_solution_ai` |
 
-两个 `-mybot-r2` 分支在 BK7259 `release/v4.0.1` 基础上包含 MyBot 产品改动和耘趣 V1.0
+两个 `-mybot-r2` 分支在 BK7259 `release/v4.0.1` 基础上包含 agora-r2-standard-devkit 产品改动和耘趣 V1.0
 新板适配，因此直接检出 `release/v4.0.1` 无法构建本固件。顶层仓库的 gitlink
 把两个子模块固定到确切 commit，以保证各开发环境使用同一份源码。`.gitmodules` 中的
 `branch` 仅在维护者显式从远端更新子模块时使用。
 
 `bk_solution_ai/components/mybot` 是一个组件容器，包含三个目录：
 
-- `mybot_sdk` —— 内嵌的 mybot SDK 源码和 BK7259 平台操作（编译为 `mybot_sdk` 组件）。
+- `mybot_sdk` —— 内嵌的 SDK 源码和 BK7259 平台操作（编译为 `mybot_sdk` 组件）。
 - `mybot_aosl` —— 内嵌的 AOSL 组件（`mybot_aosl`）。
 - `mybot_rtsa` —— 内嵌的 Agora RTSA SDK（`include/` 头文件与
   `lib/arm/libagora-rtc-sdk.a`）。
 
-解决方案内嵌的 mybot SDK 以上游 commit
+解决方案内嵌的 SDK 以上游 commit
 `e7793eba88f721304dc00d421706d4d788b81a43`（`main`，PR #113，SDK 版本仍为 1.2.0）的完整源码快照
 为基线，保留经 RTM P2P 与频道消息接收 DeviceCommand v1，包含音量设置/增减、扬声器 PCM
 静音及开心/失落/愤怒/惊讶四种场景命令。执行前核对当前发送者、频道、会话及会话代次。
@@ -112,7 +112,7 @@ BK7259 视图处理声纹与服务端阶段 indicator 的 bit 0-3；一次性表
 - 支持 Git submodule 的 Git。
 - Linux 构建环境，以及 `bk_avdk_smp` 所需的交叉编译工具链。
 - 耘趣 V1.0 / Robot R2 接线的 BK7259 开发板，使用 GC9503CV MIPI 屏；当前三路音频配置见下文。
-- 可访问兼容的 mybot 设备服务和有效的 Agora 服务配置。
+- 可访问兼容的 SDK 设备服务和有效的 Agora 服务配置。
 
 板级文档随子模块提供：解决方案与 AVDK 见 `bk_solution_ai/docs/bk7259/`，
 SDK 与烧录工具见 `bk_avdk_smp`。
@@ -122,8 +122,8 @@ SDK 与烧录工具见 `bk_avdk_smp`。
 通过 HTTPS 克隆本仓库及其子模块：
 
 ```bash
-git clone --branch release/v4.0.1-mybot-r2 --recurse-submodules https://github.com/junlon2006/mybot-bk7259.git
-cd mybot-bk7259
+git clone --branch main --recurse-submodules https://github.com/AgoraIO-Community/agora-r2-standard-devkit.git
+cd agora-r2-standard-devkit
 ```
 
 如果顶层仓库已经克隆但未拉取子模块，执行：
@@ -200,7 +200,7 @@ CP 与 AP 的独立镜像分别位于：
    `mybot-xxxx` SoftAP。
 2. 连接该 SoftAP 并打开 `http://192.168.4.1/`，选择目标网络并提交凭据。配置页面也会
    自动弹出，无需手动输入地址，详见 [Wi-Fi 配网](#wi-fi-配网)。
-3. STA 链路获取到 IPv4 地址后，门户和 SoftAP 停止，设备启动 mybot SDK 完成注册、配对
+3. STA 链路获取到 IPv4 地址后，门户和 SoftAP 停止，设备启动 SDK 完成注册、配对
    和鉴权。
 4. 未绑定的设备会显示并播报配对码，在网页控制台输入该码；绑定完成后，短按松手发起
    全双工音频 AI 对话，再次短按松手结束对话；启用 `CONFIG_MYBOT_VIDEO=y` 后同时提供摄像头视频上行。
@@ -320,7 +320,7 @@ CP 启动 AP 后，AP 调用 `bk_init()`、打印版本并初始化媒体服务�
 
 ## 显示
 
-产品层从平台准备到平台关闭全程独占一块 GC9503CV MIPI 屏，因此在 mybot SDK 停止期间
+产品层从平台准备到平台关闭全程独占一块 GC9503CV MIPI 屏，因此在 SDK 停止期间
 配网和恢复出厂界面依然可见。物理分辨率为 480x640，按 640x480 的逻辑 RGB565 画面渲染。
 GPIO20 控制 3.3V 供电，GPIO29 控制 LCD/摄像头共用的 2.8V 电源，GPIO42 为复位，
 GPIO40 背光低有效。GPIO27 在平台准备阶段输出高电平，使能摄像头外部 1.2V 电源。
@@ -453,7 +453,7 @@ SDK仍接收16 kHz单声道S16 PCM，不增加ASR输出端口或UI方向回调�
 生成 `640x480` NV12 帧，硬件 FLEXA H.264 编码器通过 Agora RTSA 主视频流发送完整 access
 unit。设备不接收或渲染远端视频，音频链路仍为全双工。
 
-启动 mybot 时只初始化视频 context，摄像头和编码器保持关闭；RTC 报告会话已连接后才打开
+启动 SDK 时只初始化视频 context，摄像头和编码器保持关闭；RTC 报告会话已连接后才打开
 摄像头并启动编码。结束对话时，在离开 RTC 前依次停止视频 worker、编码器和摄像头，
 通过 GPIO30 保持传感器复位；LCD 板级电源 owner 持有的 GPIO29/2.8V 与 GPIO27/1.2V
 继续开启。外部 1.2V 电源在摄像头探测之前使能，启动日志为
@@ -469,7 +469,7 @@ RTSA 的带宽估计回调会更新编码器目标
 
 ## Wi-Fi 配网
 
-Wi-Fi 由产品层独立于 mybot SDK 生命周期持有。启动时固件从 EasyFlash 读取一条带版本的
+Wi-Fi 由产品层独立于 SDK 生命周期持有。启动时固件从 EasyFlash 读取一条带版本的
 凭据记录：优先尝试已保存的网络；未配网设备或已保存网络拿不到 IPv4 地址时，进入
 [烧录与运行](#烧录与运行) 中描述的 APSTA 门户流程。
 
@@ -504,13 +504,13 @@ python3 bk_solution_ai/projects/mybot/scripts/generate_assets_c.py \
 
 ## 源码边界
 
-- 内嵌的 mybot SDK `include/`、`src/` 以上游完整快照为基线，并包含 `SDK_REVISION` 明示的
+- 内嵌的 SDK `include/`、`src/` 以上游完整快照为基线，并包含 `SDK_REVISION` 明示的
   BK7259 目标 patch；`platforms/` 是 BK7259 平台适配源码。
 - 内嵌的 AOSL 锁定在记录的版本，包括已声明的五处 BK7259 HAL 修改。
 - `bk_avdk_smp` 使用 `release/v4.0.1-mybot-r2` 分支，在上游 `release/v4.0.1` 基础上包含
   双核强制门户 DNS 服务和 GC9503CV R2 屏驱动；当前音频适配另从配套新参考同步4个
-  三路输入AEC相关文件及配套库校验清单。其他tracked内容保持，mybot的音频、视频、配网和显示集成使用其公开组件API。
-- BK 平台源码只通过 `<mybot/platform/...>` 引用 mybot。
+  三路输入AEC相关文件及配套库校验清单。其他tracked内容保持，SDK 的音频、视频、配网和显示集成使用其公开组件API。
+- BK 平台源码只通过 `<mybot/platform/...>` 引用 SDK。
 - `projects/mybot/ap/ap_main.c` 是公开 `<mybot/mybot.h>` API 的唯一应用生命周期使用者，
   也是唯一包含公开头 `<mybot/mybot_version.h>` 的产品源码。
 - RTSA 静态库按常规方式链接，绝不使用 `--whole-archive`。
@@ -526,7 +526,7 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-维护者可显式更新两个 mybot 分支：
+维护者可显式更新两个子模块跟踪分支：
 
 ```bash
 git submodule update --remote --checkout bk_avdk_smp bk_solution_ai
@@ -554,11 +554,11 @@ git diff --submodule=log
 
 ## 文档
 
-- [BK7259 MyBot 工程说明](bk_solution_ai/projects/mybot/README_CN.md)
-- [mybot 项目](https://github.com/junlon2006/mybot)
-- [mybot 英文文档](https://github.com/junlon2006/mybot/blob/main/README.md)
-- [mybot 移植指南](https://github.com/junlon2006/mybot/blob/main/docs/PORTING.md)
-- [mybot 嵌入式集成指南](https://github.com/junlon2006/mybot/blob/main/docs/EMBEDDED.md)
+- [agora-r2-standard-devkit 工程说明](bk_solution_ai/projects/mybot/README_CN.md)
+- [agent-studio-device-firmware 项目](https://github.com/AgoraIO-Community/agent-studio-device-firmware)
+- [agent-studio-device-firmware 英文文档](https://github.com/AgoraIO-Community/agent-studio-device-firmware/blob/main/README.md)
+- [agent-studio-device-firmware 移植指南](https://github.com/AgoraIO-Community/agent-studio-device-firmware/blob/main/docs/PORTING.md)
+- [agent-studio-device-firmware 嵌入式集成指南](https://github.com/AgoraIO-Community/agent-studio-device-firmware/blob/main/docs/EMBEDDED.md)
 - [BK7259 SDK 与解决方案文档](bk_solution_ai/docs/bk7259/)
 
 ## 贡献
@@ -566,13 +566,13 @@ git diff --submodule=log
 欢迎提交 Issue 和 Pull Request：
 
 - 与平台无关的 SDK 功能和公开 API 改动，请提交到
-  [上游 mybot 项目](https://github.com/junlon2006/mybot)。
+  [上游 agent-studio-device-firmware 项目](https://github.com/AgoraIO-Community/agent-studio-device-firmware)。
 - BK7259 平台或固件改动，请提交到
   [bk_solution_ai](https://github.com/junlon2006/bk_solution_ai) 或
   [bk_avdk_smp](https://github.com/junlon2006/bk_avdk_smp)，然后在本仓库更新对应的
   子模块指针。
 - 集成、构建和文档问题请提交到
-  [mybot-bk7259 Issues](https://github.com/junlon2006/mybot-bk7259/issues)。
+  [agora-r2-standard-devkit Issues](https://github.com/AgoraIO-Community/agora-r2-standard-devkit/issues)。
 
 请保持每个改动聚焦，说明所用硬件、配置和验证方式，不要提交构建产物。
 
@@ -589,12 +589,12 @@ git diff --submodule=log
 - [LVGL 许可证](bk_avdk_smp/ap/components/lvgl/LICENCE.txt)
 - [LVGL 视图、字体和模拟器来源](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
 - [BK7259 第三方声明](bk_solution_ai/components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)
-- [mybot 第三方声明](https://github.com/junlon2006/mybot/blob/main/THIRD_PARTY_NOTICES.md)
+- [agent-studio-device-firmware 第三方声明](https://github.com/AgoraIO-Community/agent-studio-device-firmware/blob/main/THIRD_PARTY_NOTICES.md)
 
 AOSL 许可证在 Apache-2.0 之外还包含附加条款，因此本项目不得被描述为整体采用
 Apache-2.0 许可。
 
-Agora RTSA 二进制属于专有构建输入，上游 mybot SDK 不再分发。本仓库将其内嵌在
+Agora RTSA 二进制属于专有构建输入，上游 SDK 不再分发。本仓库将其内嵌在
 `bk_solution_ai/components/mybot/mybot_rtsa`，为已验证的 BK7259 包 RTSA v1.10.1
 构建 `1278380`，包名记录在其 `PACKAGE_INFO` 中，并由 `mybot_sdk/CMakeLists.txt` 固定
 头文件与库的摘要：
