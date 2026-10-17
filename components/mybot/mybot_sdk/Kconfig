@@ -28,7 +28,7 @@ menu "MyBot BK7259 platform"
             Enable EB521 control and manual gimbal_cmd/gimbal_scene commands
             using the R2 board's UART2 connection (GPIO2 TX, GPIO3 RX, 115200
             baud, 8N1). Motion commands are serialized and manual scenes return
-            to center when complete. MCP emotion commands update only the LCD.
+            to center when complete. Local LCD expressions do not move the gimbal.
 
     config MYBOT_VIDEO
         bool "Enable MyBot encoded video uplink"

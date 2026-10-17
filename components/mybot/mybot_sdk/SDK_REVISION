@@ -1,8 +1,9 @@
 repository=https://github.com/junlon2006/mybot.git
-commit=e7793eba88f721304dc00d421706d4d788b81a43
+commit=39d5ed122aab51d90c1c531298c4ead8dc35b104
 branch=main
 revision_kind=upstream-snapshot-with-target-patch
-upstream_includes=src/rtc/mybot_agora_rtc.c (RTC_LOG_ERROR and AOSL log-level preservation are present upstream)
+upstream_src_include_sha256=27e990e46d24048cce4605eefac89cbe3417578b70e4447876f3ec9c23337f79
+upstream_includes=message.user envelope decoding, MCP set/adjust volume, RTC_LOG_ERROR and AOSL log-level preservation
 modified=src/support/mybot_http_client.c (log HTTPS request and response bodies on one line for BK7259 debug)
-src_include_sha256=fb7bd88a4d191e3b341c54d8a993b70b4a7b7ea3bd4632411f7899156015fa67
+src_include_sha256=dd1aa22c2155e6060ae0f69b0f4109ddf3b8e4642d2f5c9240b890387cdda5c6
 license_sha256=c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4

@@ -94,14 +94,18 @@ preparation rules, and validation boundaries.
 - `mybot_rtsa` — the vendored Agora RTSA SDK (`include/` headers and
   `lib/arm/libagora-rtc-sdk.a`).
 
-The product vendors the mybot SDK from upstream commit
-`e7793eba88f721304dc00d421706d4d788b81a43` on `main` (PR #113; SDK version remains 1.2.0).
-This snapshot retains DeviceCommand v1 reception over RTM P2P and channel messages, volume set/adjust,
-speaker PCM mute, and happy/sad/angry/surprised scene commands. Execution checks the active sender,
+The product vendors the latest committed mybot SDK snapshot from upstream `main`
+at `39d5ed122aab51d90c1c531298c4ead8dc35b104` (PR #115; SDK version remains 1.2.0).
+MCP control over RTM P2P and channel messages requires one `message.user` envelope with
+`data_type: "message"` and string `content` containing DeviceCommand v1. Supported actions are
+`audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`: integer
+-100–100). Positive deltas increase volume, negative deltas decrease it, and zero leaves it
+unchanged; the result is clamped to 0–100. Bare commands, `audio.set_mute` and emotion commands
+are not executed over RTM. Execution checks the active sender,
 channel, conversation, and conversation generation. `issued_at` and `expires_at` may be omitted or
 provided but are ignored; there is no expiry or clock check. Each session deduplicates the most
-recent 16 distinct `command_id` values in FIFO order. Duplicates do not refresh their position;
-new IDs evict the oldest, so an evicted ID may execute again.
+recent 16 distinct `command_id` values in FIFO order. Duplicates do not refresh their position
+or repeat a relative volume adjustment; new IDs evict the oldest, so an evicted ID may execute again.
 The existing voiceprint and server-phase flow is retained, as are nonblocking control-event delivery,
 re-pairing cancellation, prompt-generation tracking, and HTTP/JSON boundary fixes.
 It also includes serialized video control, deferred prompt teardown,
@@ -125,10 +129,10 @@ content to the logging layer and copying borrowed RTC error text while it is val
 AOSL HAL still has an 8 KiB buffer for the entire log line, so larger lines may be truncated.
 Ordinary RTM message logs remain DEBUG and are omitted at the default NOTICE level.
 
-MCP volume set/adjust uses the existing BK7259 volume adapter, and mute silences speaker PCM;
-the MCP command path still needs hardware validation. The BK7259 view handles indicator bits 0-3
-(voiceprint and server phases), while one-shot bits 4-7 select local LCD expressions without
-triggering EB521 UART/gimbal movement. Manual CLI gimbal control is available only with
+MCP volume set/adjust uses the existing BK7259 volume adapter; the command path still needs
+hardware validation. The BK7259 view retains local expressions and indicator bits 0-3
+(voiceprint and server phases). Cloud MCP emotion input is disabled in this SDK snapshot.
+Local LCD expressions do not trigger EB521 UART/gimbal movement. Manual CLI gimbal control is available only with
 `CONFIG_MYBOT_GIMBAL=y`; the current audio comparison build disables that option.
 
 ## Requirements
@@ -426,14 +430,11 @@ All 23 simulator expressions are available through the independent
 module. `bk7259_lcd_set_expression()` copies a persistent local override to the display owner;
 `bk7259_lcd_clear_expression()` restores the latest automatic face. Overrides are accepted only
 on `READY`/`IN_CONVERSATION` pages; workflow changes clear them, and factory-reset and operating
-guidance retain priority. Repeating a local request does not restart it. A later MCP emotion
-replaces the local override.
+guidance retain priority. Repeating a local request does not restart it.
 
-MCP HAPPY/SAD/ANGRY/SURPRISED select HAPPY/SAD/ANNOYED/SURPRISED on the LCD for
-2 s/3 s/1.2 s/0.8 s, then restore the latest automatic face. Each hold excludes the entering
-250 ms transition, as does the conversation opener's 300 ms hold; disabling UI animations
-removes that transition time. A new MCP request replays even the same expression; ordinary
-status updates neither restart nor cancel it. Expressions do not cycle automatically or
+Cloud MCP emotion input is disabled in the current SDK snapshot. The conversation opener's
+300 ms hold excludes its entering 250 ms transition; disabling UI animations removes that
+transition time. Expressions do not cycle automatically or
 control the gimbal; manual UART CLI control remains independent when enabled with
 `CONFIG_MYBOT_GIMBAL=y`. It is disabled in the current audio comparison build.
 Names, examples, and visual mappings are in the

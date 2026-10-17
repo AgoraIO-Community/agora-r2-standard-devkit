@@ -15,17 +15,22 @@ parent repository; official BK dependencies receive versioned patches in isolate
 Its normal UI follows the simulator's
 process-gray skin and pixel-glasses face.
 
-The vendored SDK now follows `main` commit
-`e7793eba88f721304dc00d421706d4d788b81a43` (PR #113, version 1.2.0). RTM
-DeviceCommand v1 keeps sender/channel/conversation/generation checks, but
+The vendored SDK follows the latest committed upstream `main` snapshot
+`39d5ed122aab51d90c1c531298c4ead8dc35b104` (PR #115, version 1.2.0), with the existing
+HTTPS request/response body logging patch. MCP control over RTM requires one `message.user`
+envelope, `data_type: "message"`, and string `content` containing DeviceCommand v1. It supports
+`audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`:
+integer -100–100). Positive deltas increase volume, negative deltas decrease it, and zero leaves
+it unchanged; the result is clamped to 0–100. Bare commands, `audio.set_mute` and emotion commands
+are not executed over RTM. Sender/channel/conversation/generation checks remain in effect;
 `issued_at`/`expires_at` are optional and ignored, with no clock or expiry check.
 The current session deduplicates the latest 16 distinct `command_id` values
-in FIFO order: duplicates do not refresh their position, new IDs evict the
-oldest, and evicted IDs may execute again. MCP volume set/adjust routes through
-the existing volume adapter and mute silences speaker PCM; the command path
-still needs hardware validation. Existing voiceprint/phase indicators remain
-supported; one-shot emotion bits 4-7 select local LCD expressions without
-triggering EB521 UART/gimbal movement.
+in FIFO order: duplicates do not refresh their position or repeat a relative adjustment,
+new IDs evict the oldest, and evicted IDs may execute again. MCP volume set/adjust routes
+through the existing volume adapter; the command path still needs hardware validation.
+Local expressions and existing voiceprint/phase indicators remain supported; cloud MCP
+emotion input is disabled in this snapshot. Local LCD expressions do not trigger EB521
+UART/gimbal movement.
 
 The current audio comparison build sets `# CONFIG_MYBOT_GIMBAL is not set` in the
 AP defconfig. The gimbal module, its UART2 pin mapping and CLI registration are
@@ -38,8 +43,8 @@ pitch up 20 degrees and pan right 10 degrees relatively, then starts again at
 the first command. TX/RX bytes and CRC-checked ACKs are logged. A busy call does
 not advance the list. After a timeout, another call sends the next command;
 commands are never retried automatically. The first manual call suspends
-automatic centering until platform restart; MCP expressions independently
-continue to update the LCD.
+automatic centering until platform restart; local expressions and phase updates
+continue to update the LCD independently.
 
 Use `ap_cmd gimbal_scene happy`, `sad`, `angry` or `surprised` to execute one
 complete existing gimbal trajectory and return to center. Without a name,
@@ -333,20 +338,16 @@ not when scanout completes, and `-1` for an invalid expression or an unavailable
 face page. They use the existing LCD snapshot lock and mailbox, never caller-side
 LVGL. Requests are accepted only on prepared, running `READY`/`IN_CONVERSATION`
 pages; provisioning, reset, and shutdown reject them. Workflow screen changes
-clear overrides. A local override persists through phase updates until cleared,
-the workflow changes, or a later MCP emotion replaces it. Requesting the same
-local expression does not replay its transition.
+clear overrides. A local override persists through phase updates until cleared or
+the workflow changes. Requesting the same local expression does not replay its transition.
 
-MCP HAPPY/SAD/ANGRY/SURPRISED select HAPPY/SAD/ANNOYED/SURPRISED on the LCD and
-hold for 2 s/3 s/1.2 s/0.8 s. With animations enabled, the entering 250 ms
-transition is additional to each hold, including the opener's 300 ms hold.
-With animations disabled, only the hold applies. The hold starts when the UI
-owner displays the request. A new MCP command replaces the foreground and
-replays even the same name; ordinary renders do not restart or cancel it.
-At expiry the UI restores the latest automatic face, including PROCESSING if
-THINKING has continued for three seconds in the background. Leaving the
-conversation cancels its foreground and deadlines; operational guidance and
-factory reset always take precedence.
+Cloud MCP emotion input is disabled in the current SDK snapshot. With animations enabled,
+the opener's 300 ms hold excludes its entering 250 ms transition; with animations disabled,
+only the hold applies. The hold starts when the UI owner displays the request. Ordinary
+renders do not restart it. At expiry the UI restores the latest automatic face, including
+PROCESSING if THINKING has continued for three seconds in the background. Leaving the
+conversation cancels its foreground and deadlines; operational guidance and factory reset
+always take precedence.
 
 All expressions are LCD-only and do not drive the gimbal; manual UART CLI
 control remains independent when `CONFIG_MYBOT_GIMBAL=y` and is disabled in the
@@ -445,7 +446,8 @@ Video-specific checks require a build with `CONFIG_MYBOT_VIDEO=y`.
 - [ ] Verify LISTENING, THINKING → PROCESSING after three continuous seconds, and NEUTRAL during SPEAKING or no active phase; repeated updates must not reset the thinking clock.
 - [ ] Verify four terminal rows, lowercase expression names, actual SDK state, and session-scoped phase/voiceprint text; compare all 23 faces and their motion with the simulator.
 - [ ] Exercise persistent local set/clear, invalid names/IDs, phase updates, workflow changes, and reset priority; clear must restore the latest automatic face.
-- [ ] Verify MCP holds of 2 s/3 s/1.2 s/0.8 s plus entering transitions, same-name replay, replacement of a local override, and restoration of the latest phase at expiry; ordinary updates must not restart the hold or send gimbal motions.
+- [ ] Test MCP `audio.set_volume` at 0, 50 and 100 through the `message.user` envelope; bare commands, mute and emotion commands must have no effect.
+- [ ] Test wrapped `audio.adjust_volume` with positive, negative and zero deltas, including -100 and 100; results must clamp to 0–100, and repeating a command ID must not adjust the volume again.
 - [ ] Verify phase/voiceprint text appears only during a real conversation, voiceprint-only updates preserve the face, and hangup removes session fields and cancels pending expression deadlines.
 - [ ] Verify both languages, web-console pairing instructions, round-bezel clearance, and factory-reset display priority.
 - [ ] A hold below 5 seconds performs only the state-appropriate short action on release; a 5-second hold resets once and suppresses that action.

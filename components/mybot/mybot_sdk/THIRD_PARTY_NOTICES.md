@@ -4,8 +4,9 @@
 
 The sources under `include/` and `src/` are based on a snapshot of
 https://github.com/junlon2006/mybot at commit
-`e7793eba88f721304dc00d421706d4d788b81a43`, with the HTTPS body logging patch recorded in
-`SDK_REVISION`. They are provided under the Apache License 2.0 in `LICENSE`,
+`39d5ed122aab51d90c1c531298c4ead8dc35b104`, with the BK7259 HTTPS debug patch
+recorded in `SDK_REVISION`. Its source digests identify the upstream snapshot
+and vendored contents. They are provided under the Apache License 2.0 in `LICENSE`,
 except where a source file states otherwise.
 
 `src/support/mybot_json.c` and `src/internal/mybot_json.h` are namespaced

@@ -79,12 +79,15 @@ BK7259 固件采用 AP/CP 双核架构：
 - `mybot_rtsa` —— 内嵌的 Agora RTSA SDK（`include/` 头文件与
   `lib/arm/libagora-rtc-sdk.a`）。
 
-产品内嵌的 mybot SDK 以上游 commit
-`e7793eba88f721304dc00d421706d4d788b81a43`（`main`，PR #113，SDK 版本仍为 1.2.0）的完整源码快照
-为基线，保留经 RTM P2P 与频道消息接收 DeviceCommand v1，包含音量设置/增减、扬声器 PCM
-静音及开心/失落/愤怒/惊讶四种场景命令。执行前核对当前发送者、频道、会话及会话代次。
+产品内嵌的 mybot SDK 同步上游 `main` 最新已提交快照
+`39d5ed122aab51d90c1c531298c4ead8dc35b104`（PR #115，SDK 版本仍为 1.2.0）。
+通过 RTM P2P 与频道消息进行 MCP 控制时，仅接受单层 `message.user` 信封，`data_type` 为
+`message`，字符串 `content` 内包含 DeviceCommand v1。支持 `audio.set_volume`
+（`params.level` 为 0–100 的整数）和 `audio.adjust_volume`（`params.delta` 为 -100–100 的整数）。
+正数增加音量，负数减少音量，0 保持不变，结果钳制到 0–100。裸命令、`audio.set_mute`
+及情绪命令不再通过 RTM 执行。执行前核对当前发送者、频道、会话及会话代次。
 `issued_at`/`expires_at` 可以省略或提供，均忽略，不检查时钟或有效期。
-本会话最近 16 个不同的 `command_id` 按 FIFO 去重，重复不会刷新位置，新 ID 替换最老记录，
+本会话最近 16 个不同的 `command_id` 按 FIFO 去重，重复不会刷新位置或重复增减音量，新 ID 替换最老记录，
 已被淘汰的 ID 可能再次执行。原有声纹与服务端阶段处理保持不变，控制事件非阻塞投递、
 重新配对时清理开聊请求、提示音代次跟踪及 HTTP/JSON 边界修复也保留。
 同时包含视频控制串行化、提示音延后销毁、统一的 RTM 到 LCD 状态处理，以及 RTM
@@ -104,10 +107,9 @@ SDK 移除 RTM 字符串的 512 字节预览限制和 RTC 错误的 64 字节固
 并在 RTC 错误字符串借用有效期间完成复制。BK7259 AOSL HAL 仍使用 8 KiB 的整行日志缓冲，
 更长的日志行仍可能截断。常规 RTM 消息日志仍为 DEBUG，默认 NOTICE 等级不打印。
 
-MCP 音量设置/增减复用已有 BK7259 音量适配，静音通过清零扬声器 PCM 实现；
-MCP 命令通路尚需真机验证。
-BK7259 视图处理声纹与服务端阶段 indicator 的 bit 0-3；一次性表情 bit 4-7 仅映射到
-本地 LCD 表情，不触发 EB521 UART/云台动作。手动 CLI 舵机控制需启用
+MCP 音量设置/增减复用已有 BK7259 音量适配，命令通路尚需真机验证。
+BK7259 视图保留本地表情及声纹/服务端阶段 indicator 的 bit 0-3；当前 SDK 快照关闭云端
+MCP 情绪入口。本地 LCD 表情不触发 EB521 UART/云台动作。手动 CLI 舵机控制需启用
 `CONFIG_MYBOT_GIMBAL=y`，当前音频对比固件已关闭该开关。
 
 ## 环境要求
@@ -375,12 +377,10 @@ Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到
 提供。`bk7259_lcd_set_expression()` 复制持久本地覆盖请求到显示所有者，
 `bk7259_lcd_clear_expression()` 恢复最新自动表情。仅 `READY`/`IN_CONVERSATION`
 表情页面接受覆盖，流程页面切换时清除覆盖；配网等操作引导与恢复出厂保持优先。
-重复本地请求不重播，后到的 MCP 表情会替换本地覆盖。
+重复本地请求不重播。
 
-MCP 的 HAPPY/SAD/ANGRY/SURPRISED 分别显示 LCD 的 HAPPY/SAD/ANNOYED/SURPRISED，
-保持 2 秒/3 秒/1.2 秒/0.8 秒后恢复最新自动表情。保持时间不包含进入时的 250 ms 过渡，
-会话开场的 300 ms 同样另计进入过渡；关闭 UI 动画时不增加这段过渡时间。
-同名新 MCP 请求会重播，普通状态更新不重置或取消它。表情不自动轮播，
+当前 SDK 快照关闭云端 MCP 情绪入口。会话开场的 300 ms 另计进入时的 250 ms 过渡；
+关闭 UI 动画时不增加这段过渡时间。表情不自动轮播，
 不触发云台动作；手动 UART CLI 独立保留，仅在 `CONFIG_MYBOT_GIMBAL=y` 时可用，
 当前音频对比固件关闭。完整列表和调用示例见
 [工程说明](projects/mybot/README_CN.md#6-r2-音频与显示)。
