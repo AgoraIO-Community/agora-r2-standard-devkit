@@ -8,8 +8,9 @@
 
 **mybot-bk7259** is the BK7259 reference implementation of the open-source
 [mybot](https://github.com/junlon2006/mybot) AI multimodal conversation SDK. This repository organizes
-the BK7259 AP/CP SDK, the AI solution, the BK7259 platform port, and a buildable dual-core firmware
-project as pinned Git submodules. It is intended to provide reproducible builds, a practical
+the official BK7259 AP/CP SDK and AI solution as pinned Git submodules. Product sources and the
+BK7259 platform port live in this parent repository, with reviewed vendor patches applied in
+isolated build copies. It is intended to provide reproducible builds, a practical
 platform development baseline, and a shared foundation for community collaboration.
 
 > This project is an actively developed BK7259 reference implementation. Before using it in a
@@ -29,7 +30,7 @@ to run mybot on the BK7259 platform:
 
 - BK7259 AP/CP dual-core startup, memory layout, and Flash partition configuration.
 - Wi-Fi APSTA provisioning with a captive portal, network reconnection, and credential persistence.
-- Microphone capture with on-device hardware AEC, speaker playback, volume control, and audio power
+- Three analog microphone inputs with appended digital-reference AEC, speaker playback, volume control, and audio power
   management.
 - Optional MIPI CSI camera capture, ISP MP scaling, hardware FLEXA H.264 encoding, and encoded video uplink.
 - Single GPIO conversation/factory-reset key, MIPI display, EasyFlash KV, HTTPS, and device identity
@@ -59,7 +60,7 @@ The BK7259 firmware uses an AP/CP dual-core architecture:
 - **AP** initializes the media service and runs the product control loop. It hosts the platform
   adapters, device lifecycle, networking, audio, video capture and encoding, display, and RTC
   session.
-- **Control loop** ([ap_main.c](bk_solution_ai/projects/mybot/ap/ap_main.c)) selects APSTA
+- **Control loop** ([ap_main.c](projects/mybot/ap/ap_main.c)) selects APSTA
   provisioning or normal STA mode according to the saved Wi-Fi credentials. After preparing the
   product-owned key, display, and network manager, it checks for an interrupted factory reset
   before registering the platform or starting the network and SDK. Once the network is up it
@@ -67,22 +68,25 @@ The BK7259 firmware uses an AP/CP dual-core architecture:
 
 ## Repository layout
 
-| Path | Responsibility | Tracking branch |
+| Path | Responsibility | Source |
 | --- | --- | --- |
-| `bk_avdk_smp/` | BK7259 AP/CP SDK and platform foundation components | `release/v4.0.1-mybot-r2` |
-| `bk_solution_ai/` | AI solution, mybot SDK snapshot, BK7259 platform port, and firmware project | `release/v4.0.1-mybot-r2` |
-| `bk_solution_ai/projects/mybot/` | AP/CP entry points, board configuration, partition table, and prompt assets | From `bk_solution_ai` |
-| `bk_solution_ai/components/mybot/` | mybot core and the `platforms/bk7259` implementation | From `bk_solution_ai` |
+| `bk_avdk_smp/` | BK7259 AP/CP SDK and platform foundation components | Official `bekencorp/bk_avdk_smp`, commit `584b94792` |
+| `bk_solution_ai/` | BK AI solution components | Official `bekencorp/bk_solution_ai`, commit `03aadb497` |
+| `projects/mybot/` | AP/CP entry points, R2 board configuration, partition table, and prompt assets | Parent repository |
+| `components/mybot/` | mybot SDK, BK7259 port, AOSL, and RTSA | Parent repository |
+| `patches/`, `vendor.lock.json` | Reviewed vendor changes, fixed revisions, and patch hashes | Parent repository |
+| `scripts/` | Dependency preparation, source checks, and isolated bilingual builds | Parent repository |
 
-Both `-mybot-r2` branches extend the `-mybot` integration for the Yunqu V1.0 R2 board, including its
-LCD, GPIO key, and audio wiring. They descend from the corresponding BK7259 `release/v4.0.1`
-release, so a plain `release/v4.0.1` checkout does not build this firmware. The gitlinks in the
-top-level repository pin both submodules to exact commits so that every development environment
-uses the same source revisions. The `branch` values
-in `.gitmodules` are used only when maintainers explicitly update the submodules from their
-remotes.
+The `release/v4.0.1-mybot-r2` branch targets the Yunqu V1.0 R2 board. Its product sources and
+necessary DNS, GC9503CV LCD, three-input AEC, and camera-helper patches are maintained here;
+neither personal BK fork is required. The two official submodules remain clean at their exact
+gitlink revisions. Builds validate `vendor.lock.json`, copy the official baselines into a generated
+workspace, and apply the recorded patches there. This migration preserves the existing R2 behavior
+and algorithm library; it does not upgrade the vendor SDK. See
+[official dependency management](docs/OFFICIAL_DEPENDENCIES.md) for full pins, patch provenance,
+preparation rules, and validation boundaries.
 
-`bk_solution_ai/components/mybot` is a component container holding three directories:
+`components/mybot` is a component container holding three directories:
 
 - `mybot_sdk` — the vendored mybot SDK source and the BK7259 platform operations (compiled as the
   `mybot_sdk` component).
@@ -90,7 +94,7 @@ remotes.
 - `mybot_rtsa` — the vendored Agora RTSA SDK (`include/` headers and
   `lib/arm/libagora-rtc-sdk.a`).
 
-The solution vendors the mybot SDK from upstream commit
+The product vendors the mybot SDK from upstream commit
 `e7793eba88f721304dc00d421706d4d788b81a43` on `main` (PR #113; SDK version remains 1.2.0).
 This snapshot retains DeviceCommand v1 reception over RTM P2P and channel messages, volume set/adjust,
 speaker PCM mute, and happy/sad/angry/surprised scene commands. Execution checks the active sender,
@@ -165,8 +169,8 @@ local repositories only as command-scoped mirrors:
 
 ```bash
 git -c protocol.file.allow=always \
-    -c 'url.file:///path/to/bk_avdk_smp.insteadOf=https://github.com/junlon2006/bk_avdk_smp.git' \
-    -c 'url.file:///path/to/bk_solution_ai.insteadOf=https://github.com/junlon2006/bk_solution_ai.git' \
+    -c 'url.file:///path/to/bk_avdk_smp.insteadOf=https://github.com/bekencorp/bk_avdk_smp.git' \
+    -c 'url.file:///path/to/bk_solution_ai.insteadOf=https://github.com/bekencorp/bk_solution_ai.git' \
     submodule update --init
 ```
 
@@ -174,12 +178,12 @@ This does not persist local paths or change the published submodule URLs.
 
 ## Build the firmware
 
-`bk_avdk_smp` and `bk_solution_ai` must remain sibling directories. Run the following commands
-from the repository root:
+Run the managed build from the repository root. It verifies the official pins and patch hashes,
+prepares patched vendor copies, and builds separate Chinese and English AP/CP projects:
 
 ```bash
-make -C bk_solution_ai/projects/mybot clean SDK_DIR="$PWD/bk_avdk_smp"
-make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
+python3 scripts/check_sources.py
+python3 scripts/build_all.py
 ```
 
 `scripts/build_all.py` supports separate Chinese and English AP/CP builds with
@@ -191,19 +195,23 @@ configuration and ELF endpoint. HTTP builds add `-http` to the image name, for e
 Build both languages with `python3 scripts/build_all.py`, or select one with
 `python3 scripts/build_all.py --language zh-CN` / `--language en-US`.
 `--dry-run`, `--no-clean`, `--build-root`, and `--output-root` are also supported.
-The script keeps the original project configuration and build directory intact;
+The script keeps the source project configuration and official submodules intact;
 images are published only after all requested variants succeed.
 
-Set `MYBOT_AUDIO_PTIME_MS` to `20`, `40`, or `60` when validating packet-time variants; the
-default is `60`. Clean before switching variants so the value is applied by a fresh CMake
-configure:
+Only `MYBOT_AUDIO_PTIME_MS=60` is supported. Other values are rejected.
+To invoke vendor `make` directly, first prepare the selected language:
 
 ```bash
-MYBOT_AUDIO_PTIME_MS=20 \
-    make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
+python3 scripts/prepare_vendor.py --language zh-CN
 ```
 
-Build outputs are written to `bk_solution_ai/projects/mybot/build/bk7259/mybot/package/`:
+Run the complete `make` command printed by that tool; it names the generated project and its
+matching explicit `SDK_DIR`. Do not build the source project against the unpatched official SDK.
+The preparation script does not fetch, reset, or edit the official checkouts. See the
+[dependency guide](docs/OFFICIAL_DEPENDENCIES.md) for cache and upgrade rules.
+
+For the default Chinese video build, outputs are under
+`build/build-bk7259-zh-CN-video/solution/projects/mybot/build/bk7259/mybot/package/`:
 
 | File | Purpose |
 | --- | --- |
@@ -213,8 +221,11 @@ Build outputs are written to `bk_solution_ai/projects/mybot/build/bk7259/mybot/p
 
 The individual CP and AP images are written to:
 
-- `bk_solution_ai/projects/mybot/build/bk7259/mybot/bk7259/app.bin`
-- `bk_solution_ai/projects/mybot/build/bk7259/mybot/bk7259_ap/app.bin`
+- `<generated-project>/build/bk7259/mybot/bk7259/app.bin`
+- `<generated-project>/build/bk7259/mybot/bk7259_ap/app.bin`
+
+The English variant uses `build/build-bk7259-en-US-video/`; `--build-root` and `--output-root`
+can keep test builds and firmware separate from existing outputs.
 
 ## Flash and run
 
@@ -250,10 +261,10 @@ Porting to different BK7259 hardware requires corresponding configuration and pl
 
 The primary project configuration files are:
 
-- AP: `bk_solution_ai/projects/mybot/ap/config/bk7259_ap/defconfig`
-- CP: `bk_solution_ai/projects/mybot/cp/config/bk7259/config`
-- Flash partitions: `bk_solution_ai/projects/mybot/partitions/bk7259/auto_partitions.csv`
-- SRAM/PSRAM layout: `bk_solution_ai/projects/mybot/partitions/bk7259/ram_regions.csv`
+- AP: `projects/mybot/ap/config/bk7259_ap/defconfig`
+- CP: `projects/mybot/cp/config/bk7259/defconfig`
+- Flash partitions: `projects/mybot/partitions/bk7259/auto_partitions.csv`
+- SRAM/PSRAM layout: `projects/mybot/partitions/bk7259/ram_regions.csv`
 
 The `MyBot BK7259 platform` Kconfig menu provides:
 
@@ -282,8 +293,13 @@ The transport switch maps to the SDK's `MYBOT_ENABLE_HTTPS` and inverse
 `MYBOT_ALLOW_INSECURE_HTTP` compile definitions; it does not change RTC/RTM or the local
 HTTP provisioning portal.
 
+This R2 migration retains the previous two-root PEM trust store (ISRG Root X1 and DigiCert
+Global Root G2), rather than importing `main`'s regional single-root change. A server chain
+requiring GoDaddy G2 is not covered by this store; the overseas endpoint therefore needs separate
+certificate-chain validation before deployment. Certificate and hostname verification remain enabled.
+
 Everything else about the device identity is fixed by the port rather than configured:
-[ap_main.c](bk_solution_ai/projects/mybot/ap/ap_main.c) derives the device id at runtime from the
+[ap_main.c](projects/mybot/ap/ap_main.c) derives the device id at runtime from the
 per-chip device UID (read by the CP) using HMAC-SHA256 with `mybot-bk7259-device-id-v1` as the
 derivation key. The first 12 digest bytes are uppercase hex, formatted as
 `BK7259-<24 uppercase hex characters>`. It reports
@@ -306,7 +322,7 @@ platform preparation, including Wi-Fi provisioning and periods before the SDK at
 callback. Five seconds is the gesture threshold; completing reset also requires SDK and network
 shutdown.
 
-[usr_gpio_cfg.h](bk_solution_ai/projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h) sets GPIO47
+[usr_gpio_cfg.h](projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h) sets GPIO47
 (`KEY1`) as an input with an internal pull-up. The CEN button remains hardware reset only.
 
 ## Factory reset
@@ -333,10 +349,10 @@ to restore it if the final marker deletion fails. Boot checks a valid marker bef
 startup and resumes cleanup. If marker lookup reports invalid or unreadable data, the failure page
 requires a fresh long press. The marker is persisted when the product task processes the request,
 so power loss before that point does not establish a pending reset. Storage fault-detection limits are recorded in
-[UI_VALIDATION.md](bk_solution_ai/projects/mybot/UI_VALIDATION.md).
+[UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
 
-The independent [bk7259_key.h](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_key.h)
-and [bk7259_factory_reset.h](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_factory_reset.h)
+The independent [bk7259_key.h](components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_key.h)
+and [bk7259_factory_reset.h](components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_factory_reset.h)
 declare `bk7259_*` product requests and reset helpers. The platform registration abstraction remains
 in `mybot_bk7259_platform.h`.
 
@@ -406,7 +422,7 @@ factory-reset instructions remain available. GPU and touch stay disabled, and th
 not show a camera preview or control gimbal movement.
 
 All 23 simulator expressions are available through the independent
-[bk7259_expression.h](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_expression.h)
+[bk7259_expression.h](components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_expression.h)
 module. `bk7259_lcd_set_expression()` copies a persistent local override to the display owner;
 `bk7259_lcd_clear_expression()` restores the latest automatic face. Overrides are accepted only
 on `READY`/`IN_CONVERSATION` pages; workflow changes clear them, and factory-reset and operating
@@ -421,7 +437,7 @@ status updates neither restart nor cancel it. Expressions do not cycle automatic
 control the gimbal; manual UART CLI control remains independent when enabled with
 `CONFIG_MYBOT_GIMBAL=y`. It is disabled in the current audio comparison build.
 Names, examples, and visual mappings are in the
-[project guide](bk_solution_ai/projects/mybot/README.md#6-r2-audio-and-display).
+[project guide](projects/mybot/README.md#6-r2-audio-and-display).
 
 The simulator's 1024x896 artwork is scaled uniformly by 9/16 to a virtual 576x504 area at logical
 position `(32,-12)` on the 640x480 display. Only empty canvas space is cropped at the top and
@@ -431,7 +447,7 @@ signature is left-aligned. Fixed LVGL widgets and sampled curves draw the glasse
 Five small immutable A8 masks (13631 bytes in Flash) render filled hearts, stars, ellipses, cheeks, and tears without
 triangle-fan seams. They are generated locally from the reference geometry; no full-face images,
 additional canvas framebuffer, or UI task are required. The generator and reproduction command
-are documented in [display/SOURCES.md](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks).
+are documented in [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks).
 With animations enabled, face
 changes use a 250 ms transition, animated expressions retain their motion, and the cursor blinks
 every 500 ms. Repeated status updates preserve animation clocks; a changed automatic face
@@ -482,13 +498,14 @@ operational instructions use the 20-pixel MyBot UI Sans font. The UI font contai
 covering ASCII and the fixed Chinese UI vocabulary, including reset status text; arbitrary
 Chinese SSIDs or chat text need an extended font.
 This font replaces the previous direct-renderer glyph subset. Resource provenance and licenses
-are recorded in [display/SOURCES.md](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md).
+are recorded in [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md).
 Build results, host tests and remaining hardware checks are recorded in
-[UI_VALIDATION.md](bk_solution_ai/projects/mybot/UI_VALIDATION.md).
+[UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
 
 ## Audio
 
-The current R2 audio configuration follows the paired Solution and AVDK under `mcp-resource/new`.
+The current R2 audio configuration preserves the paired Solution/AVDK settings originally verified
+against the supplied `mcp-resource/new` reference. Those local reference files are not build inputs.
 Capture enables three differential analog ADC lanes (`ch_bitmap=0x7`, `chl_num=3`), each with
 20 dB analog and 16 dB digital gain. DMIC is disabled; `adc_cfg.aec_en=3` appends the digital
 playback reference, giving four interleaved lanes: three microphone inputs and reference at lane 3.
@@ -504,9 +521,10 @@ AEC uses `adc_ch_num=3`, `dual_ch=2`, traditional noise suppression, VAD disable
 (`vad_enable=0`), `ec_only_output=1`, and `multi_output_use_ec_out=1`. Capture uses 640-byte/20 ms blocks and
 two blocks of buffering. The paired AVDK implements three-microphone deinterleaving, the trimic
 flag and SSL3 support, and still calls `aec_proc`; the Solution comment claiming AEC is temporarily
-disabled is stale. The four required AVDK audio wrapper/config/header/library files are
-updated from this reference, together with the AP library checksum manifest computed from the
-actual local library set. No ASR output port or UI direction callback is added.
+disabled is stale. The required wrapper, configuration/algorithm headers, algorithm archive, and
+matching library checksum manifest are maintained in
+`patches/bk_avdk_smp/0003-r2-trimic-aec.patch`. The archive remains the R2 `20261014` version;
+no ASR output port or UI direction callback is added.
 
 GPIO12 follows the reference's output/pull-down configuration for ADC comparator discharge.
 GPIO34/35 retain the supplied `SECOND_FUNC_DISABLE + GPIO_OUTPUT` declarations, which leave
@@ -571,7 +589,7 @@ again before deleting records; it is not a guarantee that every driver has alrea
 
 ## Embedded voice assets
 
-Prompt assets are stored under `bk_solution_ai/projects/mybot/assets/locales/` as 16 kHz mono
+Prompt assets are stored under `projects/mybot/assets/locales/` as 16 kHz mono
 Opus-in-Ogg files, one directory per language. They are compiled into the AP firmware as read-only
 C arrays, require no SD card, and use no separate `assets_data` partition. Decoded PCM buffers are
 allocated from PSRAM at runtime.
@@ -579,13 +597,13 @@ allocated from PSRAM at runtime.
 After modifying or adding an OGG file, regenerate the C arrays manually before building:
 
 ```bash
-python3 bk_solution_ai/projects/mybot/scripts/generate_assets_c.py \
-  bk_solution_ai/projects/mybot/assets \
-  bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/bk7259_assets.c
+python3 projects/mybot/scripts/generate_assets_c.py \
+  projects/mybot/assets \
+  components/mybot/mybot_sdk/platforms/bk7259/bk7259_assets.c
 ```
 
 The generator collects only `locales/**/*.ogg`. See
-[`projects/mybot/assets/README.md`](bk_solution_ai/projects/mybot/assets/README.md) for the audio
+[`projects/mybot/assets/README.md`](projects/mybot/assets/README.md) for the audio
 format and update procedure, and `scripts/convert_pcm_to_ogg.sh` for producing the Ogg files from
 PCM.
 
@@ -596,10 +614,9 @@ PCM.
   upstream snapshot.
 - Vendored AOSL is locked to its recorded base and content digest, including the five declared
   BK7259 HAL modifications.
-- `bk_avdk_smp` is consumed at `release/v4.0.1-mybot-r2`, which adds the product's captive-portal
-  DNS changes, GC9503CV R2 MIPI panel support, and the current paired reference's three-input AEC
-  audio files and matching library checksum manifest to upstream `release/v4.0.1`. Mybot audio, video,
-  APSTA, and display integration use its public component APIs.
+- Official `bk_avdk_smp` and `bk_solution_ai` remain fixed and clean. Captive-portal DNS,
+  GC9503CV LCD, trimic AEC and camera-helper adaptations are versioned patches applied only to
+  generated build copies. Mybot audio, video, APSTA, and display integration use public component APIs.
 - BK platform sources include mybot only through `<mybot/platform/...>`.
 - `projects/mybot/ap/ap_main.c` is the sole application lifecycle consumer of the public
   `<mybot/mybot.h>` API, and the only product source that includes the public
@@ -618,16 +635,12 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-Maintainers can explicitly update both mybot branches with:
-
-```bash
-git submodule update --remote --checkout bk_avdk_smp bk_solution_ai
-git diff --submodule=log
-```
-
-After an update, build and validate both submodules before updating the gitlinks in the top-level
-repository. Do not commit `build/`, `__pycache__/`, or other locally generated files from a
-submodule.
+Do not use `git submodule update --remote` for normal development; detached official checkouts
+are expected. Maintainers must update compatible official commits, gitlinks, `vendor.lock.json`,
+and the reviewed patch set together, then rebuild both languages and complete R2 board regression.
+Patch application failures stop preparation. Full rules are in
+[official dependency management](docs/OFFICIAL_DEPENDENCIES.md). Do not commit generated vendor
+copies, firmware, `build/`, `__pycache__/`, or local reference material.
 
 ## Current bring-up limits
 
@@ -651,11 +664,12 @@ submodule.
 - The single GPIO key is based on the Yunqu V1.0 KEY1/GPIO47 connection.
 - The five-second factory-reset feature passed user device testing. Power-interruption and
   injected shutdown/storage failures still need target-specific validation; host fault-injection
-  coverage is recorded in [UI_VALIDATION.md](bk_solution_ai/projects/mybot/UI_VALIDATION.md).
+  coverage is recorded in [UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
 
 ## Documentation
 
-- [BK7259 MyBot project guide](bk_solution_ai/projects/mybot/README.md)
+- [BK7259 MyBot project guide](projects/mybot/README.md)
+- [Official dependencies and isolated builds](docs/OFFICIAL_DEPENDENCIES.md)
 - [mybot project](https://github.com/junlon2006/mybot)
 - [mybot English documentation](https://github.com/junlon2006/mybot/blob/main/README.md)
 - [mybot porting guide](https://github.com/junlon2006/mybot/blob/main/docs/PORTING.md)
@@ -668,10 +682,10 @@ Issues and pull requests are welcome:
 
 - Submit platform-independent SDK features and public API changes to the
   [upstream mybot project](https://github.com/junlon2006/mybot).
-- Submit BK7259 platform or firmware changes to
-  [bk_solution_ai](https://github.com/junlon2006/bk_solution_ai) or
-  [bk_avdk_smp](https://github.com/junlon2006/bk_avdk_smp), then update the corresponding submodule
-  pointer in this repository.
+- Submit BK7259 product, platform, and build changes to this repository. Maintain required vendor
+  changes in the recorded patch set; general vendor fixes can also be proposed to the official
+  [BK Solution](https://github.com/bekencorp/bk_solution_ai) or
+  [BK AVDK](https://github.com/bekencorp/bk_avdk_smp) upstream.
 - Report integration, build, and documentation issues in
   [mybot-bk7259 Issues](https://github.com/junlon2006/mybot-bk7259/issues).
 
@@ -688,18 +702,18 @@ terms of use, including but not limited to:
 
 - [bk_avdk_smp license](bk_avdk_smp/LICENSE)
 - [bk_solution_ai license](bk_solution_ai/LICENSE)
-- [AOSL license and additional terms](bk_solution_ai/components/mybot/mybot_aosl/aosl/LICENSE)
-- [Prompt asset license](bk_solution_ai/projects/mybot/assets/LICENSE.xiaozhi-esp32)
+- [AOSL license and additional terms](components/mybot/mybot_aosl/aosl/LICENSE)
+- [Prompt asset license](projects/mybot/assets/LICENSE.xiaozhi-esp32)
 - [LVGL license](bk_avdk_smp/ap/components/lvgl/LICENCE.txt)
-- [LVGL view, font, and simulator provenance](bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
-- [BK7259 third-party notices](bk_solution_ai/components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)
+- [LVGL view, font, and simulator provenance](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
+- [BK7259 third-party notices](components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)
 - [mybot third-party notices](https://github.com/junlon2006/mybot/blob/main/THIRD_PARTY_NOTICES.md)
 
 The AOSL license contains conditions in addition to Apache-2.0, so this combined project must not
 be described as uniformly Apache-2.0 licensed.
 
 The Agora RTSA binary is a proprietary build input and is not redistributed by the upstream mybot
-SDK. It is vendored under `bk_solution_ai/components/mybot/mybot_rtsa` as the validated BK7259
+SDK. It is vendored under `components/mybot/mybot_rtsa` as the validated BK7259
 package RTSA v1.10.1 build `1278380`, recorded in its `PACKAGE_INFO` and pinned by
 `mybot_sdk/CMakeLists.txt` to the header and library digests:
 

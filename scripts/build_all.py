@@ -12,11 +12,12 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 
+from vendor_workspace import prepare_vendor
+
 
 ROOT = Path(__file__).resolve().parent.parent
-PROJECT = ROOT / "bk_solution_ai/projects/mybot"
-COMPONENTS = ROOT / "bk_solution_ai/components"
-SDK = ROOT / "bk_avdk_smp"
+PROJECT = ROOT / "projects/mybot"
+COMPONENTS = ROOT / "components"
 LANGUAGES = ("zh-CN", "en-US")
 MARKER = "mybot-bk7259-build-all-v1\n"
 SERVICE_HOSTS = {
@@ -96,7 +97,8 @@ def variant_config(lines, found, options, language):
     return "".join(configured)
 
 
-def prepare_variant(path, config, clean):
+def prepare_variant(path, config, clean, components=None):
+    components = Path(components if components is not None else COMPONENTS).resolve()
     marker = path / ".mybot-build-all"
     if path.exists() or path.is_symlink():
         if path.is_symlink() or not path.is_dir() or not marker.is_file() or \
@@ -112,9 +114,12 @@ def prepare_variant(path, config, clean):
     solution.mkdir(exist_ok=True)
     components_link = solution / "components"
     if not components_link.exists() and not components_link.is_symlink():
-        components_link.symlink_to(COMPONENTS, target_is_directory=True)
-    elif not components_link.is_symlink() or components_link.resolve() != COMPONENTS:
+        components_link.symlink_to(components, target_is_directory=True)
+    elif not components_link.is_symlink():
         raise RuntimeError(f"unexpected component link: {components_link}")
+    elif components_link.resolve() != components:
+        components_link.unlink()
+        components_link.symlink_to(components, target_is_directory=True)
 
     copy = solution / "projects/mybot"
     if copy.exists() or copy.is_symlink():
@@ -123,6 +128,11 @@ def prepare_variant(path, config, clean):
         build = copy / "build"
         if build.is_symlink() or (build.exists() and not build.is_dir()):
             raise RuntimeError(f"unexpected project build directory: {build}")
+        vendor_id = path / ".mybot-component-source"
+        if build.exists() and (not vendor_id.is_file() or
+                               vendor_id.read_text(encoding="utf-8") != str(components)):
+            # A changed vendor lock must not reuse CMake objects from another patch set.
+            shutil.rmtree(build)
         for entry in copy.iterdir():
             if entry.name == "build":
                 continue
@@ -133,6 +143,7 @@ def prepare_variant(path, config, clean):
     shutil.copytree(PROJECT, copy, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("build", "releases", "__pycache__", "*.pyc"))
     (copy / "ap/config/bk7259_ap/defconfig").write_text(config, encoding="utf-8")
+    (path / ".mybot-component-source").write_text(str(components), encoding="utf-8")
     return copy
 
 
@@ -205,8 +216,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-    if not (SDK / "tools/build_tools/build_files/project_main.mk").is_file():
-        raise RuntimeError(f"BK7259 SDK is unavailable at {SDK}")
     lines, found, options, video, https = source_config()
     python = select_python() if not args.dry_run else None
     build_root = args.build_root.expanduser().resolve()
@@ -231,6 +240,9 @@ def main():
         variant = build_root / f"build-{name}"
         if output_root == variant or output_root.is_relative_to(variant):
             raise RuntimeError("output directory cannot be inside a variant build")
+    vendor = prepare_vendor(build_root, root=ROOT, dry_run=args.dry_run)
+    sdk = vendor / "bk_avdk_smp"
+    components = vendor / "bk_solution_ai/components"
     if not args.dry_run:
         build_root.mkdir(parents=True, exist_ok=True)
         output_root.mkdir(parents=True, exist_ok=True)
@@ -242,13 +254,14 @@ def main():
             variant = build_root / f"build-{name}"
             image_name = f"{name}.bin"
             command = ["make", "-C", str(variant / "solution/projects/mybot"),
-                       "bk7259", f"SDK_DIR={SDK}"]
+                       "bk7259", f"SDK_DIR={sdk}"]
             print(f"\nBuilding {name}", flush=True)
             print(">>>", " ".join(command), flush=True)
             if not args.dry_run:
                 variant_started = time.perf_counter()
                 project = prepare_variant(
-                    variant, variant_config(lines, found, options, language), not args.no_clean)
+                    variant, variant_config(lines, found, options, language), not args.no_clean,
+                    components=components)
                 subprocess.run(command, env=env, check=True)
                 image = check_firmware(project, language, video, https)
                 shutil.copyfile(image, Path(staged) / image_name)
@@ -266,6 +279,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)

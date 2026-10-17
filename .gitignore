@@ -19,6 +19,8 @@
 # Libraries
 *.lib
 *.a
+# Preserve the existing pinned RTSA input after moving it from the Solution.
+!/components/mybot/mybot_rtsa/lib/arm/libagora-rtc-sdk.a
 *.la
 *.lo
 

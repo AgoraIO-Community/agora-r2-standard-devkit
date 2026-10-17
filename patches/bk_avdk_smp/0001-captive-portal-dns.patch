@@ -1,0 +1,246 @@
+diff --git a/ap/components/lwip_intf_v2_1/dhcpd/dhcp-server.c b/ap/components/lwip_intf_v2_1/dhcpd/dhcp-server.c
+index e25f36aadb073b03f00bd8ea9fa76864cc8482c5..d4962e215102befd7f8e120134fb1c50755092de 100755
+--- a/ap/components/lwip_intf_v2_1/dhcpd/dhcp-server.c
++++ b/ap/components/lwip_intf_v2_1/dhcpd/dhcp-server.c
+@@ -300,15 +300,21 @@ static int send_response(int sock, struct sockaddr *addr, char *msg, int len)
+ static int process_dns_message(char *msg, int len, struct sockaddr_in *fromaddr)
+ {
+ 	struct dns_header *hdr;
+-	char *endp = msg + len;
++	struct dns_rr *answer;
++	char *question_end;
++	char *endp;
++	bool name_done = false;
+ 	int nq;
+ 
+-	if (len < sizeof(struct dns_header)) {
++	if (!msg || len < (int)sizeof(struct dns_header) ||
++	    (size_t)len + sizeof(struct dns_rr) > SERVER_BUFFER_SIZE) {
+ 		dhcp_e("DNS request is not complete, hence ignoring it\r\n");
+ 		return -1;
+ 	}
+ 
++	endp = msg + len;
+ 	hdr = (struct dns_header *)msg;
++	hdr->flags.num = ntohs(hdr->flags.num);
+ 
+ 	dhcp_d("DNS transaction id: 0x%x\r\n", htons(hdr->id));
+ 
+@@ -320,14 +326,83 @@ static int process_dns_message(char *msg, int len, struct sockaddr_in *fromaddr)
+ 	nq = ntohs(hdr->num_questions);
+ 	dhcp_d("we were asked %d questions\r\n", nq);
+ 
+-	if (nq <= 0) {
+-		dhcp_e("ignoring this dns msg (not a query or 0 questions)\r\n");
++	if (nq != 1) {
++		dhcp_e("ignoring this dns msg (expected exactly one question)\r\n");
+ 		return -1;
+ 	}
+ 
++	/* The captive-portal hijack only runs while the configuration SoftAP is
++	 * up: the MyBot portal starts it with disable_dns_server = 0, so a
++	 * regular AP never gets fabricated answers from this server. */
++	if (!g_ap_param_ptr || g_ap_param_ptr->disable_dns_server) {
++		dhcp_d("DNS server disabled, refusing\r\n");
++		goto refused;
++	}
++
++	/* Skip the question's name: length-prefixed labels, possibly ending in a
++	 * compression pointer. */
++	question_end = msg + sizeof(struct dns_header);
++	while (question_end < endp) {
++		uint8_t label_len = *(uint8_t *)question_end++;
++		if (label_len == 0) {
++			name_done = true;
++			break;
++		}
++		if ((label_len & 0xc0) == 0xc0) {
++			if (question_end >= endp)
++				goto malformed;
++			question_end++;
++			name_done = true;
++			break;
++		}
++		if ((label_len & 0xc0) != 0 || endp - question_end < label_len)
++			goto malformed;
++		question_end += label_len;
++	}
++	if (!name_done || endp - question_end < (int)sizeof(struct dns_question) ||
++	    (size_t)(question_end - msg) + sizeof(struct dns_question) +
++		sizeof(struct dns_rr) > SERVER_BUFFER_SIZE)
++		goto malformed;
++	question_end += sizeof(struct dns_question);
++
++	/* Captive-portal DNS: answer every query with an A record for the AP's
++	 * own address (dhcps.router_ip is already network byte order), so the
++	 * phone's probe (captive.apple.com, generate_204, ...) resolves to this
++	 * device and its browser jumps to the configuration page. */
++	answer = (struct dns_rr *)question_end;
++	answer->name_ptr = htons(0xc00c);
++	answer->type = htons(1);
++	answer->class = htons(1);
++	answer->ttl = htonl(28);
++	answer->rdlength = htons(4);
++	answer->rd = dhcps.router_ip;
++
+ 	/* make the header represent a response */
+ 	hdr->flags.fields.qr = 1;
+ 	hdr->flags.fields.opcode = 0;
++	hdr->flags.fields.aa = 0;
++	hdr->flags.fields.tc = 0;
++	hdr->flags.fields.ra = 1;
++	hdr->flags.fields.rcode = 0;
++	hdr->flags.num = htons(hdr->flags.num);
++	/* number of entries in questions section */
++	hdr->num_questions  = htons(0x01);
++	hdr->answer_rrs = htons(1);
++	hdr->authority_rrs = 0;
++	hdr->additional_rrs = 0;
++	SEND_RESPONSE(dhcps.dnssock, (struct sockaddr *)fromaddr,
++		      msg, question_end - msg + sizeof(struct dns_rr));
++
++	return 0;
++
++malformed:
++	dhcp_e("malformed DNS question, refusing\r\n");
++	goto refused;
++
++refused:
++	/* make the header represent a refused response */
++	hdr->flags.fields.qr = 1;
++	hdr->flags.fields.opcode = 0;
+ 	/* Errors are never authoritative (unless they are
+ 	   NXDOMAINS, which this is not) */
+ 	hdr->flags.fields.aa = 0;
+@@ -338,7 +413,7 @@ static int process_dns_message(char *msg, int len, struct sockaddr_in *fromaddr)
+ 	hdr->flags.num = htons(hdr->flags.num);
+ 	/* number of entries in questions section */
+ 	hdr->num_questions  = htons(0x01);
+-	hdr->answer_rrs = 0; /* number of resource records in answer section */
++	hdr->answer_rrs = 0;
+ 	hdr->authority_rrs = 0;
+ 	hdr->additional_rrs = 0;
+ 	SEND_RESPONSE(dhcps.dnssock, (struct sockaddr *)fromaddr,
+diff --git a/cp/components/lwip_intf_v2_1/dhcpd/dhcp-server.c b/cp/components/lwip_intf_v2_1/dhcpd/dhcp-server.c
+index d126e68bf078fc5a1317329ac463c90d7dc850e4..f4ebbf58890f64d919c75f5fe6ad0ce7cc81bc9b 100755
+--- a/cp/components/lwip_intf_v2_1/dhcpd/dhcp-server.c
++++ b/cp/components/lwip_intf_v2_1/dhcpd/dhcp-server.c
+@@ -301,15 +301,21 @@ static int send_response(int sock, struct sockaddr *addr, char *msg, int len)
+ static int process_dns_message(char *msg, int len, struct sockaddr_in *fromaddr)
+ {
+ 	struct dns_header *hdr;
+-	char *endp = msg + len;
++	struct dns_rr *answer;
++	char *question_end;
++	char *endp;
++	bool name_done = false;
+ 	int nq;
+ 
+-	if (len < sizeof(struct dns_header)) {
++	if (!msg || len < (int)sizeof(struct dns_header) ||
++	    (size_t)len + sizeof(struct dns_rr) > SERVER_BUFFER_SIZE) {
+ 		dhcp_e("DNS request is not complete, hence ignoring it\r\n");
+ 		return -1;
+ 	}
+ 
++	endp = msg + len;
+ 	hdr = (struct dns_header *)msg;
++	hdr->flags.num = ntohs(hdr->flags.num);
+ 
+ 	dhcp_d("DNS transaction id: 0x%x\r\n", htons(hdr->id));
+ 
+@@ -321,14 +327,83 @@ static int process_dns_message(char *msg, int len, struct sockaddr_in *fromaddr)
+ 	nq = ntohs(hdr->num_questions);
+ 	dhcp_d("we were asked %d questions\r\n", nq);
+ 
+-	if (nq <= 0) {
+-		dhcp_e("ignoring this dns msg (not a query or 0 questions)\r\n");
++	if (nq != 1) {
++		dhcp_e("ignoring this dns msg (expected exactly one question)\r\n");
+ 		return -1;
+ 	}
+ 
++	/* The captive-portal hijack only runs while the configuration SoftAP is
++	 * up: the MyBot portal starts it with disable_dns_server = 0, so a
++	 * regular AP never gets fabricated answers from this server. */
++	if (!g_ap_param_ptr || g_ap_param_ptr->disable_dns_server) {
++		dhcp_d("DNS server disabled, refusing\r\n");
++		goto refused;
++	}
++
++	/* Skip the question's name: length-prefixed labels, possibly ending in a
++	 * compression pointer. */
++	question_end = msg + sizeof(struct dns_header);
++	while (question_end < endp) {
++		uint8_t label_len = *(uint8_t *)question_end++;
++		if (label_len == 0) {
++			name_done = true;
++			break;
++		}
++		if ((label_len & 0xc0) == 0xc0) {
++			if (question_end >= endp)
++				goto malformed;
++			question_end++;
++			name_done = true;
++			break;
++		}
++		if ((label_len & 0xc0) != 0 || endp - question_end < label_len)
++			goto malformed;
++		question_end += label_len;
++	}
++	if (!name_done || endp - question_end < (int)sizeof(struct dns_question) ||
++	    (size_t)(question_end - msg) + sizeof(struct dns_question) +
++		sizeof(struct dns_rr) > SERVER_BUFFER_SIZE)
++		goto malformed;
++	question_end += sizeof(struct dns_question);
++
++	/* Captive-portal DNS: answer every query with an A record for the AP's
++	 * own address (dhcps.router_ip is already network byte order), so the
++	 * phone's probe (captive.apple.com, generate_204, ...) resolves to this
++	 * device and its browser jumps to the configuration page. */
++	answer = (struct dns_rr *)question_end;
++	answer->name_ptr = htons(0xc00c);
++	answer->type = htons(1);
++	answer->class = htons(1);
++	answer->ttl = htonl(28);
++	answer->rdlength = htons(4);
++	answer->rd = dhcps.router_ip;
++
+ 	/* make the header represent a response */
+ 	hdr->flags.fields.qr = 1;
+ 	hdr->flags.fields.opcode = 0;
++	hdr->flags.fields.aa = 0;
++	hdr->flags.fields.tc = 0;
++	hdr->flags.fields.ra = 1;
++	hdr->flags.fields.rcode = 0;
++	hdr->flags.num = htons(hdr->flags.num);
++	/* number of entries in questions section */
++	hdr->num_questions  = htons(0x01);
++	hdr->answer_rrs = htons(1);
++	hdr->authority_rrs = 0;
++	hdr->additional_rrs = 0;
++	SEND_RESPONSE(dhcps.dnssock, (struct sockaddr *)fromaddr,
++		      msg, question_end - msg + sizeof(struct dns_rr));
++
++	return 0;
++
++malformed:
++	dhcp_e("malformed DNS question, refusing\r\n");
++	goto refused;
++
++refused:
++	/* make the header represent a refused response */
++	hdr->flags.fields.qr = 1;
++	hdr->flags.fields.opcode = 0;
+ 	/* Errors are never authoritative (unless they are
+ 	   NXDOMAINS, which this is not) */
+ 	hdr->flags.fields.aa = 0;
+@@ -339,7 +414,7 @@ static int process_dns_message(char *msg, int len, struct sockaddr_in *fromaddr)
+ 	hdr->flags.num = htons(hdr->flags.num);
+ 	/* number of entries in questions section */
+ 	hdr->num_questions  = htons(0x01);
+-	hdr->answer_rrs = 0; /* number of resource records in answer section */
++	hdr->answer_rrs = 0;
+ 	hdr->authority_rrs = 0;
+ 	hdr->additional_rrs = 0;
+ 	SEND_RESPONSE(dhcps.dnssock, (struct sockaddr *)fromaddr,
