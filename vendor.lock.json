@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "repositories": {
+    "bk_avdk_smp": {
+      "url": "https://github.com/bekencorp/bk_avdk_smp.git",
+      "commit": "584b947920c414230f9909375f008e7d6a2c6c6b",
+      "patches": [
+        {
+          "path": "patches/bk_avdk_smp/0001-captive-portal-dns.patch",
+          "sha256": "a9455a4039fd0a3557e6889f9896fc84e3c13d5ff0550d5bd316cd34ed1dccd8"
+        },
+        {
+          "path": "patches/bk_avdk_smp/0002-r2-gc9503cv-panel.patch",
+          "sha256": "1a5a1e4e48a5d3d174fa49e79870c637f54e30dbfd11668e0b64d41669347278"
+        },
+        {
+          "path": "patches/bk_avdk_smp/0003-r2-trimic-aec.patch",
+          "sha256": "46f3198fd67a5dfe9dda811c2e22395414ef61b4ba036f0ea6bff38d33fedc4a"
+        }
+      ]
+    },
+    "bk_solution_ai": {
+      "url": "https://github.com/bekencorp/bk_solution_ai.git",
+      "commit": "03aadb49756a5109bfede04002b9b6820f407c3f",
+      "patches": [
+        {
+          "path": "patches/bk_solution_ai/0001-mybot-camera-helper.patch",
+          "sha256": "e70f76da34847d8ce272f44801e9ce7567fc6a03fa3b001a556d2fdcc988de65"
+        }
+      ]
+    }
+  }
+}

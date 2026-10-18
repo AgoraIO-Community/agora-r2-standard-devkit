@@ -1,0 +1,138 @@
+diff --git a/components/multimedia_device_service/CMakeLists.txt b/components/multimedia_device_service/CMakeLists.txt
+index 670f219035f8ce7e12bdeed13795dd55e6f4dda9..65daf67307431237291cc499665df7db30a4f91a 100644
+--- a/components/multimedia_device_service/CMakeLists.txt
++++ b/components/multimedia_device_service/CMakeLists.txt
+@@ -1,10 +1,22 @@
+ set(incs include)
+-set(srcs
+-    src/app_camera.c
+-    src/app_display.c
+-    src/app_gpu.c
+-    src/bk_camera_lvgl_blend.c
+-)
++if(CONFIG_MYBOT_VIDEO)
++    # MyBot video only needs the camera and codec helpers.  Avoid pulling the
++    # display/GPU/LVGL demo sources into this headless video path.
++    set(srcs
++        src/app_camera.c
++    )
++    set(priv_req bk_common bk_pm media_service bk_peripheral avdk_driver)
++else()
++    # Preserve the original multimedia component for every non-MyBot-video
++    # product, including beken_robot and its display demos.
++    set(srcs
++        src/app_camera.c
++        src/app_display.c
++        src/app_gpu.c
++        src/bk_camera_lvgl_blend.c
++    )
++    set(priv_req bk_common bk_pm media_service bk_peripheral avdk_driver lvgl)
++endif()
+ 
+ if(CONFIG_MULTIMEDIA_H264_ENCODE)
+     list(APPEND srcs
+@@ -13,8 +25,6 @@ if(CONFIG_MULTIMEDIA_H264_ENCODE)
+     )
+ endif()
+ 
+-set(priv_req bk_common bk_pm media_service bk_peripheral avdk_driver lvgl)
+-
+ armino_component_register(SRCS "${srcs}" INCLUDE_DIRS "${incs}" PRIV_REQUIRES "${priv_req}")
+ 
+ add_definitions(-Wno-unused-variable
+diff --git a/components/multimedia_device_service/src/app_camera.c b/components/multimedia_device_service/src/app_camera.c
+index d699230d37287753b071c39d38c0c9b2251d40a2..b7ef8b49fa7fa543d3dbf71fd4df2efdd3048f4a 100644
+--- a/components/multimedia_device_service/src/app_camera.c
++++ b/components/multimedia_device_service/src/app_camera.c
+@@ -141,7 +141,8 @@ int app_isp_camera_turn_off(void)
+ 
+     avdk_err_t ret = AVDK_ERR_OK;
+ 
+-    if (bk_isp_camera_channel_state_get(isp_cam_handle.camera_ctlr_handle, ISP_SP_CHN_ID) == ISP_CHANNEL_STATE_TURN_ON)
++    if (isp_cam_handle.camera_ctlr_handle != NULL
++        && bk_isp_camera_channel_state_get(isp_cam_handle.camera_ctlr_handle, ISP_SP_CHN_ID) == ISP_CHANNEL_STATE_TURN_ON)
+     {
+         ret = bk_isp_camera_channel_close(isp_cam_handle.camera_ctlr_handle, ISP_SP_CHN_ID);
+         if (ret != AVDK_ERR_OK)
+@@ -151,7 +152,8 @@ int app_isp_camera_turn_off(void)
+         }
+     }
+ 
+-    if (bk_isp_camera_channel_state_get(isp_cam_handle.camera_ctlr_handle, ISP_MP_CHN_ID) == ISP_CHANNEL_STATE_TURN_ON)
++    if (isp_cam_handle.camera_ctlr_handle != NULL
++        && bk_isp_camera_channel_state_get(isp_cam_handle.camera_ctlr_handle, ISP_MP_CHN_ID) == ISP_CHANNEL_STATE_TURN_ON)
+     {
+         ret = bk_isp_camera_channel_close(isp_cam_handle.camera_ctlr_handle, ISP_MP_CHN_ID);
+         if (ret != AVDK_ERR_OK)
+@@ -233,11 +235,11 @@ int app_isp_dvp_camera_turn_on(camera_parameters_ext_t *paramters)
+     bus_config.pin_scl = camera_board_config->mipi.pin_scl;
+     bus_config.pin_sda = camera_board_config->mipi.pin_sda;
+     bus_config.i2c_id = camera_board_config->mipi.i2c_id;
++    bus_config.pin_xclk = camera_board_config->mipi.pin_xclk;
+ 
+     bk_camera_sensor_config_t sensor_config = {
+         .pin_reset = camera_board_config->mipi.pin_reset,
+         .pin_pwdn = camera_board_config->mipi.pin_pwdn,
+-        .pin_xclk = camera_board_config->mipi.pin_xclk,
+     };
+ 
+     if (paramters->camera_width > camera_board_config->mipi.sensor_max_width || paramters->camera_width == 0)
+@@ -337,11 +339,11 @@ static int app_isp_mipi_sensor_turn_on(const camera_board_config_t *config, bk_i
+     bus_config.pin_scl = config->mipi.pin_scl;
+     bus_config.pin_sda = config->mipi.pin_sda;
+     bus_config.i2c_id = config->mipi.i2c_id;
++    bus_config.pin_xclk = config->mipi.pin_xclk;
+     LOGI("%s i2c id: %d, sda: %d, scl: %d\n", __func__, bus_config.i2c_id, bus_config.pin_sda, bus_config.pin_scl);
+     bk_camera_sensor_config_t sensor_config = {
+         .pin_reset = config->mipi.pin_reset,
+         .pin_pwdn = config->mipi.pin_pwdn,
+-        .pin_xclk = config->mipi.pin_xclk,
+     };
+ 
+     LOGI("%s width: %d, height: %d, fps: %d\n", __func__, config->mipi.sensor_max_width, config->mipi.sensor_max_height, config->mipi.sensor_fps);
+@@ -358,18 +360,39 @@ static int app_isp_mipi_sensor_turn_on(const camera_board_config_t *config, bk_i
+     AVDK_GOTO_ON_ERROR(bk_camera_sensor_query_support_formats(isp_cam_handle.sensor_handle, &format_array), err, TAG, "bk_camera_sensor_query_support_formats failed");
+     AVDK_GOTO_ON_FALSE(format_array.size > 0, AVDK_ERR_INVAL, err, TAG, "format array size is 0");
+ 
+-    int detect_index = 0;
+-    for (detect_index = 0; detect_index < format_array.size; detect_index++)
++    int detect_index = -1;
++    for (int i = 0; i < (int)format_array.size; i++)
+     {
+-        if (format_array.format_array[detect_index].width == config->mipi.sensor_max_width
+-            && format_array.format_array[detect_index].height == config->mipi.sensor_max_height
+-            && format_array.format_array[detect_index].fps == config->mipi.sensor_fps)
++        if (format_array.format_array[i].width == config->mipi.sensor_max_width
++            && format_array.format_array[i].height == config->mipi.sensor_max_height
++            && format_array.format_array[i].fps == config->mipi.sensor_fps)
+         {
++            detect_index = i;
+             break;
+         }
+     }
+ 
+-    if (detect_index >= format_array.size)
++    /* GC2053/CV2005 can program arbitrary frame rates in their supported
++     * range, while the static mode table lists only common rates.  Keep the
++     * requested FPS for sensor_set_format(); use any same-size mode solely to
++     * obtain the ISP Bayer pixel format when an exact table entry is absent. */
++    if (detect_index < 0)
++    {
++        for (int i = 0; i < (int)format_array.size; i++)
++        {
++            if (format_array.format_array[i].width == config->mipi.sensor_max_width
++                && format_array.format_array[i].height == config->mipi.sensor_max_height)
++            {
++                detect_index = i;
++                LOGW("no exact sensor mode for %ux%u@%u; using listed @%u pixel format\n",
++                     config->mipi.sensor_max_width, config->mipi.sensor_max_height,
++                     config->mipi.sensor_fps, format_array.format_array[i].fps);
++                break;
++            }
++        }
++    }
++
++    if (detect_index < 0)
+     {
+         LOGE("not found matching sensor format\n");
+         ret = AVDK_ERR_INVAL;

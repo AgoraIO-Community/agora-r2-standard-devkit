@@ -1,0 +1,116 @@
+# MyBot AP project overrides for BK7259.
+# CONFIG_ALL_CODE_IN_PSRAM is not set
+
+# Keep SDK/AOSL worker stacks and queues out of scarce on-chip SRAM.
+CONFIG_TASK_STACK_IN_PSRAM=y
+CONFIG_QUEUE_IN_PSRAM=y
+CONFIG_FREERTOS_POSIX=y
+# RTSA, AOSL MPQ and FreeRTOS POSIX objects share the BK7259 dynamic
+# spinlock pool. Keep enough entries for the concurrent RTC/audio control
+# paths instead of inheriting the 160-entry SDK default.
+CONFIG_SPINLOCK_DYNAMIC_CNT=512
+
+# MyBot owns a small APSTA portal built from public Wi-Fi and netif APIs.
+# CONFIG_BK_NETWORK_PROVISIONING is not set
+# CONFIG_BK_BLE_PROVISIONING is not set
+CONFIG_WIFI_SOFTAP=y
+CONFIG_CJSON_USE=y
+# CONFIG_WIFI_CLI_ENABLE is not set
+# CONFIG_WIFI_CLI_DEBUG is not set
+
+# The product uses the MyBot-owned direct GPIO key adapter; no generic key service.
+# CONFIG_BUTTON is not set
+# CONFIG_ADC_KEY is not set
+
+# The Yunqu V1.0 board has one firmware-visible conversation key on GPIO47. Only a short press
+# is registered; the SDK state selects start or stop.
+CONFIG_MYBOT_KEY_GPIO=47
+CONFIG_MYBOT_KEY_ACTIVE_LEVEL=0
+
+# Disable EB521 UART control while comparing audio capture.
+# CONFIG_MYBOT_GIMBAL is not set
+
+# Robot R2 GC9503CV MIPI display; LVGL renders RGB565 strips with a 90-degree
+# logical rotation on the 480x640 panel.
+CONFIG_DPU_DRIVER=y
+CONFIG_DSI_DRIVER=y
+CONFIG_BK_DISPLAY=y
+CONFIG_MIPI_DSI=y
+CONFIG_FRAME_BUFFER=y
+CONFIG_BK_PERIPHERAL=y
+CONFIG_MEDIA_SERVICE=y
+CONFIG_LCD_DSI=y
+# CONFIG_LCD_JD9855_MIPI_320x385 is not set
+CONFIG_LCD_GC9503CV_MIPI_480x640=y
+CONFIG_LVGL=y
+CONFIG_LVGL_V9=y
+# Keep the LVGL object/draw heap on HSRAM; media buffers use their own slab.
+# CONFIG_LVGL_MEM_USE_PSRAM is not set
+# CONFIG_LV_COLOR_16_SWAP is not set
+# CONFIG_LVGL_USE_KEYPAD is not set
+# CONFIG_LVGL_USE_GPU_ROTATE is not set
+# CONFIG_LV_IMG_UTILITY_CUSTOMIZE is not set
+CONFIG_MYBOT_LVGL_UI_ANIMATIONS=y
+# CONFIG_GPU is not set
+# CONFIG_VG_LITE_GPU is not set
+# CONFIG_TP is not set
+
+# MyBot encoded video uplink: MIPI CSI -> ISP MP -> HW-flexa H.264.
+CONFIG_ISP=y
+CONFIG_MIPI_CSI=y
+CONFIG_CSI_CAMERA=y
+CONFIG_CSI_GC2053=y
+CONFIG_CSI_CV2005=y
+CONFIG_BK_CAMERA=y
+CONFIG_BK_ENCODER=y
+CONFIG_BK_ENCODER_H264_MAX_OUTPUT_BUFFER=512000
+CONFIG_MULTIMEDIA_DEVICE_SERVICE=y
+CONFIG_MULTIMEDIA_H264_ENCODE=y
+CONFIG_MYBOT_VIDEO=y
+CONFIG_MYBOT_VIDEO_WIDTH=640
+CONFIG_MYBOT_VIDEO_HEIGHT=480
+CONFIG_MYBOT_VIDEO_SENSOR_WIDTH=1280
+CONFIG_MYBOT_VIDEO_SENSOR_HEIGHT=720
+CONFIG_MYBOT_VIDEO_SENSOR_FPS=5
+CONFIG_MYBOT_VIDEO_MIN_BPS=256000
+CONFIG_MYBOT_VIDEO_MAX_BPS=512000
+
+# MyBot owns the native V2 onboard ADC/DAC pipelines directly.
+CONFIG_FREERTOS_USE_QUEUE_SETS=y
+CONFIG_AUDIO=y
+CONFIG_AUD_DRIVER_V2=y
+CONFIG_AUDIO_ADC=y
+CONFIG_AUDIO_DAC=y
+CONFIG_ADK=y
+CONFIG_ADK_USE_PSRAM=y
+# CONFIG_ADK_UTILS is not set
+CONFIG_ADK_RAW_STREAM=y
+CONFIG_ADK_ONBOARD_MIC_STREAM=y
+CONFIG_ADK_ONBOARD_MIC_STREAM_V2=y
+CONFIG_ADK_ONBOARD_SPEAKER_STREAM=y
+CONFIG_ADK_ONBOARD_SPEAKER_STREAM_V2=y
+# MyBot applies on-device AEC V3 v2 (hardware mode) on the capture chain.
+CONFIG_ADK_AEC_V3_ALGORITHM=y
+CONFIG_ADK_AEC_V3_USE_DTCM=y
+CONFIG_ADK_AEC_V3_ALGORITHM_COMPONENT_V2=y
+# CONFIG_AUDIO_RECORD is not set
+# CONFIG_AUDIO_PLAY is not set
+
+CONFIG_EASY_FLASH_V4=y
+CONFIG_PSA_MBEDTLS=y
+CONFIG_MBEDTLS_USE_PSRAM=y
+CONFIG_GET_UID_ENABLE=y
+CONFIG_USR_GPIO_CFG_EN=y
+
+# The AP task watchdog is not supported for the BK7259 SMP application path;
+# the CP owns the product watchdog supervision (same as beken_robot).
+# CONFIG_TASK_WDT is not set
+
+# RTSA is vendored under components/mybot/mybot_rtsa.
+CONFIG_AGORA_IOT_SDK=n
+
+# The service endpoint follows the language and HTTPS settings. The device id
+# is derived at runtime from the per-chip UID in ap_main.c.
+CONFIG_MYBOT_HTTPS=y
+CONFIG_MYBOT_LANGUAGE_ZH_CN=y
+# CONFIG_MYBOT_LANGUAGE_EN_US is not set
