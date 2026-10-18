@@ -1,0 +1,8 @@
+repository=https://github.com/AgoraIO-Community/aosl.git
+base_commit=84e086084ebcd0ae2455a0ce5721950c5fe2e656
+vendored_content_sha256=2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e
+modified=platform/src/bk725x/aosl_hal_iomp.c (AVDK v4 logging declaration)
+modified=platform/src/bk725x/aosl_hal_thread.c (stack, priority, and create errors)
+modified=platform/src/bk725x/aosl_hal_utils.c (AVDK v4 platform headers)
+modified=platform/src/bk725x/aosl_hal_log.c (timestamps on AOSL log lines)
+modified=platform/src/bk725x/aosl_hal_atomic.c (BK7259 PSRAM-safe critical-section atomics)

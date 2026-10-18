@@ -1,0 +1,11 @@
+# Revision-locked snapshots and patches must retain their exact bytes on checkout.
+components/mybot/mybot_sdk/include/** -text
+components/mybot/mybot_sdk/src/** -text
+components/mybot/mybot_sdk/LICENSE -text
+components/mybot/mybot_sdk/SDK_REVISION -text
+components/mybot/mybot_aosl/AOSL_REVISION -text
+# AOSL retains its upstream whitespace and mixed line endings; its digest is checked.
+components/mybot/mybot_aosl/aosl/** -text -whitespace
+components/mybot/mybot_rtsa/** -text
+# Patch context can contain upstream whitespace and is protected by SHA256.
+patches/** -text -whitespace

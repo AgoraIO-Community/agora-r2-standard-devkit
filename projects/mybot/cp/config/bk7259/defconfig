@@ -1,0 +1,15 @@
+# MyBot CP project overrides for BK7259.
+# Wi-Fi is owned by the AP product controller, not the diagnostic console.
+# CONFIG_WIFI_CLI_ENABLE is not set
+
+CONFIG_GET_UID_ENABLE=y
+CONFIG_OTP_V1=y
+CONFIG_USR_GPIO_CFG_EN=y
+
+# Use the BK7259 board calibration supplied by AVDK; do not duplicate it in
+# this project.
+CONFIG_VND_CAL=y
+CONFIG_OVERRIDE_VND_CAL=n
+
+# AP owns the large PSRAM heap; CP keeps only its explicit RAM-region heap.
+CONFIG_PSRAM_AS_SYS_MEMORY=n
