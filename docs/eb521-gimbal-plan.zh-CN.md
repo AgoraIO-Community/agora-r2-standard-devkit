@@ -3,7 +3,7 @@
 日期：2026-10-13。本文方案的历史来源分支为 `release/v4.0.1-mybot-r2`。
 当前官方工程为 `agora-r2-standard-devkit`，使用 `main` 分支。
 本文保留当时的云台接入方案与测试方法。2026-10-16的实际配置以
-[工程说明](../bk_solution_ai/projects/mybot/README_CN.md)为准：舵机控制默认关闭，
+[工程说明](../projects/mybot/README_CN.md)为准：舵机控制默认关闭，
 重新启用后提供手动CLI；MCP表情仅渲染LCD，不驱动云台。音频已改用三路模拟输入及
 追加数字参考，VAD关闭。下文的自动动作接入及ADC2回采描述属于历史方案。
 

@@ -4,7 +4,7 @@
 
 2026-10-16说明：当前固件已使用实现DeviceCommand的SDK `e7793eba`。
 实际协议及接口以该SDK公开文档和
-[工程说明](../bk_solution_ai/projects/mybot/README_CN.md)为准；未采用下文建议的新clock/scene
+[工程说明](../projects/mybot/README_CN.md)为准；未采用下文建议的新clock/scene
 平台注册接口，当前命令忽略issued_at/expires_at，不要求UTC时钟。MCP表情仅用于LCD，
 舵机控制默认关闭。下文保留原设计过程，不代表当前移植要求。
 

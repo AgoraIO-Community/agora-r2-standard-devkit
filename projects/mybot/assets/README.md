@@ -1,6 +1,6 @@
-# mybot 固件内嵌语音资源
+# agora-r2-standard-devkit 固件内嵌语音资源
 
-本目录保存父仓库维护的 mybot 提示语音资源。构建准备时先复制产品工程和组件，随后
+本目录保存父仓库维护的 agora-r2-standard-devkit 提示语音资源。构建准备时先复制产品工程和组件，随后
 `projects/mybot/scripts/generate_assets_c.py` 会把
 `locales/` 下的 OGG 文件转换为 C 源文件
 `components/mybot/mybot_sdk/platforms/bk7259/bk7259_assets.c`；该源文件随 AP 固件一起编译，设备直接从
@@ -12,7 +12,7 @@
 ## 音频格式
 
 所有音频为 **Opus-in-Ogg**：由 16 kHz 单声道 s16le 源经
-`scripts/convert_pcm_to_ogg.sh` 编码（libopus 24 kbps VBR、`-application voip`），
+`projects/mybot/scripts/convert_pcm_to_ogg.sh` 编码（libopus 24 kbps VBR、`-application voip`），
 设备侧由 `bk7259_ogg_pcm.c` 解码为 16 kHz 单声道 PCM。解码器依赖 OpusHead
 （mono、pre_skip 裁剪）与结尾 granule position，因此始终使用脚本转换，不要手工
 指定其它编码参数。
@@ -32,7 +32,7 @@ Linux mybot demo（文档标注为同一 `xiaozhi-esp32` 资源的衍生）。�
 
 1. 准备 16 kHz 单声道 s16le PCM 源文件，放到对应 locale 目录下同名
    （如 `prompt.pcm`）。
-2. 运行 `scripts/convert_pcm_to_ogg.sh`，生成或覆盖同名 `.ogg`。
+2. 在仓库根目录运行 `projects/mybot/scripts/convert_pcm_to_ogg.sh`，生成或覆盖同名 `.ogg`。
 3. 重新生成 C 数组：
 
    ```bash

@@ -14,12 +14,13 @@ VAD与舵机仍关闭，MCP只更新LCD。原ISRG+DigiCert双根证书保持，�
 中英文完整 AP/CP 构建和合包通过，约34秒/33秒，总计约1分13秒；测试固件位于
 `releases/official-r2/bk7259-zh-CN-video.bin` 和 `bk7259-en-US-video.bin`。
 源码边界检查70个产品文件通过；20项构建准备测试、表情策略13组462条断言、HTTPS 5案例、
-云台14组加CLI主机测试通过。MyBot/AOSL/RTSA快照与迁移前一致；生成AVDK AP/CP/tools
+云台14组加CLI主机测试通过。agent-studio-device-firmware/AOSL/RTSA快照与迁移前一致；生成AVDK AP/CP/tools
 与原R2依赖`2a60aa47b`一致，摄像头辅助组件与原Solution`28f9590`一致。
 
 本次仅验证源码管理迁移和编译，仍需重新烧录验证LCD、配网、HTTPS、音频/AEC、视频与按键。
 以下历史条目的路径、提交、固件摘要及实机结论按当时上下文保留；旧的直接make命令不适用于
-新布局，当前统一入口与准备方法见根README及 `docs/OFFICIAL_DEPENDENCIES.md`。
+新布局，当前统一入口与准备方法见[根 README](../../README.zh-CN.md)及
+[官方依赖说明](../../docs/OFFICIAL_DEPENDENCIES.md)。
 
 本文先记录当前像素眼镜界面的验证，再保留原始 LVGL 状态视图及 R2 功能的历史记录。
 当前界面采用用户提供模拟器的工艺灰/像素眼镜样式，默认中文、启用表情过渡与光标动画。

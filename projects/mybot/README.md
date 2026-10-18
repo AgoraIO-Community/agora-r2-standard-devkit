@@ -1,22 +1,24 @@
-# MyBot Project (BK7259)
+# agora-r2-standard-devkit Project (BK7259)
 
 - [中文](./README_CN.md)
 
 ## 1. Overview
 
-`mybot` is the BK7259 AP/CP firmware integration for the MyBot SDK. It combines
+`projects/mybot` is the BK7259 AP/CP firmware integration for
+[agent-studio-device-firmware](https://github.com/AgoraIO-Community/agent-studio-device-firmware). It combines
 device-service control, bidirectional RTC audio, local provisioning and UI, and
 optional one-way encoded video uplink in one conversation. Video is enabled by default.
 
-The `release/v4.0.1-mybot-r2` branch targets the Yunqu V1.0 R2 board with a
+The `agora-r2-standard-devkit` firmware targets the Yunqu V1.0 R2 board with a
 GC9503CV MIPI LCD and KEY1/GPIO47. It preserves the paired-reference audio configuration,
 with three analog inputs and an appended digital AEC reference. The product lives in the
 parent repository; official BK dependencies receive versioned patches in isolated build copies.
 Its normal UI follows the simulator's
 process-gray skin and pixel-glasses face.
 
-The vendored SDK follows the latest committed upstream `main` snapshot
-`39d5ed122aab51d90c1c531298c4ead8dc35b104` (PR #115, version 1.2.0), with the existing
+The vendored SDK pins the `agent-studio-device-firmware` snapshot
+[`39d5ed122aab51d90c1c531298c4ead8dc35b104`](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/39d5ed122aab51d90c1c531298c4ead8dc35b104)
+(version 1.2.0), with the existing
 HTTPS request/response body logging patch. MCP control over RTM requires one `message.user`
 envelope, `data_type: "message"`, and string `content` containing DeviceCommand v1. It supports
 `audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`:
@@ -71,14 +73,14 @@ truncate larger lines. Ordinary RTM logs remain DEBUG, hidden at default NOTICE.
 
 | Core | Responsibility |
 | --- | --- |
-| AP (`bk7259_ap`) | Owns the product control loop, APSTA provisioning, MyBot SDK and AOSL lifecycle, HTTP(S)/RTC/RTM, audio, LCD, keys, camera capture, H.264 encoding, and video uplink. |
+| AP (`bk7259_ap`) | Owns the product control loop, APSTA provisioning, agent-studio-device-firmware and AOSL lifecycle, HTTP(S)/RTC/RTM, audio, LCD, keys, camera capture, H.264 encoding, and video uplink. |
 | CP (`bk7259`) | Initializes the BK runtime and starts the AP system. |
 
 The `bk7259` project target builds and packages both cores.
 
 ## 3. Build
 
-From the `mybot-bk7259` repository root, use the pinned official BK repositories and managed
+From the `agora-r2-standard-devkit` repository root, use the pinned official BK repositories and managed
 build entry point:
 
 ```bash
@@ -392,7 +394,7 @@ MIPI CSI GC2053/CV2005 sensor (1280x720 at 5 fps)
   -> ISP MP (640x480 NV12)
   -> hardware FLEXA H.264 encoder
   -> encoded-frame pool
-  -> MyBot video handler
+  -> agent-studio-device-firmware video handler
   -> Agora RTSA high video stream
 ```
 

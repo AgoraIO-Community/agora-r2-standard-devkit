@@ -1,9 +1,10 @@
-# MyBot LVGL pixel-glasses view
+# agora-r2-standard-devkit LVGL pixel-glasses view
 
 ## Current visual reference
 
 The face geometry and colors follow the user-supplied simulator in
-`mcp-resource/threejs-project/`, relative to the parent `mybot-bk7259` repository.
+`mcp-resource/threejs-project/`, a local reference directory relative to the parent
+`agora-r2-standard-devkit` repository; it is not included in the source tree.
 The selected appearance is `process` (工艺灰) and the face style is `geek`
 (像素眼镜). These reference inputs were read without modifying or copying the
 simulator into the firmware source tree:

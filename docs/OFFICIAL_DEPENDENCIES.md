@@ -2,9 +2,14 @@
 
 ## 范围与版本
 
-`release/v4.0.1-mybot-r2` 继 `main` 之后使用 BK 官方仓库作为两个 Git 子模块的来源，
+`agora-r2-standard-devkit` 使用 BK 官方仓库作为两个 Git 子模块的来源，
 不再依赖 `junlon2006` 下的 BK fork。这次迁移只改变源码管理和构建准备方式，保留原 R2
-的 LCD、三路模拟输入/AEC、按键、电源和运行逻辑，不同时升级厂商 SDK 或 MyBot SDK。
+的 LCD、三路模拟输入/AEC、按键、电源和运行逻辑，不同时升级厂商 SDK 或 agent-studio-device-firmware。
+
+厂商迁移后，SDK 快照单独更新至 `39d5ed122aab51d90c1c531298c4ead8dc35b104`，详见
+[`SDK_REVISION`](../components/mybot/mybot_sdk/SDK_REVISION)。当前云端 MCP 接受
+`message.user` 包装的 `audio.set_volume` 和 `audio.adjust_volume`；下文迁移验证记录描述
+厂商迁移时的基线。本地 LCD 表情渲染仍保留，RTM 不再执行静音或情绪命令。
 
 | 依赖 | 官方来源 | 固定提交 |
 | --- | --- | --- |
@@ -17,7 +22,7 @@
 ## 源码归属
 
 ```text
-mybot-bk7259/
+agora-r2-standard-devkit/
 ├── bk_avdk_smp/             # 固定提交的官方子模块
 ├── bk_solution_ai/          # 固定提交的官方子模块
 ├── projects/mybot/          # 父仓库维护的产品工程
@@ -32,8 +37,8 @@ mybot-bk7259/
 ```
 
 `projects/mybot/` 保存 AP/CP 入口、板级配置、内存/Flash 分区、资源和工程构建文件。
-`components/mybot/` 保存 MyBot SDK、BK7259 平台适配、AOSL 和 Agora RTSA；这些文件由原
-Solution 产品版本 `28f9590` 的目录迁入。MyBot `include/`、`src/`、AOSL 和 RTSA 快照保持原字节内容及锁定摘要，
+`components/mybot/` 保存 agent-studio-device-firmware、BK7259 平台适配、AOSL 和 Agora RTSA；这些文件由原
+Solution 产品版本 `28f9590` 的目录迁入。SDK `include/`、`src/`、AOSL 和 RTSA 快照保持原字节内容及锁定摘要，
 并非从 BK 官方重新获取或切换到上游最新版本。
 
 迁移保留 R2 的海内外地址和 `CONFIG_MYBOT_HTTPS` 开关。TLS 仍使用原来的 ISRG Root X1 与
@@ -49,7 +54,7 @@ DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单�
   DMIC 关闭、每路模拟增益 20 dB 加数字增益 16 dB、`dual_ch=2`、传统降噪、VAD 关闭、
   `ec_only_output=1`，扬声器 PA 为 GPIO50。
 - UART2 GPIO2/3 的舵机实现和 40 ms 最小控制周期保留，`CONFIG_MYBOT_GIMBAL` 当前关闭；
-  MCP 表情只渲染 LCD。视频默认开启，RTSA、AOSL 和 MyBot 快照版本不变。
+  MCP 表情只渲染 LCD。视频默认开启，RTSA、AOSL 和 agent-studio-device-firmware 快照版本不变。
 
 ## 必要厂商补丁
 
@@ -58,7 +63,7 @@ DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单�
 | `patches/bk_avdk_smp/0001-captive-portal-dns.patch` | 在 AP、CP 的 DHCP/DNS 实现中保留强制门户行为，手机连接配网热点后可打开配网页。 |
 | `patches/bk_avdk_smp/0002-r2-gc9503cv-panel.patch` | 保留 GC9503CV MIPI 屏驱动及屏注册/构建配置，共 4 个文本文件。 |
 | `patches/bk_avdk_smp/0003-r2-trimic-aec.patch` | 保留三麦 AEC wrapper、配置/算法头文件、配套算法库校验清单及 Git binary patch 形式的 `libaec_v3.a`。 |
-| `patches/bk_solution_ai/0001-mybot-camera-helper.patch` | 保留 MyBot 使用的摄像头辅助组件构建裁剪、关闭保护、XCLK 和低帧率模式匹配等既有适配。 |
+| `patches/bk_solution_ai/0001-mybot-camera-helper.patch` | 保留 agora-r2-standard-devkit 使用的摄像头辅助组件构建裁剪、关闭保护、XCLK 和低帧率模式匹配等既有适配。 |
 
 补丁从原 R2 依赖与上述官方基线的差异提取。它们由父仓库跟踪，应用前验证基线，
 应用失败立即停止准备，不自动忽略失败 hunk，不以官方当前分支头替代固定基线。
@@ -140,7 +145,7 @@ git submodule status
 1. 选定并核实两套官方提交的兼容性，在独立工作目录中审查源码差异。
 2. 更新 gitlink 和版本清单；逐项检查现有补丁是否已被上游吸收，删除已无必要的补丁或重新
    基于新版本生成，保持补丁校验信息一致。
-3. 从干净生成目录重新准备并编译中英文 AP/CP，检查组合镜像、内存报告和 MyBot/AOSL/RTSA
+3. 从干净生成目录重新准备并编译中英文 AP/CP，检查组合镜像、内存报告和 agent-studio-device-firmware/AOSL/RTSA
    摘要，确认官方子模块 tracked 工作树仍然干净。
 4. 回归冷启动、配网门户、配对/HTTPS、按键、音频/AEC、LCD、摄像头及反复开启/结束会话。
 5. 只有上述内容一并审核后，才提交父仓库的版本锁、补丁和 gitlink。
@@ -149,7 +154,7 @@ git submodule status
 
 ## 许可与验证边界
 
-源码移动不改变原许可证。BK、MyBot、AOSL、RTSA、LVGL、字体和语音资源继续适用各自的
+源码移动不改变原许可证。BK、agent-studio-device-firmware、AOSL、RTSA、LVGL、字体和语音资源继续适用各自的
 许可证或商业条款；AOSL 有附加条件，RTSA 为专有二进制，不能将整个仓库描述为统一
 Apache-2.0。相关许可和来源文件随产品目录保留，见根 README 的第三方依赖章节。
 
@@ -170,7 +175,7 @@ releases/official-r2/bk7259-en-US-video.bin
 这次使用 `--output-root releases/official-r2` 保留原发布目录中的固件；脚本默认输出仍为
 `releases/bk7259-<language>-video.bin`。时间只代表本次开发机的编译，不是设备启动或会话延时。
 
-`python3 scripts/check_sources.py` 的70个产品源码检查通过；MyBot SDK、AOSL 和 RTSA
+`python3 scripts/check_sources.py` 的70个产品源码检查通过；agent-studio-device-firmware、AOSL 和 RTSA
 不可变快照与迁移前一致。官方两个子模块保持干净；生成 AVDK 的 AP/CP/tools 与原 R2
 依赖 `2a60aa47b` 对应内容一致，生成摄像头辅助组件与原 Solution `28f9590` 对应内容一致。
 AEC 库大小和摘要与上文相同，保留 `20261014` 版本。
@@ -181,10 +186,17 @@ AEC 库大小和摘要与上文相同，保留 `20261014` 版本。
 
 ## English
 
-`release/v4.0.1-mybot-r2` pins the two official `bekencorp` repositories to the commits listed above. Product files
+`agora-r2-standard-devkit` pins the two official `bekencorp` repositories to the commits listed above. Product files
 live in the parent repository under `projects/mybot` and `components/mybot`; no personal BK fork
 is a build dependency. This preserves the existing R2 hardware and firmware behavior without
-upgrading the vendor SDK or MyBot snapshots.
+upgrading the vendor SDK or agent-studio-device-firmware snapshots.
+
+After the vendor migration, the SDK snapshot was separately updated to
+`39d5ed122aab51d90c1c531298c4ead8dc35b104`; see
+[`SDK_REVISION`](../components/mybot/mybot_sdk/SDK_REVISION). Current cloud MCP commands use
+`message.user` envelopes with `audio.set_volume` or `audio.adjust_volume`. The migration validation
+records describe the earlier baseline. Local LCD expression rendering remains available; RTM no
+longer executes mute or emotion commands.
 
 The four recorded patches preserve captive-portal DNS, GC9503CV LCD, three-microphone AEC and
 camera-helper integration. The binary AEC archive remains the previous 591224-byte `20261014`
@@ -196,7 +208,7 @@ Use `git submodule update --init --recursive` to restore the reviewed revisions.
 remote branch tips with `--remote`. An upstream upgrade must update the gitlinks, version lock,
 and patch set together, then rebuild both languages and complete the board regression checks.
 
-MyBot, AOSL, and RTSA snapshots retain their previous bytes, revision records, and applicable
+agent-studio-device-firmware, AOSL, and RTSA snapshots retain their previous bytes, revision records, and applicable
 licenses. Board configuration and runtime behavior are preserved, including disabled VAD/gimbal
 and the previous two-root TLS store (ISRG + DigiCert, without GoDaddy G2). Both language builds and
 host checks passed; a successful build does not replace R2 hardware regression testing. See the

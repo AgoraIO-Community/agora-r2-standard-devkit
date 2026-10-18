@@ -1,18 +1,20 @@
-# MyBot 工程（BK7259）
+# agora-r2-standard-devkit 工程（BK7259）
 
 - [English](./README.md)
 
 ## 1. 工程简介
 
-`mybot` 是 MyBot SDK 的 BK7259 AP/CP 双核固件集成工程，在同一次会话中提供设备服务控制、
+`projects/mybot` 是 [agent-studio-device-firmware](https://github.com/AgoraIO-Community/agent-studio-device-firmware)
+的 BK7259 AP/CP 双核固件集成工程，在同一次会话中提供设备服务控制、
 RTC 双向音频、本地配网与界面，以及可选的单向编码视频上行。视频默认开启。
-当前 `release/v4.0.1-mybot-r2` 分支适配耘趣 V1.0 / Robot R2 新板，包含 GPIO47 单键
+`agora-r2-standard-devkit` 固件适配耘趣 V1.0 / Robot R2 新板，包含 GPIO47 单键
 控制会话与长按恢复出厂、GC9503CV 屏；当前音频保留配套参考的三路模拟输入与追加数字AEC参考，
 正常界面采用模拟器的工艺灰皮肤与像素眼镜。产品源码维护在父仓库，官方 BK 依赖的必要改动
 在隔离构建副本中以受版本锁约束的补丁应用。
 
-内嵌 SDK 同步上游 `main` 最新已提交快照 `39d5ed122aab51d90c1c531298c4ead8dc35b104`
-（PR #115，版本仍为 1.2.0），保留 HTTPS 请求与响应 body 日志补丁。通过 RTM 进行 MCP 控制时，
+内嵌 SDK 固定为 `agent-studio-device-firmware` 快照
+[`39d5ed122aab51d90c1c531298c4ead8dc35b104`](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/39d5ed122aab51d90c1c531298c4ead8dc35b104)
+（版本仍为 1.2.0），保留 HTTPS 请求与响应 body 日志补丁。通过 RTM 进行 MCP 控制时，
 仅接受单层 `message.user` 信封，`data_type` 为 `message`，字符串 `content` 内包含 DeviceCommand v1。
 支持 `audio.set_volume`（`params.level` 为 0–100 的整数）和 `audio.adjust_volume`
 （`params.delta` 为 -100–100 的整数）。正数增加音量，负数减少音量，0 保持不变，结果钳制到
@@ -50,14 +52,14 @@ SDK 日志不再使用 RTM 的 512 字节预览或 RTC 错误的 64 字节固定
 
 | 核 | 职责 |
 | --- | --- |
-| AP（`bk7259_ap`） | 负责产品控制循环、APSTA 配网、MyBot SDK 与 AOSL 生命周期、恢复出厂、HTTP(S)/RTC/RTM、音频、LCD、按键、摄像头采集、H.264 编码和视频上行。 |
+| AP（`bk7259_ap`） | 负责产品控制循环、APSTA 配网、agent-studio-device-firmware 与 AOSL 生命周期、恢复出厂、HTTP(S)/RTC/RTM、音频、LCD、按键、摄像头采集、H.264 编码和视频上行。 |
 | CP（`bk7259`） | 初始化 BK 运行环境并启动 AP 系统。 |
 
 `bk7259` 工程目标会同时编译并打包两个核。
 
 ## 3. 编译
 
-使用父仓库固定的官方 BK 子模块，在 `mybot-bk7259` 仓库根目录执行统一构建入口：
+使用父仓库固定的官方 BK 子模块，在 `agora-r2-standard-devkit` 仓库根目录执行统一构建入口：
 
 ```bash
 python3 scripts/check_sources.py
@@ -106,7 +108,7 @@ CP 初始化 BK 系统并启动 AP。AP 的 `main()` 执行 `bk_init()`、打印
 2. 初始化 AOSL，准备 LCD、Wi-Fi 管理器和 GPIO47 扫描定时器。
 3. 检查 `mybot.factory_reset.v1`；有效标记先继续恢复出厂，可检测的异常标记等待新长按。
 4. 无恢复任务时注册平台描述符，尝试已保存的 Wi-Fi，或进入 APSTA 配网门户。
-5. STA 获得 IPv4 并关闭门户、SoftAP 后启动 MyBot SDK，按服务器状态完成注册和绑定检查。
+5. STA 获得 IPv4 并关闭门户、SoftAP 后启动 agent-studio-device-firmware，按服务器状态完成注册和绑定检查。
 6. 在产品循环中处理按键请求和 SDK 状态日志；启用视频时，摄像头等 RTC `CONNECTED` 后才启动。
 
 网络设置或 SDK 启动失败后的等待状态保留产品显示和按键，允许长按恢复出厂；媒体、
@@ -296,7 +298,7 @@ MIPI CSI GC2053/CV2005 传感器（1280x720，5 fps）
   -> ISP MP（640x480 NV12）
   -> 硬件 FLEXA H.264 编码器
   -> 编码帧池
-  -> MyBot 视频处理器
+  -> agent-studio-device-firmware 视频处理器
   -> Agora RTSA 主视频流
 ```
 

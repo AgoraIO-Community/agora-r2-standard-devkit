@@ -1,6 +1,6 @@
 # Third-party notices
 
-## MyBot SDK
+## agent-studio-device-firmware
 
 The sources under `include/` and `src/` are based on a snapshot of
 https://github.com/junlon2006/mybot at commit
@@ -87,7 +87,9 @@ Apache-2.0; read `../mybot_aosl/aosl/LICENSE` before use or redistribution.
 
 ## Agora RTSA SDK
 
-The BK7259 RTSA binary is supplied externally and is not part of this source
-tree. Its package contains no standalone redistribution grant. Do not publish
-the package, static library, or firmware containing it without written Agora
-authorization.
+The BK7259 RTSA headers and prebuilt static library are included in the sibling
+`../mybot_rtsa/` component. The package identifier is recorded in
+`../mybot_rtsa/PACKAGE_INFO`, and the library is
+`../mybot_rtsa/lib/arm/libagora-rtc-sdk.a`. Its package contains no standalone
+redistribution grant. Do not publish the package, static library, or firmware
+containing it without written Agora authorization.

@@ -13,7 +13,7 @@ and undefined-behavior checking remain enabled. The policy does not allocate.
 
 The C99 harness compiles the production display policy against the real public
 LCD and product expression headers. It needs only a native C compiler; it has
-no hardware, RTOS, MyBot runtime, LVGL, or HAL stubs.
+no hardware, RTOS, agent-studio-device-firmware runtime, LVGL, or HAL stubs.
 
 Checks cover the visible expression and replay decision: workflow priority,
 conversation opening, phase transitions and continuous thinking duration,
