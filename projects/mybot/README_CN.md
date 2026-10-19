@@ -8,8 +8,8 @@
 的 BK7259 AP/CP 双核固件集成工程，在同一次会话中提供设备服务控制、
 RTC 双向音频、本地配网与界面，以及可选的单向编码视频上行。视频默认开启。
 `agora-r2-standard-devkit` 固件适配耘趣 V1.0 / Robot R2 新板，包含 GPIO47 单键
-控制会话与长按恢复出厂、GC9503CV 屏；当前音频保留配套参考的三路模拟输入与追加数字AEC参考，
-正常界面采用模拟器的工艺灰皮肤与像素眼镜。产品源码维护在父仓库，官方 BK 依赖的必要改动
+控制会话与长按恢复出厂、GC9503CV 屏；当前音频使用三路模拟麦克风输入与追加数字AEC参考，
+正常界面渲染灰色像素眼镜。产品源码维护在父仓库，官方 BK 依赖的必要改动
 在隔离构建副本中以受版本锁约束的补丁应用。
 
 内嵌 SDK 固定为 `agent-studio-device-firmware` 快照
@@ -154,7 +154,9 @@ CEN 保留硬件复位功能，双击、音量和其它按键未注册。长按�
 
 ## 6. R2 音频与显示
 
-当前音频以此前与 `mcp-resource/new` 配套参考对照的配置为基础调优 MIC 增益；本地参考目录不是构建依赖。
+当前音频由
+[bk7259_audio.c](../../components/mybot/mybot_sdk/platforms/bk7259/bk7259_audio.c) 配置，
+板级引脚设置见 [usr_gpio_cfg.h](ap/config/bk7259_ap/usr_gpio_cfg.h)。
 启用三路差分模拟输入
 （`ch_bitmap=0x7`、`chl_num=3`），`adc_cfg.aec_en=3`追加数字播放参考，形成四条lane：
 
@@ -175,7 +177,7 @@ VAD关闭（`vad_enable=0`），`ec_only_output=1`、`multi_output_use_ec_out=1`
 由 `patches/bk_avdk_smp/0003-r2-trimic-aec.patch` 维护；库保持原 R2 的 `20261014` 版本。
 不增加ASR输出端口或UI方向回调。
 
-GPIO12按参考配置为输出下拉，用于ADC内部比较器放电；GPIO34/35保留附件中的
+GPIO12在 `usr_gpio_cfg.h` 中配置为输出下拉，用于ADC内部比较器放电；GPIO34/35使用其中的
 `SECOND_FUNC_DISABLE + GPIO_OUTPUT`声明，开机仍为HIGH-Z。GPIO2/3 UART2映射仅随
 `CONFIG_MYBOT_GIMBAL=y`启用，当前对比固件关闭舵机模块、映射及CLI；GPIO47上拉会话键保持。
 不增加运行期采集电平日志。当前三路采集与AEC实际效果仍待烧录验证。
@@ -190,7 +192,9 @@ GPIO27 在平台准备阶段输出高电平，使能摄像头外部 1.2V 电源�
 保留板级电源，保持屏幕点亮。
 恢复中、失败和重启中提示支持中文/英文，由现有显示任务渲染，SDK 停止/解挂不会覆盖提示。
 
-LVGL 9.5.0 界面采用用户提供模拟器的 `process`（工艺灰）皮肤与 `geek`（像素眼镜）画法，
+LVGL 9.5.0 像素眼镜界面由
+[lvgl_view.cc](../../components/mybot/mybot_sdk/platforms/bk7259/display/lvgl_view.cc) 和
+[pixel_expression_shapes.h](../../components/mybot/mybot_sdk/platforms/bk7259/display/pixel_expression_shapes.h) 实现，
 使用 `#050708` 固定黑色玻璃底与灰色装饰，避免 RGB565 深色渐变色带。
 “中性待机”使用 `#f1f1ee` 米白镜框、双弧眼和微笑；
 “打招呼”使用 `#f1ca79` 暖金镜框、左弧眼、右圆点眼和微笑。
@@ -233,7 +237,7 @@ SDK 为 `STOPPED` 时配网引导继续可见；同步停止期间沿用 STOPPIN
 停止返回后立即发布观测到的 stopped 状态。恢复出厂引导保持最高优先级，第三行固定为
 `> state: factory_reset` 并移除会话阶段/VP 字段；这是产品流程文字，不是新增 SDK 状态。
 
-全部 23 个表情均已实现，枚举顺序与模拟器一致：
+全部 23 个表情均已实现，按 `bk7259_expression.h` 的枚举顺序为：
 
 ```text
 NEUTRAL, GREETING, HAPPY, EXCITED, CURIOUS, CONFUSED, THINKING, LISTENING,
@@ -251,7 +255,7 @@ int show_happy(void) {
 }
 ```
 
-`bk7259_expression_from_name()` 将完整模拟器名称转换为枚举，忽略 ASCII 字母大小写；
+`bk7259_expression_from_name()` 将完整表情名称转换为枚举，忽略 ASCII 字母大小写；
 `bk7259_expression_name()` 返回稳定的大写名称。
 `bk7259_lcd_clear_expression()` 恢复当前流程与服务端阶段对应的最新自动表情。
 设置和清除返回 `0` 表示显示所有者接受了已复制的请求，不表示已经刷屏完成；
@@ -269,21 +273,21 @@ mailbox，不在调用线程执行 LVGL。只有准备完成且运行中的 `REA
 `CONFIG_MYBOT_GIMBAL=y`时可用，当前对比固件关闭。不做自动演示轮播。
 选择 ERROR 或 SLEEP 图案不会让 SDK 进入错误状态，也不会使硬件休眠。
 
-模拟器 1024x896 画布按 9/16 等比缩放为 576x504 虚拟区域，位于 640x480 逻辑屏的 `(32,-12)`。
+渲染器的 1024x896 绘图坐标空间按 9/16 等比缩放为 576x504 虚拟区域，位于 640x480 逻辑屏的 `(32,-12)`。
 上下只裁去空白，文字与表情仍位于圆角安全区内，眼镜总宽约 345 像素。
-终端保留参考的 37 像素源坐标行距，`</>` 左对齐。
+终端使用绘图坐标中的 37 像素行距，`</>` 左对齐。
 固定 LVGL 控件与采样曲线绘制表情；心形、星形、实心椭圆、腮红和泪滴使用五块小型
-只读 A8 抗锯齿蒙版，合计 13631 字节 Flash，消除三角扇接缝。蒙版由参考几何在本地生成，不使用完整表情图片，
+只读 A8 抗锯齿蒙版，合计 13631 字节 Flash，消除三角扇接缝。蒙版几何定义在仓库提供的生成器中，不使用完整表情图片，
 不增加 canvas 缓冲。`CONFIG_MYBOT_LVGL_UI_ANIMATIONS`
 控制短过渡、表情动态效果和 500 ms 光标闪烁，浅色主题选项已移除。复用现有显示任务、20480 字节 RGB565
 绘制条带、两块各 614400 字节扫描缓冲和 8192 字节任务栈，配置刷新间隔为 50 ms。
 LVGL 内部分配与栈峰值仍需在同时音视频运行时实测。
 
 终端装饰使用由 DejaVu Sans Mono Bold 生成的只读 BK7259 Terminal 子集：15 像素 ASCII
-和 16 像素 `</>`，合计 4634 字节位图，替代 Unscii 16，按 LVGL 实际字宽贴近参考缩放文字比例，
-光标按实际字宽定位。
+和 16 像素 `</>`，合计 4634 字节位图，替代 Unscii 16，
+标签与光标按 LVGL 实际字宽定位。
 中英文操作引导使用 MyBot UI Sans 20 字体子集。
-旧 emoji 源码与许可证保留用于来源追溯，但不再链接。资源来源、蒙版生成与复现、模拟器 SHA256 见
+旧 emoji 源码与许可证保留用于来源追溯，但不再链接。资源来源、蒙版几何与字节校验见
 [display/SOURCES.md](../../components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)。
 显示构建与验证记录见 [UI_VALIDATION.md](./UI_VALIDATION.md)。
 
@@ -338,7 +342,7 @@ R2 LCD、此前双模拟麦/ADC2参考的上行与AEC、结束会话后的显示
 - [ ] 短按松手开启/关闭会话；关闭后屏幕仍亮，双向音频和 AEC 正常。
 - [ ] 确认实际 `READY` 时为中性待机，进入会话先显示 SURPRISED 300 ms 并另计进入过渡，再恢复最新阶段表情；挂断后回中性待机。
 - [ ] 验证 LISTENING、THINKING 连续三秒转 PROCESSING、SPEAKING 或无阶段时 NEUTRAL；同阶段重复更新不重置思考计时。
-- [ ] 确认四行终端文字、小写表情名称、真实 SDK 状态及本次会话的阶段/声纹文字，对照模拟器验证 23 个表情及动态效果。
+- [ ] 确认四行终端文字、小写表情名称、真实 SDK 状态及本次会话的阶段/声纹文字，按[表情映射](../../components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#expression-mappings)验证 23 个表情及动态效果。
 - [ ] 验证持久本地设置/清除、非法名称和枚举、阶段更新、流程切换及恢复优先级；清除后应恢复最新自动表情。
 - [ ] 通过 `message.user` 信封验证 MCP `audio.set_volume` 的 0、50、100 音量；裸命令、静音及情绪命令应无效果。
 - [ ] 验证封装后的 `audio.adjust_volume` 正数、负数及 0，包含 -100、100 边界；结果应钳制到 0–100，重复 command ID 不应再次增减音量。

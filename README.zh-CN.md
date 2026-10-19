@@ -344,7 +344,10 @@ GPIO40 背光低有效。GPIO27 在平台准备阶段输出高电平，使能摄
 显示的板级电源 owner 持有 2.8V 和 1.2V 电源直到完整平台关闭；结束会话或视频只通过
 GPIO30 复位摄像头，保留板级电源，保持屏幕点亮。
 
-LVGL 9.5.0 渲染器采用用户提供模拟器的 `process`（工艺灰）皮肤与 `geek`（像素眼镜）画法，
+LVGL 9.5.0 渲染器通过
+[lvgl_view.cc](components/mybot/mybot_sdk/platforms/bk7259/display/lvgl_view.cc) 和
+[pixel_expression_shapes.h](components/mybot/mybot_sdk/platforms/bk7259/display/pixel_expression_shapes.h)
+实现灰色像素眼镜界面，
 使用 `#050708` 固定黑色玻璃底与灰色装饰，避免 RGB565 深色渐变色带。实际进入 `READY` 时显示“中性待机”：
 `#f1f1ee` 米白镜框、双弧眼和微笑。进入 `IN_CONVERSATION` 时先显示 SURPRISED，
 进入过渡结束后保持 300 ms，再按最新服务端阶段选择表情：LISTENING 显示认真聆听，
@@ -372,7 +375,7 @@ Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到
 启动、配网、网页控制台配对、错误和恢复出厂仍保留必要的
 中英文引导。GPU 与触摸关闭，不显示摄像头预览，也不控制云台动作。
 
-模拟器全部 23 个表情通过独立模块
+全部 23 个表情通过独立模块
 [bk7259_expression.h](components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_expression.h)
 提供。`bk7259_lcd_set_expression()` 复制持久本地覆盖请求到显示所有者，
 `bk7259_lcd_clear_expression()` 恢复最新自动表情。仅 `READY`/`IN_CONVERSATION`
@@ -385,12 +388,12 @@ Wi-Fi 配网成功后仍按 SDK 流程完成鉴权与配对，只有实际达到
 当前音频对比固件关闭。完整列表和调用示例见
 [工程说明](projects/mybot/README_CN.md#6-r2-音频与显示)。
 
-模拟器的 1024x896 画布按 9/16 等比缩放为 576x504 虚拟区域，位于 640x480 逻辑屏幕的
+渲染器的 1024x896 绘图坐标空间按 9/16 等比缩放为 576x504 虚拟区域，位于 640x480 逻辑屏幕的
 `(32,-12)`，上下只裁去空白，表情和文字保持在屏幕圆角安全区内。眼镜总宽约 345 像素；
-终端文字保留参考的 37 像素源坐标行距，`</>` 左对齐。镜框、眼睛和嘴巴由固定 LVGL 控件与采样曲线绘制，
+终端文字使用绘图坐标中的 37 像素行距，`</>` 左对齐。镜框、眼睛和嘴巴由固定 LVGL 控件与采样曲线绘制，
 心形、星形、椭圆、腮红和泪滴使用五块小型只读 A8 抗锯齿蒙版，合计 13631 字节 Flash，消除三角扇接缝。
-蒙版由参考几何在本地生成，不使用完整表情图片，不增加 canvas 整帧缓冲或 UI 任务。
-生成和复现方法见 [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks)。
+蒙版几何定义在仓库提供的生成器中，不使用完整表情图片，不增加 canvas 整帧缓冲或 UI 任务。
+生成器和字节校验方法见 [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks)。
 开启动画时，表情切换使用 250 ms 过渡并保留表情动态效果，光标每 500 ms
 闪烁；重复状态更新保留动画时钟，自动表情变化时使用同样的过渡。
 
@@ -428,16 +431,17 @@ LVGL 生成原生 RGB565 条带，BK7259 后端将变化区域旋转写入空闲
 [UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md)。
 像素表情复用现有显示任务、绘制条带和两块扫描缓冲；旧四张 64x64 emoji 资源保留历史源码，
 不再链接到固件。终端装饰使用只读 BK7259 Terminal 位图字库：15 像素 ASCII 与 16 像素 `</>`
-子集，合计 4634 字节位图；它们由 DejaVu Sans Mono Bold 生成，替代 Unscii 16，按 LVGL 实际
-字宽贴近参考的缩放文字比例，光标按实际字宽定位。操作引导使用 20 像素 MyBot UI Sans。
+子集，合计 4634 字节位图；它们由 DejaVu Sans Mono Bold 生成，替代 Unscii 16，
+标签与光标按 LVGL 实际字宽定位。操作引导使用 20 像素 MyBot UI Sans。
 UI 字库现含 152 个字符，覆盖 ASCII、配对及恢复出厂中文文案；任意中文 SSID 或聊天内容需要
 扩充字库。新字库替代原先直接渲染的字形子集。资源来源与许可证记录在
 [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)。
 
 ## 音频采集与音量
 
-当前 R2 音频以此前与 `mcp-resource/new` 配套 Solution/AVDK 对照的配置为基础调优 MIC 增益；本地参考目录
-不是构建输入。启用三路差分
+当前 R2 音频由
+[bk7259_audio.c](components/mybot/mybot_sdk/platforms/bk7259/bk7259_audio.c) 配置，板级引脚设置见
+[usr_gpio_cfg.h](projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h)。启用三路差分
 模拟 ADC（`ch_bitmap=0x7`、`chl_num=3`），ADC0/1/2各使用16 dB模拟及4 dB数字增益，
 按三个MIC输入送入算法；DMIC关闭，`adc_cfg.aec_en=3`追加数字播放参考，形成四条lane：
 MIC[0,1,2]、REF@3。通道内硬件参考设为NONE，不再把ADC2作为参考。
@@ -450,7 +454,7 @@ SDK仍接收16 kHz单声道S16 PCM，不增加ASR输出端口或UI方向回调�
 配套AVDK包含三麦解交织、trimic标记与SSL3支持，实际仍调用 `aec_proc`；Solution中
 “临时禁用AEC”的注释已过时。必需 wrapper、配置/算法头文件、算法库和配套库校验清单
 由 `patches/bk_avdk_smp/0003-r2-trimic-aec.patch` 维护，算法库保持原 R2 的 `20261014` 版本。
-GPIO12按参考配置为输出下拉，供ADC比较器放电；GPIO34/35保留附件的
+GPIO12在 `usr_gpio_cfg.h` 中配置为输出下拉，供ADC比较器放电；GPIO34/35使用其中的
 `SECOND_FUNC_DISABLE + GPIO_OUTPUT`声明，开机仍为HIGH-Z。当前对比固件在AP defconfig配置
 `# CONFIG_MYBOT_GIMBAL is not set`，不启用舵机模块、对应UART2映射和CLI注册，
 不增加运行期采集电平日志。当前三路输入版本仍待真机验证。
@@ -546,7 +550,7 @@ git submodule update --init --recursive
 维护者升级时必须同时审核兼容的官方提交、gitlink、`vendor.lock.json` 与补丁集，
 再完成中英文构建及 R2 板级回归。补丁应用失败会中止准备。
 完整规则见 [BK 官方依赖管理](docs/OFFICIAL_DEPENDENCIES.md)。不要提交生成厂商副本、
-固件、`build/`、`__pycache__/` 或本地参考资料。
+固件、`build/` 或 `__pycache__/`。
 
 ## 当前开发限制
 
@@ -599,7 +603,7 @@ git submodule update --init --recursive
 - [AOSL 许可证及附加条款](components/mybot/mybot_aosl/aosl/LICENSE)
 - [提示音资源许可证](projects/mybot/assets/LICENSE.xiaozhi-esp32)
 - [LVGL 许可证](bk_avdk_smp/ap/components/lvgl/LICENCE.txt)
-- [LVGL 视图、字体和模拟器来源](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
+- [LVGL 视图、几何蒙版和字体来源](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
 - [BK7259 第三方声明](components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)
 - [agent-studio-device-firmware 第三方声明](https://github.com/AgoraIO-Community/agent-studio-device-firmware/blob/main/THIRD_PARTY_NOTICES.md)
 

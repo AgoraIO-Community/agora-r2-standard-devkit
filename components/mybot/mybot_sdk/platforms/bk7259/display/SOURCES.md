@@ -1,36 +1,28 @@
 # agora-r2-standard-devkit LVGL pixel-glasses view
 
-## Current visual reference
+## Current renderer
 
-The face geometry and colors follow the user-supplied simulator in
-`mcp-resource/threejs-project/`, a local reference directory relative to the parent
-`agora-r2-standard-devkit` repository; it is not included in the source tree.
-The selected appearance is `process` (工艺灰) and the face style is `geek`
-(像素眼镜). These reference inputs were read without modifying or copying the
-simulator into the firmware source tree:
-
-| Reference file | SHA256 |
-| --- | --- |
-| `src/expressions.js` | `1d51ca444e69a39da5b2feedc38d543aea362433184e89a76a825e757b684e31` |
-| `src/reference-style.js` | `2b0cf05ffceb91f079d1cd542a982622e9c44c882ff84ac98a84b9a90bfa0646` |
-| `src/main.js` | `675c47ed36249a89f3791c9b12ffe4300b6eec86598c88d3e62a6048e55eec5a` |
-
-The supplied reference has no separate license declaration establishing an
-open-source redistribution grant. This record identifies its provenance; it
-does not assign an MIT or other third-party license to the simulator.
+The pixel-glasses view is implemented in [lvgl_view.cc](lvgl_view.cc), with
+expression geometry, colors, and motion in
+[pixel_expression_shapes.h](pixel_expression_shapes.h). The expression IDs and
+local control API are declared in
+[bk7259_expression.h](../include/bk7259_expression.h); automatic face selection
+and timing are defined in [expression_policy.h](expression_policy.h).
 
 The LCD uses a fixed `#050708` black glass background and gray decorations,
 avoiding visible dark-gradient banding in RGB565. Neutral idle uses the
-process skin's `#f1f1ee` accent, glasses, two curved eyes, and a smile. Greeting
+`#f1f1ee` accent, glasses, two curved eyes, and a smile. Greeting
 uses `#f1ca79`, with a curved left eye, round right eye, and a smile. The
-1024x896 reference is scaled uniformly by 9/16 into a virtual 576x504 area at
-`(32,-12)` on the R2 panel's logical 640x480 display (native GC9503CV 480x640).
+1024x896 artwork coordinate space is scaled uniformly by 9/16 into a virtual
+576x504 area at `(32,-12)` on the R2 panel's logical 640x480 display (native
+GC9503CV 480x640).
 Only empty canvas space is cropped above and below the display; visible face
 geometry and text remain within its rounded-bezel safe area. The glasses span
 about 345 pixels. Fixed LVGL widgets and sampled curves draw the face. Five
 small immutable A8 masks render filled hearts, stars, ellipses, cheeks, and
-tears without triangle-fan seams. These masks are generated locally from the
-reference geometry; no full-face image or canvas buffer is required.
+tears without triangle-fan seams. Their geometry and rasterization are defined
+in [generate-expression-masks.py](generate-expression-masks.py); no full-face
+image or canvas buffer is required.
 
 The renderer retains four terminal rows. In READY:
 
@@ -55,27 +47,29 @@ The four rows use source position `x=104` and
 `(795,112)` remains left-aligned. The 500 ms cursor follows the last row using
 the actual fixed-width font advance.
 
-`READY` selects NEUTRAL and `IN_CONVERSATION` selects GREETING by default.
+`READY` selects NEUTRAL. Entering `IN_CONVERSATION` shows SURPRISED for 300 ms
+after its entering transition, then selects LISTENING or THINKING for those
+server phases, PROCESSING after three continuous seconds of THINKING, and
+NEUTRAL during SPEAKING or when no phase is active.
 The independent `include/bk7259_expression.h` module provides the full 23-entry
-simulator enum, name conversion, and copied local set/clear requests to the
+expression enum, name conversion, and copied local set/clear requests to the
 existing display owner. Overrides are limited to READY/conversation face pages
-and are cleared by workflow screen changes. Indicator-only updates retain the
-selected face and do not restart its transition. Voiceprint and
-listening/thinking/speaking indicators update the third terminal row rather
-than showing an overlay. Chinese and English
+and are cleared by workflow screen changes. Phase updates select the latest
+automatic face while preserving local overrides; repeated unchanged updates do
+not restart its transition. Voiceprint and listening/thinking/speaking
+indicators update the third terminal row rather than showing an overlay. Chinese and English
 provisioning, web-console pairing, error, and factory-reset guidance remain
-available. The additional 21 expressions are not automatically cycled and have
-no MCP/RTM command mapping or UART/motor integration in this change.
+available. Expressions are not automatically cycled and have
+no MCP/RTM command mapping or UART/motor integration.
 
 ## Expression mappings
 
-These mappings use the simulator's `drawGeekFace()`/`GLYPHS` path. In particular,
-NEUTRAL uses HAPPY's double-arc geometry with the process skin's off-white
-accent. It does not use the simulator's separate `character` face, pupil,
-blink, or tremble behavior. Colors below are source RGB values converted to
-the target RGB565 format.
+These mappings are defined by the expression configuration table in
+`pixel_expression_shapes.h`. NEUTRAL uses HAPPY's double-arc geometry with an
+off-white accent. Colors below are RGB values converted to the target RGB565
+format.
 
-| ID/name | Simulator label | Eyes; mouth | Accent |
+| ID/name | Label | Eyes; mouth | Accent |
 | --- | --- | --- | --- |
 | NEUTRAL | 中性待机 | arc/arc; smile | `#f1f1ee` |
 | GREETING | 打招呼 | arc/dot; smile | `#f1ca79` |
@@ -101,20 +95,16 @@ the target RGB565 format.
 | ERROR | 错误 | vertical/vertical; flat | `#e57876` |
 | SLEEP | 休眠 | dash/dash; none | `#7588a5` |
 
-Enabled expression effects follow the geek reference: EXCITED alternates eye
-bounce, THINKING/BORED drift, PROCESSING moves its orbit eyes, SLEEPY animates
-the yawn, and SLEEP dims and breathes. The reference's brightness multipliers
+Enabled expression effects are implemented in `pixel_expression_shapes.h`:
+EXCITED alternates eye bounce, THINKING/BORED drift, PROCESSING moves its orbit eyes, SLEEPY animates
+the yawn, and SLEEP dims and breathes. Brightness multipliers
 apply to SLEEPY, SAD, APOLOGY, and SLEEP; SURPRISED/ERROR retain their brief
 entry flash. ERROR and SLEEP are display artwork only, with no change to SDK
 error, connectivity, or hardware power state.
 
-The reference's fake screen translation is retained: LISTENING shifts the
-whole face and terminal actor down by 18 source pixels, and
-SAD/APOLOGY/SLEEPY shift it by 28. CURIOUS/CONFUSED/PLEADING keep the display
-upright rather than applying `main.js`'s 8-degree roll. That pose difference
-avoids an additional transformed draw layer; the eye/mouth geometry, colors,
-and expression effects still follow the geek reference. The simulator's
-physical pan/tilt poses are not translated into hardware movement.
+LISTENING shifts the whole face and terminal actor down by 18 source pixels, and
+SAD/APOLOGY/SLEEPY shift it by 28. All expressions keep the display upright.
+Expression motion is limited to the LCD and does not drive hardware movement.
 
 Two fixed shape banks, each with 16 leaves, support a 250 ms crossfade while
 sharing the glasses frame and terminal decorations. Their geometry lives in
@@ -144,13 +134,12 @@ full-frame canvas allocation.
 
 ## Geometry masks
 
-`pixel_expression_masks.h` contains five immutable, uncompressed A8 masks
-generated by the target-owned MIT-licensed `generate-expression-masks.py`.
-The generator independently expresses the reference's `heart()`/`star()`
-contours and geek ellipse dimensions, then samples at four times the R2 9/16
-scale and downsamples with Lanczos. The recorded generation tool is Pillow
-10.2.0. The output retains its MIT notice and the reference geometry SHA256;
-the reference simulator's separate provenance remains as stated above.
+[pixel_expression_masks.h](pixel_expression_masks.h) contains five immutable,
+uncompressed A8 masks generated by the target-owned MIT-licensed
+`generate-expression-masks.py`. The generator defines heart and star contours
+and ellipse dimensions in its `shapes()` function, then samples at four times
+the R2 9/16 scale and downsamples with Lanczos. The recorded generation tool is
+Pillow 10.2.0. The generated output retains its MIT notice and copyright.
 
 | Mask | Target dimensions | A8 bytes |
 | --- | --- | --- |
@@ -173,30 +162,21 @@ This replaces independently antialiased triangles whose interior
 edges produced seams, without full-expression images, a canvas, or a new
 framebuffer. LVGL's existing draw strip and scanout buffers remain unchanged.
 
-From this display directory, regenerate with the pinned reference file or
-check the committed bytes:
+From this display directory, check the committed bytes using Pillow 10.2.0:
 
 ```bash
-python3 generate-expression-masks.py --reference /path/to/threejs-project/src/expressions.js
 python3 generate-expression-masks.py --check
 ```
 
-`--reference` rejects a different simulator SHA256. `--check` needs the recorded
-Pillow version but not the simulator file; it reconstructs all five masks and
-compares the generated header. Pillow and the local simulator are development
-inputs, not runtime or firmware-build dependencies.
+`--check` reconstructs all five masks from the geometry in the script and
+compares the generated header without writing it. Pillow is a development tool;
+the firmware build uses the committed header.
 
 ## Retained view and asset provenance
 
 The preceding platform-independent status view and generated resources were
-adapted from `junlon2006/mybot-esp32` commit
-`19af3bdfaf1dd35461af48def8f9558e3503e755`:
-
-- `components/mybot_platform/src/drivers/display/renderers/lvgl/lvgl_view.cc`
-- `components/mybot_platform/src/drivers/display/renderers/lvgl/lvgl_assets.c`
-- `components/mybot_platform/src/drivers/display/renderers/lvgl/lvgl_fonts.c`
-- `components/mybot_platform/src/internal/display/lvgl_view.h`
-- `components/mybot_platform/src/internal/display/lvgl_assets.h`
+adapted from
+[`junlon2006/mybot-esp32` commit `19af3bdfaf1dd35461af48def8f9558e3503e755`](https://github.com/junlon2006/mybot-esp32/tree/19af3bdfaf1dd35461af48def8f9558e3503e755).
 
 The view's MIT license, original layout reference, and copyright notice remain
 in `assets/licenses/LVGL_VIEW_LICENSE.txt`. The historical asset API header
@@ -209,25 +189,21 @@ The old four 64x64 ARGB8888 emoji images total 65,536 pixel bytes, but
 
 ## Fonts
 
-Terminal decorations use renamed BK7259 Terminal subsets derived from the
-external, read-only `DejaVuSansMono-Bold.ttf` generation input, pinned by SHA256
+Terminal decorations use renamed BK7259 Terminal subsets derived from DejaVu
+Sans Mono Bold, with generation input SHA256
 `3a3c502eeff669a231549e80df9f7c49de109bafe303170409e905d0b31a38fe`.
-The original font file is not copied into the firmware tree. The 4 bpp subsets
-in `pixel_fonts.c` replace the wider Unscii 16 rendering. Their actual LVGL
-text advances closely match the simulator's scaled text proportions:
+The committed 4 bpp subsets in [pixel_fonts.c](pixel_fonts.c)
+provide fixed-width ASCII terminal text and the signature:
 
 | Subset | Glyphs | Bitmap bytes | Use |
 | --- | --- | --- | --- |
 | BK7259 Terminal 15 | 95 ASCII | 4479 | Four terminal rows |
 | BK7259 Terminal 16 | 3 (`</>`) | 155 | Signature |
 
-The total bitmap data is 4634 read-only bytes. The 15-pixel terminal size is
-the nearest integer to the reference's 26 pixels scaled by 9/16; the 16-pixel
-signature similarly follows its 28-pixel reference. Actual LVGL character
-advances determine label and cursor width. The local
-`generate-pixel-font.py` uses Pillow 10.2.0 / FreeType 2.13.2 and the same
-packing as `generate-lvgl-font.py`. Regenerate with
-`python3 generate-pixel-font.py --font /path/to/DejaVuSansMono-Bold.ttf`.
+The total bitmap data is 4634 read-only bytes. Actual LVGL character advances
+determine label and cursor width. [generate-pixel-font.py](generate-pixel-font.py)
+records the subset sizes, character selection, and 4 bpp packing. The committed
+subsets were generated with Pillow 10.2.0 / FreeType 2.13.2.
 Bitstream copyright/trademark notices, the DejaVu public-domain modification
 notice, and the full Bitstream Vera license are retained in
 `assets/licenses/TERMINAL_FONT_LICENSE.txt`. The generated subsets use the
@@ -238,13 +214,21 @@ subset of Source Han Sans SC Normal. The current font contains 152 glyphs,
 including ASCII and fixed Chinese UI vocabulary. Arbitrary Chinese SSIDs or
 chat text require a separately extended font.
 
-The local `generate-lvgl-font.py` is adapted from the preceding reference's
-MIT-licensed generator and reads the fixed vocabulary in `lvgl_view.cc`. It
-uses the OFL-licensed `SourceHanSansSC-Normal.otf`, with required input SHA256
+[generate-lvgl-font.py](generate-lvgl-font.py) is adapted from the MIT-licensed
+generator in `junlon2006/mybot-esp32` and reads the fixed vocabulary in
+`lvgl_view.cc`. Source Han Sans SC Normal has generation input SHA256
 `1ee89e1669362dee13851129c0a8a791a87521eb4148e5efbf5d26596738e25b`.
-The current bitmap uses 18,458 bytes and was generated with Pillow 10.2.0 /
-FreeType 2.13.2. The source font is an external generation input; firmware
-embeds only this subset. Run
-`python3 generate-lvgl-font.py --font /path/to/SourceHanSansSC-Normal.otf` to
-regenerate, or `python3 generate-lvgl-font.py --check` to verify UI glyph
-coverage without the source font or Pillow.
+The committed subset in
+[lvgl_fonts.c](lvgl_fonts.c) uses 18,458 bitmap bytes and was generated with
+Pillow 10.2.0 / FreeType 2.13.2. Its SIL OFL-1.1 notice remains in
+`assets/licenses/LVGL_VIEW_FONT_LICENSE.txt`.
+
+From this display directory, verify that the committed subset covers the UI
+vocabulary:
+
+```bash
+python3 generate-lvgl-font.py --check
+```
+
+This coverage check reads only `lvgl_view.cc` and `lvgl_fonts.c` and uses the
+Python standard library.

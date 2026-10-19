@@ -36,10 +36,9 @@ GPIO47 按键、音量、ADC2 回采 AEC、视频、状态/VP 第三行不引入
 
 ## UART 与接线
 
-参考 R2 的 `components/bk_servo/bk_hiwonder_car.c` 使用 UART5、GPIO65/64、1 Mbps，
-采用 AA55/CRC8 协议。GPIO65/64 当前用于摄像头 I²C，不能复用该串口或协议。
-生产接线按厂家提供的 `mcp-resource/usr_gpio_cfg.diff` 选择 UART2、GPIO2/3，
-对应原理图中的 CN1 POGO 串口线：
+接线配置维护在 `projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h`，
+UART 收发实现位于 `components/mybot/mybot_sdk/platforms/bk7259/bk7259_gimbal.c`。
+启用舵机控制时选择 UART2、GPIO2/3，对应 CN1 POGO 串口线：
 
 | 信号 | BK7259 | CN1 | EB521 |
 | --- | --- | --- | --- |
@@ -49,7 +48,7 @@ GPIO47 按键、音量、ADC2 回采 AEC、视频、状态/VP 第三行不引入
 
 方案采用 AP `UART_ID_2`，115200、8 数据位、无校验、1 停止位、无流控、DMA 关闭。
 EB521 的 UART 电平及电机供电需按实际连接确认，不根据串口连接器推定电机供电。
-资料没有给出 BK7259 控制 EB521 电源的使能脚，方案不借用其它电机模块的电源 GPIO。
+当前产品配置没有 EB521 电源使能脚，方案不借用其它电机模块的电源 GPIO。
 
 当前 AVDK 的 UART 驱动支持 UART2 寄存器、时钟、IRQ 与自动引脚映射。
 AP `usr_gpio_cfg.h` 配置 GPIO2/3 的 UART2 TXD/RXD 表项，平台初始化及
@@ -72,7 +71,6 @@ AP `usr_gpio_cfg.h` 配置 GPIO2/3 的 UART2 TXD/RXD 表项，平台初始化及
 
 上电先查询自动归零结果；流程字节 02 才允许发送角度请求。复位 ACK 只表示接受，
 不表示归零完成。归零等待有有限超时，失败时标记不可执行，不循环触发大幅度复位。
-PDF 的控制器内置寻零流程包含先向左 180°、向上 60°；这与最新应用物理行程不同，
 实物验收需核对控制器的寻零行为。BK 端运行限幅无法改变控制器自身的上电寻零流程，
 首版不主动发送 `0x65`。
 
@@ -80,7 +78,7 @@ PDF 的控制器内置寻零流程包含先向左 180°、向上 60°；这与�
 设备端始终只保持一个未完成的运动请求，不使用控制器的三条任务队列。
 
 应答命令字等于请求命令字加 `0x80`，例如 `0x61` 对应 `0xE1`。用户提供的实测
-`03 E1 00 01 00 57 AC` 帧长度和 CRC 正确，按 PDF 定义表示接受，不代表完成。
+`03 E1 00 01 00 57 AC` 帧长度和 CRC 正确，在当前解析实现中表示接受，不代表完成。
 E1/长度5/结果06 才是完成通知。第一条实测请求为绝对 −30°、500 pps；若从中心
 出发约需 190 ms，而接受应答在 63 ms 返回。实测没有记录起点或后续完成帧，
 不能仅根据接受帧推断已经到位。
@@ -139,33 +137,24 @@ E1/长度5/结果06 才是完成通知。第一条实测请求为绝对 −30°�
 
 ## 四种动作
 
-模拟器每次先用 0.28 秒平滑回到 pan=0、tilt=+8 的基准。+8 是模拟器的上仰模型基准，
-实物默认以协议归零中心 (0,0) 为基准。按方向约定进行相对转换：
+`bk7259_gimbal.c` 中的 `play_scene()` 先用 0.28 秒回到协议归零中心 (0,0)，
+再执行固定轨迹。SAD 低头幅度为实物可达的 10°，惊讶方向固定向右；
+实板仍需确认两轴正负方向。
 
-```text
-pan_hw  = pan_home + pan_sign * pan_sim
-tilt_hw = tilt_home - 0.5 * (tilt_sim - 8)
-```
-
-首版 `pan_home=0`、`tilt_home=0`、`pan_sign=+1`，实板用参考正负角度帧确认方向。
-俯仰变化按 0.5 缩放，将模拟器 SAD 的 20° 低头变为实物可达的 10°，保留缓动曲线。
-模拟器的随机幅度 v 固定为 1，惊讶方向固定向右，避免初次验证引入随机结果。
-
-| MCP 场景 | 对应 UI | EB521 轨迹 | 模拟器名义运动时间，另加基准过渡 |
+| MCP 场景 | 对应 UI | EB521 轨迹 | 名义运动时间，另加回中过渡 |
 | --- | --- | --- | --- |
 | emotion.happy | HAPPY | 水平 ±6°，0.8 Hz 正弦摆动；俯仰0° | 2秒 |
 | emotion.sad | SAD | 水平0°，俯仰0°→+10°，缓慢低头 | 3秒 |
 | emotion.angry | ANNOYED | 水平0°→+8°→−8°→+10°；俯仰0° | 1.2秒 |
 | emotion.surprised | SURPRISED | 水平0°→+30°→+25°；俯仰0° | 0.8秒 |
 
-模拟器没有 ANGRY；用现有 ANNOYED 的“不满”图案和机械关键帧承接 angry。
-四个动作均追加平滑回中段，并等待回中完成。模拟器原始末姿分别为 sad 低头、angry
-+10°、surprised +25°，happy 的2秒曲线末尾约−3.5°；设备端按用户要求回中，
-因此总时长包含基准过渡、表中动作时间和回中收尾。收尾初始按 0.28 秒规划；
+ANGRY 对应现有 ANNOYED 的“不满”图案。
+四个动作均追加平滑回中段，并等待回中完成。
+总时长包含初始回中、表中动作时间和回中收尾。收尾初始按 0.28 秒规划；
 若实际串行执行超过名义时间，则等待完成，不积压轨迹点。
 
-平滑采用模拟器的五次缓动 `6u^5 - 15u^4 + 10u^3`，用有限关键点/查表发送，
-不会直接将浏览器逐帧角度连续塞进 UART。按有限小段保留幅度、方向和顺序；
+平滑采用五次缓动 `6u^5 - 15u^4 + 10u^3`，用有限关键点/查表发送。
+按有限小段保留幅度、方向和顺序；
 每段选择能在名义时间内到达目标的实际速度档位，完成确认后补齐剩余时间，
 再推进下一段；如有新动作或挂断请求，则跳过旧段剩余等待，转入新动作或回中。
 不足半拍的段合并或仅等待，持续使用绝对目标避免微小相对位移被全部丢弃；
@@ -216,23 +205,26 @@ AP GPIO 表接入 UART2。agent-studio-device-firmware SDK、AOSL 和 AVDK 不�
 
 正式日志包括 UART 就绪、归零等待/完成、动作接受/启动/完成/回中/取消、超时和结果码；
 不逐帧输出重复轮询。先进行编解码/状态机主机验证，再在原工程编译供烧录。
-用户提供文本的13条样例已核对，帧长度及 CRC16 全部一致。
+当时核对的13条样例帧长度及 CRC16 全部一致；当前可复现的帧样例和断言见
+`projects/mybot/tests/gimbal/test_gimbal.c` 与 `projects/mybot/tests/gimbal/test_cli.c`。
 
-实现文件位于 `bk_solution_ai/components/mybot/mybot_sdk/platforms/bk7259/`；
-主机测试位于 `bk_solution_ai/projects/mybot/tests/gimbal/`，直接编译真实云台模块，
+实现文件位于 `components/mybot/mybot_sdk/platforms/bk7259/`；
+主机测试位于 `projects/mybot/tests/gimbal/`，直接编译真实云台模块，
 由 UART 控制器模型与 pthread 模拟接收、量化、应答和并发生命周期。
+当前仓库的测试和构建入口如下；历史验证结果见命令后的记录。
 
 ```sh
-bash bk_solution_ai/projects/mybot/tests/gimbal/run.sh
+bash projects/mybot/tests/gimbal/run.sh
 ASAN_OPTIONS=detect_leaks=0 GIMBAL_TEST_SANITIZERS=1 \
-  bash bk_solution_ai/projects/mybot/tests/gimbal/run.sh
-make -C bk_solution_ai/projects/mybot bk7259 SDK_DIR="$PWD/bk_avdk_smp"
+  bash projects/mybot/tests/gimbal/run.sh
+python3 scripts/build_all.py --language zh-CN
 ```
 
-主机验证覆盖六组：CRC/分片/粘包、完成确认与故障、四种轨迹及量化回中、段边界取消、
+方案实施时的主机验证覆盖六组：CRC/分片/粘包、完成确认与故障、四种轨迹及量化回中、段边界取消、
 worker 启停与关闭失败重试、AOSL 引用失败保留与平衡。地址及未定义行为检查同时运行；
 工具运行环境的 ptrace 限制使 LeakSanitizer 不可用，以上命令只关闭泄漏检测。
-目标构建编译 AP/CP 并生成 `projects/mybot/build/bk7259/mybot/package/all-app.bin`。
+当前构建入口先准备补丁后的依赖和产品工程，再编译 AP/CP；生成路径见
+[构建说明](../README.zh-CN.md#构建固件)。以下是方案实施时的历史验证结果：
 最终六组普通测试与 ASAN/UBSAN 均通过，AP/CP 构建及打包通过。AP Flash 使用
 1,910,220 字节（40.66%），CP Flash 使用 1,295,948 字节（89.88%）。
 云台静态 context 为 248 字节，线程请求栈4 KiB，驱动软件 FIFO 配置为128字节；
@@ -245,8 +237,8 @@ SDK 用户既有 RTM 日志修改使工作树摘要为 `c7c3ea4c7a1418712ce76b3b
 本次保留该修改和本地 HTTP 测试开关。RTSA 仍为 v1.10.1 build 1278380。
 
 已核对 SDK 锁定提交的 `PORTING.zh-CN.md`、`EMBEDDED.zh-CN.md`、当前公开 LCD/平台头、
-AVDK UART/GPIO/RTOS 头与实现、EB521 协议、硬件原理图及模拟器轨迹。旧 boundary checker
-仍使用旧版本锁、旧 LCD/provisioning 约束且扫描参考目录，并把主机测试直接包含当前
+AVDK UART/GPIO/RTOS 头与实现及 EB521 帧解析与轨迹。旧边界检查器
+仍使用旧版本锁、旧 LCD/provisioning 约束，并把主机测试直接包含当前
 平台模块 `.c` 判为 SDK 私有依赖。测试仅包含可修改的平台源文件，不包含 SDK 私有源码，
 也不参与目标固件构建；这些检查规则与当前 R2 布局不匹配。本次未更新 checker，
 其退出码为1，不将其报告为通过。
@@ -262,6 +254,5 @@ VP/阶段更新不重启动作、断网/挂断/恢复出厂取消、噪声/半�
 
 无需再次标定每拍角度或依赖停止清队列；0.315°/拍和 `0x64` 不清队列已由用户确认。
 
-参考输入：`mcp-resource/EB521云台UART通信协议.pdf`、`mcp-resource/串口配置及发送示例.txt`、
-`mcp-resource/threejs-project/src/main.js`、其 README/URDF，以及 Robot R2 源码和硬件原理图。
-当前用户的 RTM NOTICE 日志修改及 HTTP 本地配置不属于本方案修改范围，原样保留。
+当前实现与回归入口见 `bk7259_gimbal.c`、AP GPIO 配置和
+[`projects/mybot/tests/gimbal/README.md`](../projects/mybot/tests/gimbal/README.md)。

@@ -389,8 +389,10 @@ active low. GPIO27 enables the external camera 1.2 V rail at a high level during
 preparation. The LCD board-power owner keeps both rails on until full platform shutdown;
 conversation/video teardown resets the camera through GPIO30 without cutting board power.
 
-The LVGL 9.5.0 renderer follows the user-supplied simulator's `process` (process gray) skin and
-`geek` (pixel glasses) face. It uses a fixed `#050708` black glass background and gray decorations,
+The LVGL 9.5.0 renderer implements a gray pixel-glasses face in
+[lvgl_view.cc](components/mybot/mybot_sdk/platforms/bk7259/display/lvgl_view.cc) and
+[pixel_expression_shapes.h](components/mybot/mybot_sdk/platforms/bk7259/display/pixel_expression_shapes.h).
+It uses a fixed `#050708` black glass background and gray decorations,
 avoiding visible dark-gradient banding in RGB565.
 `READY` shows the neutral idle face: off-white `#f1f1ee` glasses, two curved eyes, and a smile.
 Entering `IN_CONVERSATION` shows SURPRISED for 300 ms after its entering transition,
@@ -425,7 +427,7 @@ Chinese and English startup, provisioning, web-console pairing, error, and
 factory-reset instructions remain available. GPU and touch stay disabled, and the display does
 not show a camera preview or control gimbal movement.
 
-All 23 simulator expressions are available through the independent
+All 23 expressions are available through the independent
 [bk7259_expression.h](components/mybot/mybot_sdk/platforms/bk7259/include/bk7259_expression.h)
 module. `bk7259_lcd_set_expression()` copies a persistent local override to the display owner;
 `bk7259_lcd_clear_expression()` restores the latest automatic face. Overrides are accepted only
@@ -440,14 +442,14 @@ control the gimbal; manual UART CLI control remains independent when enabled wit
 Names, examples, and visual mappings are in the
 [project guide](projects/mybot/README.md#6-r2-audio-and-display).
 
-The simulator's 1024x896 artwork is scaled uniformly by 9/16 to a virtual 576x504 area at logical
-position `(32,-12)` on the 640x480 display. Only empty canvas space is cropped at the top and
+The renderer's 1024x896 artwork coordinate space is scaled uniformly by 9/16 to a virtual
+576x504 area at logical position `(32,-12)` on the 640x480 display. Only empty canvas space is cropped at the top and
 bottom; the face and text remain inside the display's rounded-bezel safe area. The glasses span
-about 345 pixels. Terminal rows retain the reference's 37-pixel source grid, and the `</>`
+about 345 pixels. Terminal rows use a 37-pixel artwork-coordinate grid, and the `</>`
 signature is left-aligned. Fixed LVGL widgets and sampled curves draw the glasses, eyes, and mouth.
 Five small immutable A8 masks (13631 bytes in Flash) render filled hearts, stars, ellipses, cheeks, and tears without
-triangle-fan seams. They are generated locally from the reference geometry; no full-face images,
-additional canvas framebuffer, or UI task are required. The generator and reproduction command
+triangle-fan seams. Their geometry is defined in the committed mask generator; no full-face images,
+additional canvas framebuffer, or UI task are required. The generator and byte verification command
 are documented in [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#geometry-masks).
 With animations enabled, face
 changes use a 250 ms transition, animated expressions retain their motion, and the cursor blinks
@@ -493,8 +495,8 @@ limit on total UI memory. The pixel face reuses the existing worker, draw strip,
 buffers. The old four 64x64 emoji assets remain as historical source resources but are no longer
 linked into the firmware. Terminal decorations use the read-only BK7259 Terminal bitmap subsets:
 15-pixel ASCII and a 16-pixel `</>` signature, totaling 4634 bitmap bytes. These compact DejaVu
-Sans Mono Bold derivatives replace Unscii 16; their actual LVGL text advances match the reference's
-scaled text proportions closely. The cursor follows the actual text width. Chinese and English
+Sans Mono Bold derivatives replace Unscii 16; their actual LVGL text advances determine label
+widths. The cursor follows the actual text width. Chinese and English
 operational instructions use the 20-pixel MyBot UI Sans font. The UI font contains 152 glyphs
 covering ASCII and the fixed Chinese UI vocabulary, including reset status text; arbitrary
 Chinese SSIDs or chat text need an extended font.
@@ -505,8 +507,9 @@ Build results, host tests and remaining hardware checks are recorded in
 
 ## Audio
 
-The current R2 audio pipeline uses the paired Solution/AVDK configuration originally verified
-against the supplied `mcp-resource/new` reference, with tuned microphone gains. Those local reference files are not build inputs.
+The current R2 audio pipeline is configured in
+[bk7259_audio.c](components/mybot/mybot_sdk/platforms/bk7259/bk7259_audio.c), with board pin settings in
+[usr_gpio_cfg.h](projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h).
 Capture enables three differential analog ADC lanes (`ch_bitmap=0x7`, `chl_num=3`), each with
 16 dB analog and 4 dB digital gain. DMIC is disabled; `adc_cfg.aec_en=3` appends the digital
 playback reference, giving four interleaved lanes: three microphone inputs and reference at lane 3.
@@ -527,8 +530,8 @@ matching library checksum manifest are maintained in
 `patches/bk_avdk_smp/0003-r2-trimic-aec.patch`. The archive remains the R2 `20261014` version;
 no ASR output port or UI direction callback is added.
 
-GPIO12 follows the reference's output/pull-down configuration for ADC comparator discharge.
-GPIO34/35 retain the supplied `SECOND_FUNC_DISABLE + GPIO_OUTPUT` declarations, which leave
+GPIO12 uses the output/pull-down configuration in `usr_gpio_cfg.h` for ADC comparator discharge.
+GPIO34/35 use its `SECOND_FUNC_DISABLE + GPIO_OUTPUT` declarations, which leave
 them HIGH-Z at startup. The current audio comparison build also sets
 `# CONFIG_MYBOT_GIMBAL is not set` in the AP defconfig, disabling the gimbal module,
 its UART2 pin mapping and CLI registration. It adds no runtime capture-level logs.
@@ -641,7 +644,7 @@ are expected. Maintainers must update compatible official commits, gitlinks, `ve
 and the reviewed patch set together, then rebuild both languages and complete R2 board regression.
 Patch application failures stop preparation. Full rules are in
 [official dependency management](docs/OFFICIAL_DEPENDENCIES.md). Do not commit generated vendor
-copies, firmware, `build/`, `__pycache__/`, or local reference material.
+copies, firmware, `build/`, or `__pycache__/`.
 
 ## Current bring-up limits
 
@@ -706,7 +709,7 @@ terms of use, including but not limited to:
 - [AOSL license and additional terms](components/mybot/mybot_aosl/aosl/LICENSE)
 - [Prompt asset license](projects/mybot/assets/LICENSE.xiaozhi-esp32)
 - [LVGL license](bk_avdk_smp/ap/components/lvgl/LICENCE.txt)
-- [LVGL view, font, and simulator provenance](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
+- [LVGL view, geometry masks, and font provenance](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
 - [BK7259 third-party notices](components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)
 - [agent-studio-device-firmware third-party notices](https://github.com/AgoraIO-Community/agent-studio-device-firmware/blob/main/THIRD_PARTY_NOTICES.md)
 
