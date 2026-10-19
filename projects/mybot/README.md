@@ -10,11 +10,10 @@ device-service control, bidirectional RTC audio, local provisioning and UI, and
 optional one-way encoded video uplink in one conversation. Video is enabled by default.
 
 The `agora-r2-standard-devkit` firmware targets the Yunqu V1.0 R2 board with a
-GC9503CV MIPI LCD and KEY1/GPIO47. It preserves the paired-reference audio configuration,
-with three analog inputs and an appended digital AEC reference. The product lives in the
+GC9503CV MIPI LCD and KEY1/GPIO47. It uses three analog microphone
+inputs and an appended digital AEC reference. The product lives in the
 parent repository; official BK dependencies receive versioned patches in isolated build copies.
-Its normal UI follows the simulator's
-process-gray skin and pixel-glasses face.
+Its normal UI renders a gray pixel-glasses face.
 
 The vendored SDK pins the `agent-studio-device-firmware` snapshot
 [`39d5ed122aab51d90c1c531298c4ead8dc35b104`](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/39d5ed122aab51d90c1c531298c4ead8dc35b104)
@@ -205,16 +204,17 @@ it does not erase the whole EasyFlash environment.
 
 ## 6. R2 Audio and Display
 
-The current audio configuration preserves the paired Solution/AVDK settings originally
-compared against `mcp-resource/new`; the local reference directory is not a build dependency.
+The current audio pipeline is configured in
+[bk7259_audio.c](../../components/mybot/mybot_sdk/platforms/bk7259/bk7259_audio.c),
+with board pin settings in [usr_gpio_cfg.h](ap/config/bk7259_ap/usr_gpio_cfg.h).
 Capture enables three differential analog ADC inputs (`ch_bitmap=0x7`, `chl_num=3`),
 and `adc_cfg.aec_en=3` appends a digital playback reference:
 
 | Lane | Algorithm input | Analog gain | Digital gain |
 | --- | --- | --- | --- |
-| 0 / ADC0 | Microphone input 1 | 20 dB | 16 dB |
-| 1 / ADC1 | Microphone input 2 | 20 dB | 16 dB |
-| 2 / ADC2 | Microphone input 3 | 20 dB | 16 dB |
+| 0 / ADC0 | Microphone input 1 | 16 dB | 4 dB |
+| 1 / ADC1 | Microphone input 2 | 16 dB | 4 dB |
+| 2 / ADC2 | Microphone input 3 | 16 dB | 4 dB |
 | 3 / appended | Digital playback reference | Not applicable | Not applicable |
 
 DMIC is disabled and `hw_ref_ch=NONE` (`255`); no ADC lane is an in-channel reference.
@@ -236,8 +236,8 @@ AP algorithm library and matching checksum manifest are maintained in
 `20261014` version, and library verification remains enabled.
 No ASR output port or UI direction callback is added.
 
-GPIO12 follows the reference's output/pull-down configuration for discharging the
-ADC internal comparator. GPIO34/35 retain the supplied secondary-function-disabled
+GPIO12 uses the output/pull-down configuration in `usr_gpio_cfg.h` for discharging the
+ADC internal comparator. GPIO34/35 use its secondary-function-disabled
 GPIO-output declarations and remain HIGH-Z at startup. GPIO2/3 UART2 mapping is
 enabled only with `CONFIG_MYBOT_GIMBAL=y`; the current comparison build disables
 the gimbal module, mapping and CLI. GPIO47 remains the pulled-up conversation key.
@@ -259,8 +259,9 @@ board power or blanking the display. The existing UI worker renders both SDK scr
 bilingual restoring/failed/rebooting pages; reset status takes precedence over
 SDK stop/detach updates.
 
-The LVGL 9.5.0 face follows the user-supplied simulator's `process` skin and
-`geek` face style: a fixed `#050708` black glass background and gray decorations
+The LVGL 9.5.0 pixel-glasses face is implemented in
+[lvgl_view.cc](../../components/mybot/mybot_sdk/platforms/bk7259/display/lvgl_view.cc)
+and [pixel_expression_shapes.h](../../components/mybot/mybot_sdk/platforms/bk7259/display/pixel_expression_shapes.h): a fixed `#050708` black glass background and gray decorations
 avoid visible dark-gradient banding in RGB565. The neutral
 idle face uses `#f1f1ee` off-white glasses, two curved eyes, and a smile. The
 greeting uses `#f1ca79` warm-gold glasses, a curved left eye, a round right eye,
@@ -313,7 +314,7 @@ Factory-reset guidance retains highest priority; its third row is
 `> state: factory_reset` and omits session phase/VP fields. This label describes
 the product flow, not an additional SDK state.
 
-All 23 simulator expressions are implemented, in the simulator's enum order:
+All 23 expressions are implemented in `bk7259_expression.h` enum order:
 
 ```text
 NEUTRAL, GREETING, HAPPY, EXCITED, CURIOUS, CONFUSED, THINKING, LISTENING,
@@ -332,7 +333,7 @@ int show_happy(void) {
 }
 ```
 
-`bk7259_expression_from_name()` converts an exact simulator name while ignoring
+`bk7259_expression_from_name()` converts an exact expression name while ignoring
 ASCII letter case; `bk7259_expression_name()` returns its stable uppercase
 name. `bk7259_lcd_clear_expression()` restores the latest automatic face for the
 current workflow and server phase. Set/clear return `0` when the owner accepts the copied request,
@@ -356,15 +357,15 @@ control remains independent when `CONFIG_MYBOT_GIMBAL=y` and is disabled in the
 current audio comparison build. There is no automatic demo cycling. Selecting
 the ERROR or SLEEP artwork does not enter the SDK's error state or suspend the hardware.
 
-The simulator's 1024x896 artwork is scaled uniformly by 9/16 to a virtual
+The renderer's 1024x896 artwork coordinate space is scaled uniformly by 9/16 to a virtual
 576x504 area at logical `(32,-12)` on the 640x480 display. The cropped top and
 bottom contain only empty canvas space; visible text and face geometry stay
 inside the rounded-bezel safe area. The glasses span about 345 pixels.
-Terminal rows retain the reference's 37-pixel source grid, and the signature
+Terminal rows use a 37-pixel artwork-coordinate grid, and the signature
 is left-aligned. Fixed LVGL widgets and sampled curves draw the face. Five small
 immutable A8 masks (13631 bytes in Flash) render hearts, stars, filled ellipses, cheeks, and tears
-without triangle-fan seams. They are generated locally from the reference
-geometry; no full-face images or additional canvas buffer are required.
+without triangle-fan seams. Their geometry is defined in the committed mask
+generator; no full-face images or additional canvas buffer are required.
 `CONFIG_MYBOT_LVGL_UI_ANIMATIONS` enables short
 face transitions, expression motion, and a 500 ms cursor blink; there is no light-theme selector.
 Rendering uses the existing owner task, a 20480-byte RGB565 draw strip, two
@@ -375,12 +376,12 @@ measurement while audio/video run.
 Terminal decorations use read-only BK7259 Terminal subsets derived from
 DejaVu Sans Mono Bold: 15-pixel ASCII and a 16-pixel `</>` signature, totaling
 4634 bitmap bytes. These replace Unscii 16; their actual LVGL text advances
-closely match the reference's scaled text proportions.
+determine label widths.
 The cursor follows the actual text width. Bilingual operation text uses the
 existing MyBot UI Sans 20 subset. The old emoji sources and
 licenses remain for provenance, but the emoji image source is no longer linked.
 See [display/SOURCES.md](../../components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
-for simulator hashes, mask generation/reproduction, and resource origins.
+for mask geometry, byte verification, and resource origins.
 
 ## 7. Multimodal Video Uplink
 
@@ -446,7 +447,7 @@ Video-specific checks require a build with `CONFIG_MYBOT_VIDEO=y`.
 - [ ] Short press/release starts and stops a conversation without blanking the LCD.
 - [ ] Verify NEUTRAL after actual `READY`, a 300 ms SURPRISED opener plus the entering transition, then the latest phase face; hangup returns to neutral.
 - [ ] Verify LISTENING, THINKING → PROCESSING after three continuous seconds, and NEUTRAL during SPEAKING or no active phase; repeated updates must not reset the thinking clock.
-- [ ] Verify four terminal rows, lowercase expression names, actual SDK state, and session-scoped phase/voiceprint text; compare all 23 faces and their motion with the simulator.
+- [ ] Verify four terminal rows, lowercase expression names, actual SDK state, and session-scoped phase/voiceprint text; verify all 23 faces and their motion against the [expression mappings](../../components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md#expression-mappings).
 - [ ] Exercise persistent local set/clear, invalid names/IDs, phase updates, workflow changes, and reset priority; clear must restore the latest automatic face.
 - [ ] Test MCP `audio.set_volume` at 0, 50 and 100 through the `message.user` envelope; bare commands, mute and emotion commands must have no effect.
 - [ ] Test wrapped `audio.adjust_volume` with positive, negative and zero deltas, including -100 and 100; results must clamp to 0–100, and repeating a command ID must not adjust the volume again.

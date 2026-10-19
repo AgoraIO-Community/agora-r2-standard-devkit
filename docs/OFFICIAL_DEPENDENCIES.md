@@ -56,6 +56,9 @@ DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单�
 - UART2 GPIO2/3 的舵机实现和 40 ms 最小控制周期保留，`CONFIG_MYBOT_GIMBAL` 当前关闭；
   MCP 表情只渲染 LCD。视频默认开启，RTSA、AOSL 和 agent-studio-device-firmware 快照版本不变。
 
+上述增益为迁移时的基线；后续 MIC 调优已将 ADC0/1/2 的模拟增益改为 16 dB、数字增益改为
+4 dB。调整位于父仓库 `bk7259_audio.c`，厂商补丁、AEC 算法库和追加数字 REF 配置保持原版本。
+
 ## 必要厂商补丁
 
 | 补丁 | 作用 |
@@ -150,7 +153,8 @@ git submodule status
 4. 回归冷启动、配网门户、配对/HTTPS、按键、音频/AEC、LCD、摄像头及反复开启/结束会话。
 5. 只有上述内容一并审核后，才提交父仓库的版本锁、补丁和 gitlink。
 
-不要将 `mcp-resource/`、本地缓存、生成厂商副本、构建目录或固件加入源码提交。
+源码提交仅包含受版本控制的产品工程、组件、补丁和构建工具；缓存、生成厂商副本、构建目录
+和固件由构建入口生成。
 
 ## 许可与验证边界
 

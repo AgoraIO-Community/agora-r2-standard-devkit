@@ -486,8 +486,8 @@ static int capture_init(void **out_ctx, int rate, int channels, int bits) {
     mic_cfg.adc_cfg.aec_en = 3;
     for (unsigned int channel = 0; channel < MYBOT_CAPTURE_ADC_CHANNELS; ++channel) {
         mic_cfg.adc_cfg.chl_cfg[channel].bits = MYBOT_AUDIO_BITS;
-        mic_cfg.adc_cfg.chl_cfg[channel].dig_gain = 16.0f;
-        mic_cfg.adc_cfg.chl_cfg[channel].ana_gain = 20;
+        mic_cfg.adc_cfg.chl_cfg[channel].dig_gain = 4.0f;
+        mic_cfg.adc_cfg.chl_cfg[channel].ana_gain = 16;
         mic_cfg.adc_cfg.chl_cfg[channel].adc_mode = AUD_ADC_MODE_DIFFEN;
     }
     mic_cfg.dmic_en = 0;
@@ -505,7 +505,7 @@ static int capture_init(void **out_ctx, int rate, int channels, int bits) {
         goto fail;
     }
 
-    MYBOT_LOGI(TAG, "capture geometry: R2 analog ADC0/ADC1/ADC2=MIC gain=20+16 dB, DMIC=0 ADC_aec=3 appended REF");
+    MYBOT_LOGI(TAG, "capture geometry: R2 analog ADC0/ADC1/ADC2=MIC gain=16+4 dB, DMIC=0 ADC_aec=3 appended REF");
 
     stage = "aec";
     aec_v3_algorithm_cfg_t aec_cfg = DEFAULT_AEC_V3_ALGORITHM_CONFIG();

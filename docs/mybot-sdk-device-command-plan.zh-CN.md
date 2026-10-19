@@ -2,16 +2,14 @@
 
 日期：2026-10-12。状态：历史设计稿，描述当时尚未实现的SDK功能。
 
-2026-10-16说明：当前固件已使用实现DeviceCommand的SDK `e7793eba`。
-实际协议及接口以该SDK公开文档和
-[工程说明](../projects/mybot/README_CN.md)为准；未采用下文建议的新clock/scene
-平台注册接口，当前命令忽略issued_at/expires_at，不要求UTC时钟。MCP表情仅用于LCD，
-舵机控制默认关闭。下文保留原设计过程，不代表当前移植要求。
+2026-10-16时固件已使用实现DeviceCommand的SDK `e7793eba`。当前协议及接口以
+`components/mybot/mybot_sdk/src/core/mybot_device_command.c`、
+`components/mybot/mybot_sdk/include/mybot/platform/` 和
+[工程说明](../projects/mybot/README_CN.md)为准。未采用下文建议的新clock/scene
+平台注册接口；当前命令忽略issued_at/expires_at，不要求UTC时钟，舵机控制默认关闭。
+下文保留原设计过程，不代表当前移植要求。
 
-协议依据：`mcp-resource/EN-2033058587-081026-0608-16.pdf`，重点为第 6–7 页
-§2.2.6/§2.2.7、第 9 页 §2.2.9 和第 10 页 §2.3.4。
 代码依据：固件锁定的 agent-studio-device-firmware 1.2.0、`cfd178a02fa94775cf01dc77e344f4ce5930225c`。
-当时的 SDK 来源仓库本地 `dev` 为 `371f29d`，其 `include/src` 与该快照一致，没有 DeviceCommand 实现。
 本方案还核对了该版本的 PORTING/EMBEDDED、平台描述符、音频、LCD 和 RTM 生命周期契约。
 
 ## 1. 目标与职责
@@ -188,7 +186,7 @@ SDK 把它们复制成命令模块专用的不可变会话快照，不让命令�
 声纹与 listening/thinking/speaking 的文本分类可在命令线程复用原 parser，再投递现有
 control/presenter 路径；保持原协议和 indicator 语义。OFF 构建保留旧接收路径。
 
-**外层协议是实施前联调项。** HLD 没有定义 `_publish_message` 的完整 RTM 外层。
+**外层协议是实施前联调项。** 本方案没有确定 `_publish_message` 的完整 RTM 外层。
 应先保存真实 P2P/频道样本及其 type、custom_type、publisher、route，再实现一个固定
 decoder。不能递归搜索任意 JSON 的 command 字段，也不能假定 MCP structuredContent
 对象必然就是 RTM 原文。初始只支持经样本验证的格式；如果真实消息是二进制封装，应为
@@ -245,7 +243,7 @@ LCD、RTC 状态，也不结束正常对话。
 - 场景 duration 从平台实际开始执行计时，使用单调计时。传输 expires_at 到达并不结束
   已经开始的场景。显著校时跳变/失步时 clock provider 暂时返回无效，重新确认同步再恢复。
 
-一期 HLD 未强制设备去重。这里建议作为固件保护增加**当前会话内的有界去重**：
+这里建议作为固件保护增加**当前会话内的有界去重**：
 
 | 输入 | 处理 |
 | --- | --- |
@@ -297,7 +295,7 @@ barrier 通知须独立于数据 FIFO 预留容量。最终销毁只有在队列
 不持会话快照锁做平台 I/O。场景 start 只快速提交，cancel/音量操作也必须有界。
 如果平台操作超时，关闭相关执行入口、保留仍在途的资源，不能释放正在被使用的对象。
 
-建议的初始预算（均为 SDK 接收策略，**不是 HLD 已规定的 wire 上限**）：
+建议的初始预算（均为 SDK 接收策略，**不是已确定的 wire 上限**）：
 
 | 项目 | 初值 |
 | --- | ---: |
