@@ -505,10 +505,10 @@ Build results, host tests and remaining hardware checks are recorded in
 
 ## Audio
 
-The current R2 audio configuration preserves the paired Solution/AVDK settings originally verified
-against the supplied `mcp-resource/new` reference. Those local reference files are not build inputs.
+The current R2 audio pipeline uses the paired Solution/AVDK configuration originally verified
+against the supplied `mcp-resource/new` reference, with tuned microphone gains. Those local reference files are not build inputs.
 Capture enables three differential analog ADC lanes (`ch_bitmap=0x7`, `chl_num=3`), each with
-20 dB analog and 16 dB digital gain. DMIC is disabled; `adc_cfg.aec_en=3` appends the digital
+16 dB analog and 4 dB digital gain. DMIC is disabled; `adc_cfg.aec_en=3` appends the digital
 playback reference, giving four interleaved lanes: three microphone inputs and reference at lane 3.
 No ADC input is designated as an in-channel hardware reference (`hw_ref_ch=NONE`).
 

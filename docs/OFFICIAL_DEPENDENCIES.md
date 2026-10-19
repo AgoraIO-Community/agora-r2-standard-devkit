@@ -51,6 +51,9 @@ DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单�
 - UART2 GPIO2/3 的舵机实现和 40 ms 最小控制周期保留，`CONFIG_MYBOT_GIMBAL` 当前关闭；
   MCP 表情只渲染 LCD。视频默认开启，RTSA、AOSL 和 MyBot 快照版本不变。
 
+上述增益为迁移时的基线；后续 MIC 调优已将 ADC0/1/2 的模拟增益改为 16 dB、数字增益改为
+4 dB。调整位于父仓库 `bk7259_audio.c`，厂商补丁、AEC 算法库和追加数字 REF 配置保持原版本。
+
 ## 必要厂商补丁
 
 | 补丁 | 作用 |

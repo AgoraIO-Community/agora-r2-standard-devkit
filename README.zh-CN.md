@@ -436,9 +436,9 @@ UI 字库现含 152 个字符，覆盖 ASCII、配对及恢复出厂中文文案
 
 ## 音频采集与音量
 
-当前 R2 音频保留此前与 `mcp-resource/new` 配套 Solution/AVDK 对照的配置；本地参考目录
+当前 R2 音频以此前与 `mcp-resource/new` 配套 Solution/AVDK 对照的配置为基础调优 MIC 增益；本地参考目录
 不是构建输入。启用三路差分
-模拟 ADC（`ch_bitmap=0x7`、`chl_num=3`），ADC0/1/2各使用20 dB模拟及16 dB数字增益，
+模拟 ADC（`ch_bitmap=0x7`、`chl_num=3`），ADC0/1/2各使用16 dB模拟及4 dB数字增益，
 按三个MIC输入送入算法；DMIC关闭，`adc_cfg.aec_en=3`追加数字播放参考，形成四条lane：
 MIC[0,1,2]、REF@3。通道内硬件参考设为NONE，不再把ADC2作为参考。
 

@@ -203,16 +203,16 @@ it does not erase the whole EasyFlash environment.
 
 ## 6. R2 Audio and Display
 
-The current audio configuration preserves the paired Solution/AVDK settings originally
-compared against `mcp-resource/new`; the local reference directory is not a build dependency.
+The current audio pipeline uses the paired Solution/AVDK settings originally
+compared against `mcp-resource/new`, with tuned microphone gains; the local reference directory is not a build dependency.
 Capture enables three differential analog ADC inputs (`ch_bitmap=0x7`, `chl_num=3`),
 and `adc_cfg.aec_en=3` appends a digital playback reference:
 
 | Lane | Algorithm input | Analog gain | Digital gain |
 | --- | --- | --- | --- |
-| 0 / ADC0 | Microphone input 1 | 20 dB | 16 dB |
-| 1 / ADC1 | Microphone input 2 | 20 dB | 16 dB |
-| 2 / ADC2 | Microphone input 3 | 20 dB | 16 dB |
+| 0 / ADC0 | Microphone input 1 | 16 dB | 4 dB |
+| 1 / ADC1 | Microphone input 2 | 16 dB | 4 dB |
+| 2 / ADC2 | Microphone input 3 | 16 dB | 4 dB |
 | 3 / appended | Digital playback reference | Not applicable | Not applicable |
 
 DMIC is disabled and `hw_ref_ch=NONE` (`255`); no ADC lane is an in-channel reference.
