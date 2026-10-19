@@ -80,7 +80,8 @@ BK7259 固件采用 AP/CP 双核架构：
   `lib/arm/libagora-rtc-sdk.a`）。
 
 产品内嵌的 mybot SDK 同步上游 `main` 最新已提交快照
-`39d5ed122aab51d90c1c531298c4ead8dc35b104`（PR #115，SDK 版本仍为 1.2.0）。
+`58f0ef9c14be9f159b1dc167bf0f035983b25117`（标签 `v1.3.0`，SDK 版本 1.3.0）。
+本次同步更新发布版本及源码注释，平台接口、RTC 和媒体行为与上一快照一致。
 通过 RTM P2P 与频道消息进行 MCP 控制时，仅接受单层 `message.user` 信封，`data_type` 为
 `message`，字符串 `content` 内包含 DeviceCommand v1。支持 `audio.set_volume`
 （`params.level` 为 0–100 的整数）和 `audio.adjust_volume`（`params.delta` 为 -100–100 的整数）。

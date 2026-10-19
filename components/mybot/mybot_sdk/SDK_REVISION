@@ -1,9 +1,9 @@
 repository=https://github.com/junlon2006/mybot.git
-commit=39d5ed122aab51d90c1c531298c4ead8dc35b104
+commit=58f0ef9c14be9f159b1dc167bf0f035983b25117
 branch=main
 revision_kind=upstream-snapshot-with-target-patch
-upstream_src_include_sha256=27e990e46d24048cce4605eefac89cbe3417578b70e4447876f3ec9c23337f79
+upstream_src_include_sha256=af5b90879d64f900286e96b7da08093f415ea53f4804cd9525ce59d50e8c7e9e
 upstream_includes=message.user envelope decoding, MCP set/adjust volume, RTC_LOG_ERROR and AOSL log-level preservation
 modified=src/support/mybot_http_client.c (log HTTPS request and response bodies on one line for BK7259 debug)
-src_include_sha256=dd1aa22c2155e6060ae0f69b0f4109ddf3b8e4642d2f5c9240b890387cdda5c6
+src_include_sha256=0e1fb9bd7e85a0bb9220b237c90e8ea5132360ef923d248e3bf9888a3d1a7bec
 license_sha256=c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4

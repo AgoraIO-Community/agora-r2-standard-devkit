@@ -16,8 +16,10 @@ Its normal UI follows the simulator's
 process-gray skin and pixel-glasses face.
 
 The vendored SDK follows the latest committed upstream `main` snapshot
-`39d5ed122aab51d90c1c531298c4ead8dc35b104` (PR #115, version 1.2.0), with the existing
-HTTPS request/response body logging patch. MCP control over RTM requires one `message.user`
+`58f0ef9c14be9f159b1dc167bf0f035983b25117` (tag `v1.3.0`, version 1.3.0), with the existing
+HTTPS request/response body logging patch. This refresh changes release metadata and source
+comments, preserving the previous platform interfaces, RTC and media behavior.
+MCP control over RTM requires one `message.user`
 envelope, `data_type: "message"`, and string `content` containing DeviceCommand v1. It supports
 `audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`:
 integer -100–100). Positive deltas increase volume, negative deltas decrease it, and zero leaves
