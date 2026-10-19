@@ -1,0 +1,46 @@
+diff --git a/src/support/mybot_http_client.c b/src/support/mybot_http_client.c
+index 8623950c69e85c659f872455afd1e39ee063f631..9d9c392c386107d6199428339b5f8652b9acf253 100644
+--- a/src/support/mybot_http_client.c
++++ b/src/support/mybot_http_client.c
+@@ -11,6 +11,7 @@
+ #include <hal/aosl_hal_errno.h>
+ 
+ #include <api/aosl_socket.h>
++#include <api/aosl_log.h>
+ 
+ #include <string.h>
+ #include <stdio.h>
+@@ -860,6 +861,12 @@
+         return -1;
+     }
+ 
++    if (parts.use_tls) {
++        const char *body = req_body ? req_body : "";
++        size_t body_len = strlen(body);
++        AOSL_LOG_NTC("[HTTPS] request body len=%zu: %.*s", body_len, (int)body_len, body);
++    }
++
+     /* Send the request. */
+     int ret = send_all(&stream, req, (size_t)req_len, deadline);
+     aosl_hal_free(req);
+@@ -875,12 +882,20 @@
+     stream_close(&stream);
+ 
+     if (!raw) {
++        if (parts.use_tls) {
++            AOSL_LOG_ERR("[HTTPS] response unavailable");
++        }
+         return -1;
+     }
+ 
+     /* Parse the response. */
+     ret = parse_response(raw, raw_len, stream_closed, resp);
+     aosl_hal_free(raw);
++
++    if (parts.use_tls && ret == 0) {
++        AOSL_LOG_NTC("[HTTPS] response body len=%zu: %.*s", resp->body_len,
++                     (int)resp->body_len, resp->body ? resp->body : "");
++    }
+ 
+     return ret;
+ }

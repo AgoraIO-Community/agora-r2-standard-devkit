@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT
 """Generate or check the fixed MyBot UI vocabulary font.
 
-Adapted from junlon2006/mybot-esp32 scripts/generate-lvgl-font.py.
+Adapted from the MIT-licensed agora-esp32-devkit scripts/generate-lvgl-font.py:
+https://github.com/AgoraIO-Community/agora-esp32-devkit/blob/19af3bdfaf1dd35461af48def8f9558e3503e755/scripts/generate-lvgl-font.py
+The R2 integration adds the vocabulary coverage check documented in SOURCES.md.
 Input: OFL-licensed SourceHanSansSC-Normal.otf shipped with LVGL.
 Usage: python3 generate-lvgl-font.py --font path/to/SourceHanSansSC-Normal.otf
        python3 generate-lvgl-font.py --check

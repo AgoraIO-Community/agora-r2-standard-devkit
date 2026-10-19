@@ -9,7 +9,7 @@
 平台注册接口；当前命令忽略issued_at/expires_at，不要求UTC时钟，舵机控制默认关闭。
 下文保留原设计过程，不代表当前移植要求。
 
-代码依据：固件锁定的 agent-studio-device-firmware 1.2.0、`cfd178a02fa94775cf01dc77e344f4ce5930225c`。
+代码依据：固件当时锁定的 [agent-studio-device-firmware 1.2.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/cfd178a02fa94775cf01dc77e344f4ce5930225c)。
 本方案还核对了该版本的 PORTING/EMBEDDED、平台描述符、音频、LCD 和 RTM 生命周期契约。
 
 ## 1. 目标与职责

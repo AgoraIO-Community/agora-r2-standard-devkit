@@ -43,10 +43,10 @@ if(NOT _actual_library_sha256 STREQUAL _rtsa_library_sha256)
 endif()
 
 set(MYBOT_VERSION_MAJOR 1)
-set(MYBOT_VERSION_MINOR 2)
+set(MYBOT_VERSION_MINOR 3)
 set(MYBOT_VERSION_PATCH 0)
 set(MYBOT_VERSION_PRERELEASE "")
-set(MYBOT_VERSION_STRING "1.2.0")
+set(MYBOT_VERSION_STRING "1.3.0")
 set(_generated_include_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
 file(MAKE_DIRECTORY "${_generated_include_dir}/mybot")
 configure_file(

@@ -94,8 +94,11 @@ preparation rules, and validation boundaries.
 - `mybot_rtsa` — the vendored Agora RTSA SDK (`include/` headers and
   `lib/arm/libagora-rtc-sdk.a`).
 
-The product vendors the latest committed agent-studio-device-firmware SDK snapshot from upstream `main`
-at `39d5ed122aab51d90c1c531298c4ead8dc35b104` (PR #115; SDK version remains 1.2.0).
+The product vendors [agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0)
+at commit `32ac74bc59cb72db70e9a68337753561b59b13d0`, with the BK7259 HTTPS request/response body logging
+patch already applied. The [recorded patch](patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch) documents the target-specific
+delta; it is not reapplied during the firmware build. Platform interfaces, RTC and media
+behavior retain the preceding snapshot's integration.
 MCP control over RTM P2P and channel messages requires one `message.user` envelope with
 `data_type: "message"` and string `content` containing DeviceCommand v1. Supported actions are
 `audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`: integer

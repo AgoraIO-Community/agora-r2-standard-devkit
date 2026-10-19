@@ -12,9 +12,10 @@ RTC 双向音频、本地配网与界面，以及可选的单向编码视频上�
 正常界面渲染灰色像素眼镜。产品源码维护在父仓库，官方 BK 依赖的必要改动
 在隔离构建副本中以受版本锁约束的补丁应用。
 
-内嵌 SDK 固定为 `agent-studio-device-firmware` 快照
-[`39d5ed122aab51d90c1c531298c4ead8dc35b104`](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/39d5ed122aab51d90c1c531298c4ead8dc35b104)
-（版本仍为 1.2.0），保留 HTTPS 请求与响应 body 日志补丁。通过 RTM 进行 MCP 控制时，
+内嵌 SDK 固定为 [agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0)，
+提交为 `32ac74bc59cb72db70e9a68337753561b59b13d0`，并已应用 HTTPS 请求与响应 body 日志补丁。
+[补丁记录](../../patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch)用于核对目标差异，固件构建时不会重复应用。
+平台接口、RTC 和媒体行为沿用上一快照的集成方式。通过 RTM 进行 MCP 控制时，
 仅接受单层 `message.user` 信封，`data_type` 为 `message`，字符串 `content` 内包含 DeviceCommand v1。
 支持 `audio.set_volume`（`params.level` 为 0–100 的整数）和 `audio.adjust_volume`
 （`params.delta` 为 -100–100 的整数）。正数增加音量，负数减少音量，0 保持不变，结果钳制到

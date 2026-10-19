@@ -1,7 +1,7 @@
 # EB521 云台四种 MCP 动作接入方案
 
-日期：2026-10-13。本文方案的历史来源分支为 `release/v4.0.1-mybot-r2`。
-当前官方工程为 `agora-r2-standard-devkit`，使用 `main` 分支。
+日期：2026-10-13。本文保留 R2 云台方案及实施时的验证结果。
+当前工程为 `agora-r2-standard-devkit`，发布内容位于 `main`，更新通过 `dev` 到 `main` 的 PR 合入。
 本文保留当时的云台接入方案与测试方法。2026-10-16的实际配置以
 [工程说明](../projects/mybot/README_CN.md)为准：舵机控制默认关闭，
 重新启用后提供手动CLI；MCP表情仅渲染LCD，不驱动云台。音频已改用三路模拟输入及
@@ -230,8 +230,7 @@ worker 启停与关闭失败重试、AOSL 引用失败保留与平衡。地址�
 云台静态 context 为 248 字节，线程请求栈4 KiB，驱动软件 FIFO 配置为128字节；
 RTOS 线程/互斥锁/通知元数据另计，目标栈高水位与动态堆峰值仍需实物测量。
 
-构建基线：Solution `fe4e1c912ccd909b0912ff6841288ec3c61377f2`，AVDK
-`90aaf113d78ef875635fcc49587f80fd2a8ddadc`；SDK 锁定摘要 `5e953e9aae9d359a9962d9acc9a5ea6ddd02bf4e147045ee72d2090410e3dd1f`，
+构建时使用当时固定的产品与厂商基线；SDK 锁定摘要 `5e953e9aae9d359a9962d9acc9a5ea6ddd02bf4e147045ee72d2090410e3dd1f`，
 AOSL 上游基线 `84e0860`、五个既有补丁、摘要 `2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e`。
 SDK 用户既有 RTM 日志修改使工作树摘要为 `c7c3ea4c7a1418712ce76b3b7d78fd72cbdcdd4d69e7294f0a39f075e83d0297`，
 本次保留该修改和本地 HTTP 测试开关。RTSA 仍为 v1.10.1 build 1278380。
