@@ -175,8 +175,7 @@ the firmware build uses the committed header.
 ## Retained view and asset provenance
 
 The preceding platform-independent status view and generated resources were
-adapted from
-[`junlon2006/mybot-esp32` commit `19af3bdfaf1dd35461af48def8f9558e3503e755`](https://github.com/junlon2006/mybot-esp32/tree/19af3bdfaf1dd35461af48def8f9558e3503e755).
+adapted from [agora-esp32-devkit commit `19af3bdfaf1dd35461af48def8f9558e3503e755`](https://github.com/AgoraIO-Community/agora-esp32-devkit/tree/19af3bdfaf1dd35461af48def8f9558e3503e755).
 
 The view's MIT license, original layout reference, and copyright notice remain
 in `assets/licenses/LVGL_VIEW_LICENSE.txt`. The historical asset API header
@@ -215,8 +214,9 @@ including ASCII and fixed Chinese UI vocabulary. Arbitrary Chinese SSIDs or
 chat text require a separately extended font.
 
 [generate-lvgl-font.py](generate-lvgl-font.py) is adapted from the MIT-licensed
-generator in `junlon2006/mybot-esp32` and reads the fixed vocabulary in
-`lvgl_view.cc`. Source Han Sans SC Normal has generation input SHA256
+[agora-esp32-devkit generator](https://github.com/AgoraIO-Community/agora-esp32-devkit/blob/19af3bdfaf1dd35461af48def8f9558e3503e755/scripts/generate-lvgl-font.py).
+The R2 tool reads the fixed vocabulary in `lvgl_view.cc` and adds a coverage-only
+`--check` mode. Source Han Sans SC Normal has generation input SHA256
 `1ee89e1669362dee13851129c0a8a791a87521eb4148e5efbf5d26596738e25b`.
 The committed subset in
 [lvgl_fonts.c](lvgl_fonts.c) uses 18,458 bitmap bytes and was generated with

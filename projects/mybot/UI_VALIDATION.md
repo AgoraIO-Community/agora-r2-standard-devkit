@@ -1,5 +1,9 @@
 # BK7259 LVGL UI 验证记录
 
+文中 SDK 历史提交可在 [agent-studio-device-firmware](https://github.com/AgoraIO-Community/agent-studio-device-firmware)
+的提交历史中核对。历史测试结果对应各节当时的代码与配置；当前 SDK 版本、目标补丁和摘要以
+[`SDK_REVISION`](../../components/mybot/mybot_sdk/SDK_REVISION) 为准。
+
 ## 2026-10-17 R2 官方依赖迁移
 
 当前产品源码位于父仓库 `projects/mybot/` 与 `components/mybot/`，两套 BK 依赖改为官方固定
@@ -17,7 +21,8 @@ VAD与舵机仍关闭，MCP只更新LCD。原ISRG+DigiCert双根证书保持，�
 `python3 scripts/build_all.py --output-root releases/official-r2` 生成当前版本的固件。
 源码边界检查70个产品文件通过；20项构建准备测试、表情策略13组462条断言、HTTPS 5案例、
 云台14组加CLI主机测试通过。agent-studio-device-firmware/AOSL/RTSA快照与迁移前一致；生成AVDK AP/CP/tools
-与原R2依赖`2a60aa47b`一致，摄像头辅助组件与原Solution`28f9590`一致。
+及摄像头辅助组件与调整构建布局前的产品输入一致；对应输入、补丁和版本锁保存在
+[已发布 R2 快照](https://github.com/AgoraIO-Community/agora-r2-standard-devkit/tree/5aa441e0b193974254fd7072392368183b258b7e)。
 
 本次仅验证源码管理迁移和编译，仍需重新烧录验证LCD、配网、HTTPS、音频/AEC、视频与按键。
 以下历史条目的提交、固件摘要及实机结论按当时上下文保留；当前统一入口与准备方法见
@@ -64,7 +69,7 @@ SDK 的 RTM 日志不再截取前 512 字节；RTC 错误文本从固定 64 字�
   原有 RTSA 1.10.1 build 1278380 的头文件、库哈希通过组件校验；无新 GCC 原子操作。
 - 文件集合与所选提交一致，除已记录 HTTPS 日志补丁外均逐字匹配上游。AOSL 聚合摘要
   仍为 `2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e`；
-  AVDK 固定 `90aaf113d78ef875635fcc49587f80fd2a8ddadc` 且跟踪文件干净。
+  AVDK 保持当时固定的厂商基线，跟踪文件干净。
 - 原工程 clean/build 和 AP/CP 合包通过；沿用当前中文、HTTP、视频与动画配置，
   任务前 defconfig 哈希一致。ELF 为 ARM32、小端、EABI5 hard-float，端点校验通过。
 - SDK 主机完整测试 23/23 通过，用时 7.72 秒。新增用例验证 2 KiB RTC 错误文本在借用
@@ -85,7 +90,7 @@ SDK 的 RTM 日志不再截取前 512 字节；RTC 错误文本从固定 64 字�
 
 原工程 `package/all-app.bin` SHA256：
 `9edfd6da76a24699526a8ee8fc30dd4885bb6cb9c31b618a5f74ca091c3ae35d`。
-历史验证基于 Solution `c8bd51bab48423baa442849ec5ae010352c9f9d5`。
+历史验证基于当时的 R2 产品工作树。
 
 ## 2026-10-12 SDK main 同步与移除 UTC 依赖（PR #111）
 
@@ -105,7 +110,7 @@ DeviceCommand 的 `issued_at` 与 `expires_at` 现在可省略，提供时也忽
 AP 的 UTC 日志均恢复任务前状态，移除新增 NTP/时区配置。AOSL 摘要恢复为
 `2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e`，保留五项已有 HAL 补丁。
 AP defconfig 与 SDK 同步前的用户配置哈希一致，仍为中文、HTTP、视频与动画开启。
-AVDK 仍固定 `90aaf113d78ef875635fcc49587f80fd2a8ddadc`，跟踪文件干净。
+AVDK 仍使用当时固定的厂商基线，跟踪文件干净。
 
 验证结果：
 
@@ -131,7 +136,7 @@ AVDK 仍固定 `90aaf113d78ef875635fcc49587f80fd2a8ddadc`，跟踪文件干净�
 
 原工程 `package/all-app.bin` SHA256：
 `953dcbb122819b57639e807c2a3605ff19fe0d634a0d5f9c0fcce7d44cdaca5f`。
-历史验证基于 Solution `7505da4cd7636febab16f40f522772e37cddaa97`。
+历史验证基于当时的 R2 产品工作树。
 
 ## 2026-10-12 SDK main 同步（PR #110）
 
@@ -160,7 +165,7 @@ SDK 新增通过 RTM P2P/频道接收 DeviceCommand v1、音量设置/增减、P
 验证结果：
 
 - 完整核对所选提交的 PORTING/EMBEDDED、涉及的 LCD/音频公共契约，以及 BK7259 RTM
-  和项目参考。AVDK 仍为 `90aaf113d78ef875635fcc49587f80fd2a8ddadc` 且跟踪文件干净；
+  和项目参考。AVDK 基线不变且跟踪文件干净；
   AOSL 摘要仍为 `2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e`。
   BK7259 RTSA 1.10.1 build 1278380 的头文件、库摘要与组件锁一致。
 - 原工程 clean/build 与 AP/CP 合包通过。当前配置为中文、HTTP、视频与动画开启，任务前
@@ -187,7 +192,7 @@ SDK 新增通过 RTM P2P/频道接收 DeviceCommand v1、音量设置/增减、P
 
 原工程 `package/all-app.bin` SHA256：
 `aea9a3213f676c656ef06f7819b6de8bf44b289d9a711dbc124931e1c3bdfa83`。
-历史验证基于 Solution `7505da4cd7636febab16f40f522772e37cddaa97`。
+历史验证基于当时的 R2 产品工作树。
 
 ## 2026-10-12 真实生命周期与会话状态
 
@@ -206,12 +211,11 @@ STOPPING 指导页，应用轮询不保证捕获每个瞬态；停止完成后�
 恢复提示仍拥有最高优先级。状态更新不清除表情 override，不重启过渡或光标时钟，
 SLEEP 图案不再决定生命周期文字。
 
-实现基于 Solution `aa95842d0ef80934123a6cb1c7bcc201e35a0ac5`，工作分支为
-`release/v4.0.1-mybot-r2`。合同已核对 SDK `cfd178a` 的完整 PORTING/EMBEDDED、公开
-`mybot.h`/`platform/mybot_lcd.h` 和 BK7259 RTM/声纹参考。MyBot revision lock 聚合摘要为
+实现基于当时的 R2 产品工作树。合同已核对 SDK `cfd178a` 的完整 PORTING/EMBEDDED、公开
+`mybot.h`/`platform/mybot_lcd.h` 和 BK7259 RTM/声纹参考。SDK revision lock 聚合摘要为
 `bd59fb9a4f7aced74d5b8e770da869897229316c284e4ccded4d2aa8e667fa7a`，AOSL 摘要为
 `2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e`。
-AVDK 固定 `90aaf113d78ef875635fcc49587f80fd2a8ddadc`，跟踪文件干净。SDK、AOSL、RTSA
+AVDK 保持当时的固定基线，跟踪文件干净。SDK、AOSL、RTSA
 和板级引脚不涉及本次修改，任务前 defconfig 与 RTM 文件哈希复核一致。
 
 验证结果：
@@ -345,9 +349,8 @@ bitmap，合计 4634 字节。LVGL 会把 fractional advance 四舍五入；
 
 ## 2026-10-10 像素眼镜 UI 重写（首版）
 
-本次基于 Solution `2fe505913007fcfd5be64d83159d2dc514a076ac`，在
-`release/v4.0.1-mybot-r2` 工作树实现。重写 `display/lvgl_view.cc/.h`，更新字体、组件源列表、
-动画配置和双语文档。AVDK 固定为 `90aaf113d78ef875635fcc49587f80fd2a8ddadc`，跟踪文件干净；
+本次在当时的 R2 产品工作树实现。重写 `display/lvgl_view.cc/.h`，更新字体、组件源列表、
+动画配置和双语文档。AVDK 保持当时的固定基线，跟踪文件干净；
 LCD 驱动、显示任务、AOSL、AEC、按键和恢复出厂执行逻辑没有修改。
 
 `display/lvgl_view.cc` 实现以下像素眼镜界面：
@@ -418,7 +421,7 @@ SDK 版本仍为 1.2.0。整套 56 个 `include/src` 文件从该提交导入；
 
 唯一保留的目标补丁是既有 HTTPS 请求/响应 body 日志；RTM 日志等级调整已由用户回退，
 `src/rtc/mybot_agora_rtc.c` 与上游逐字一致。AVDK、AOSL、RTSA、R2 板级配置和平台适配
-没有修改。本次同步基于 Solution `61cfb71ec1c87b8f1193d24dd137d4dd03cf5344`。
+没有修改。本次修改基于当时的 R2 产品工作树。
 
 SDK 现在先停止视频、退出 RTC/RTM、清理会话 PCM 并恢复 READY，再用原会话 ID 和停止
 原因发送一次 HTTPS 停止通知。通知失败只记录 warning，不重试，也不会重新开启媒体。
@@ -455,9 +458,8 @@ HTTP 仍在控制线程同步执行：本地音视频和 LCD 不再等待远端�
 
 ## 2026-10-10 R2 与恢复出厂复核
 
-功能验证基线为 Solution `0ebb7f5821cb5084f39038961e0ebd5ad50816d1`，父仓库 `ffb9c3a`
-已同步其 gitlink，均在 `release/v4.0.1-mybot-r2` 分支。AVDK 固定为
-`90aaf113d78ef875635fcc49587f80fd2a8ddadc`，包含 GC9503CV R2 屏驱动，工作树干净。
+功能验证使用当时固定的 R2 产品及厂商基线，包含 GC9503CV R2 屏驱动，
+厂商依赖工作树干净。
 SDK 固定为 `064397882187a242be25a525a91df83d353b78bb` 加已声明的 HTTP 日志补丁；
 SDK/AOSL 摘要与各自 revision lock 一致，恢复出厂功能未修改这两个快照。
 
@@ -523,10 +525,11 @@ python3 components/mybot/mybot_sdk/platforms/bk7259/display/generate-lvgl-font.p
 
 本节保留当时的验证版本。后续 SDK 更新以 `components/mybot/mybot_sdk/SDK_REVISION` 为准。
 
-- AVDK：`239c151bf4ba239bf8ebc1a178df0a8b659b55bd`，工作树保持干净，使用其中的 LVGL 9.5.0。
-- Solution：`9cbfb976acdf043b01dde91daf1889a54e66d122`，改动留在工作树，未提交或更新根 gitlink。
-- ESP32 视图来源：`19af3bdfaf1dd35461af48def8f9558e3503e755`；未修改参考工程。
-- MyBot SDK：`4ae239c804257f8b5c557e5879b54d9a88d80847`，RTC 日志级别和 AOSL 恢复已包含在
+- AVDK：使用当时固定基线中的 LVGL 9.5.0，工作树保持干净。
+- 产品工程：改动留在当时的工作树，未提交或更新根 gitlink。
+- 保留的视图与资产集成可在[已发布 R2 显示快照](https://github.com/AgoraIO-Community/agora-r2-standard-devkit/tree/5aa441e0b193974254fd7072392368183b258b7e/components/mybot/mybot_sdk/platforms/bk7259/display)
+  核对；原始布局、字体与 emoji 的作者及许可证见该目录的 `SOURCES.md`。
+- agent-studio-device-firmware SDK：`4ae239c804257f8b5c557e5879b54d9a88d80847`，RTC 日志级别和 AOSL 恢复已包含在
   上游快照，HTTPS body 日志仍由 `SDK_REVISION` 记录。`include/src` SHA256 复核为
   `84a5a0a015de7be6a91658ebc3de1f6958a8e595750d859426dd3a7dae1aa76c`。
 - AOSL 基线：`84e086084ebcd0ae2455a0ce5721950c5fe2e656` 加 `AOSL_REVISION` 已记录的 BK7259 补丁。
@@ -541,7 +544,7 @@ python3 components/mybot/mybot_sdk/platforms/bk7259/display/generate-lvgl-font.p
 - 通过远端 `main` 确认最新提交为 `83fbcb0969da4c73a5912326d699f90ec634b28e`，版本号仍为 1.2.0。
   全量同步 56 个 `include/src` 文件；唯一目标补丁仍为原有 HTTPS body 日志，补丁内容不变。
   新聚合 SHA256：`3f89476f880518b0f0d68e45d709023a0cb0d6146865d8e32b8a95ceb4e46b24`。
-- 此次修改基于 Solution `d717cef1879695cafdc83c436c7abeda692e4196`，未自动提交。
+- 此次修改基于当时的产品基线，未自动提交。
   AVDK、AOSL 和 RTSA 仍使用本记录中的固定版本；AOSL 内容与 RTSA 头文件/静态库摘要复核一致。
   BK7259 平台、圆角 UI 和 UID 设备 ID 源码未改变，无新增 GCC 原子接口依赖。
 - 核对最新 `PORTING.zh-CN.md`、`EMBEDDED.zh-CN.md` 和应用生命周期、音频、视频、Wi-Fi、
@@ -674,13 +677,13 @@ socket自身的 `SO_ERROR` 分类读写结果，直接进行有界 `select`，�
   CP Flash使用1,295,948字节（89.88%）。额外16 KiB后台栈和双连接握手堆峰值需实物测量。
 - 已阅读所选提交的完整 `PORTING.zh-CN.md`、`EMBEDDED.zh-CN.md` 及新版HTTPS公共合同，
   核对当前MbedTLS/lwIP/RTOS实现。AOSL摘要仍为 `2e9fc3fa...`，RTSA头文件和库哈希校验
-  在构建中通过；AVDK固定为 `90aaf113d78ef875635fcc49587f80fd2a8ddadc` 且工作树干净。
+  在构建中通过；AVDK基线不变且工作树干净。
 - 最终ARM对象不再引用全局 `errno` 或默认MbedTLS send/recv/poll，仅使用lwIP的
   per-socket错误/peer查询和select。`git diff --check` 通过。旧boundary checker已重跑，
   仍因旧版本/LCD/配网规则以及把主机测试包含平台源码判为SDK依赖而失败，
   未计为通过。
 
-本次基于Solution `3adda162bfc8eccab1e68ce4e142814869ee2e5e` 工作区完成，已有云台等
+本次基于当时的产品工作区完成，已有云台等
 硬件修改保留，未自动提交或更新父仓库gitlink，目标AOSL未修改。
 
 ## 2026-10-14 EB521 UART2 接线适配
@@ -693,7 +696,7 @@ Kconfig选择UART2，初始化、收发、IRQ回调和销毁均使用UART2及其
 四个MCP动作、完成确认、动作结束及挂断回中继续使用现有逻辑。原工程clean后完成AP/CP
 编译和打包，固件为 `build/bk7259/mybot/package/all-app.bin`。生产主机测试普通及
 ASAN/UBSAN均通过6组，生成配置确认 `CONFIG_UART2=1`；实际云台动作待烧录验证。
-AVDK及MyBot/AOSL快照未修改。
+AVDK及SDK/AOSL快照未修改。
 
 ## 2026-10-14 UART2 手动命令控制
 
@@ -730,9 +733,7 @@ TX/RX由原UART2工作线程处理，正式日志打印完整发送帧、原始�
 普通及ASAN/UBSAN均通过14组native动作/生命周期测试与CLI注册、参数、游标测试；
 四套完整动作、raw后真实姿态同步、异常状态不发61、互斥及关闭窗口均已覆盖。
 原工程AP/CP编译打包通过，产物为 `build/bk7259/mybot/package/all-app.bin`；
-AP Flash为1,915,964字节，RAM为157,516字节。AVDK仍为
-`90aaf113d78ef875635fcc49587f80fd2a8ddadc`，Solution基线仍为
-`a9a7da4f28d0dc8fd86c58faf3095a3251ad4ff1`，修改留在工作区。
+AP Flash为1,915,964字节，RAM为157,516字节。AVDK和产品工程基线不变，修改留在工作区。
 本次核对选定SDK的PORTING/EMBEDDED契约及BK UART/GPIO接口，SDK/AOSL内容摘要仍匹配
 锁定记录，未修改依赖。现有旧边界脚本锁定旧版本/旧板配置，不能作为本R2工作树的通过证明。
 设备尚未反馈有效E3数据，完整动作效果需用户烧录验证；未将原单帧E1/00成功视为动作完成。
@@ -762,7 +763,7 @@ CLI完整动作逐事务打印TX/RX、丢弃的旧输入、目标/反馈角度�
 普通与ASAN/UBSAN均通过14组native回归及CLI回调测试；新增300 ms ACK/E3延迟成功，
 以及ACK丢失但控制器执行时仍有界失败、无重发的覆盖。原工程AP/CP编译与打包通过。
 已复核选定SDK的完整PORTING/EMBEDDED文档、平台LCD合同和BK UART收发/ISR接口。
-AVDK仍固定90aaf113d且干净，Solution基线a9a7da4，SDK/AOSL实际摘要仍分别为
+AVDK仍使用当时的固定基线且干净，产品基线不变；SDK/AOSL实际摘要仍分别为
 fb7bd88a4d191e3b341c54d8a993b70b4a7b7ea3bd4632411f7899156015fa67与
 2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e，与锁一致。
 旧boundary脚本因旧版本/旧LCD规则和native测试扫描而失败，未计为通过。
@@ -779,7 +780,7 @@ happy主体由100段降为50段，两次回中各由14段降为7段，总规划�
 14组native回归及CLI测试通过，新增遍历检查最小段长、关键点和名义时长；
 原工程AP/CP编译打包通过，AP Flash为1,917,628字节，RAM为157,516字节。
 已读PORTING/EMBEDDED、LCD平台合同及UART/GPIO接口仍适用；SDK/AOSL摘要与锁一致，
-AVDK保持90aaf113d且干净，Solution基线仍为a9a7da4，未提交。实机节奏待本版烧录验证。
+AVDK基线不变且干净，产品工程改动未提交。实机节奏待本版烧录验证。
 
 ## 2026-10-15 MCP表情仅更新LCD
 
@@ -790,11 +791,10 @@ Kconfig及中英文README同步说明MCP表情只渲染LCD。
 
 原工程AP/CP编译与打包通过，14组native及CLI回归通过。AP LCD对象的未解析云台引用
 仅剩 `bk7259_gimbal_set_conversation`，无表情动作请求；目标源码中该请求仅剩定义/声明。
-AP Flash为1,917,292字节，RAM为157,516字节。SDK/AOSL摘要仍与锁一致；AVDK固定
-90aaf113d且干净，Solution基线a9a7da4，修改留在工作区。已读PORTING/EMBEDDED和LCD
+AP Flash为1,917,292字节，RAM为157,516字节。SDK/AOSL摘要仍与锁一致；AVDK基线不变且干净，产品修改留在工作区。已读PORTING/EMBEDDED和LCD
 合同继续适用，未修改SDK或依赖。实机MCP四表情与重复表情显示待烧录确认，未提交。
 
-## 2026-10-15 MyBot流程驱动LCD场景表情
+## 2026-10-15 SDK流程驱动LCD场景表情
 
 `display/expression_policy.h` 中的场景映射使READY显示NEUTRAL；首次进入IN_CONVERSATION显示
 SURPRISED保持300 ms，再按最新phase显示LISTENING、THINKING或NEUTRAL（SPEAKING及
@@ -823,8 +823,7 @@ AP Flash 1,917,788字节、RAM 157,548字节，比本次前分别增加496字节
 已核对选定e7793eba88f721304dc00d421706d4d788b81a43的完整PORTING/EMBEDDED及LCD合同，
 SDK摘要fb7bd88a4d191e3b341c54d8a993b70b4a7b7ea3bd4632411f7899156015fa67、AOSL摘要
 2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e仍与锁一致；
-AVDK固定90aaf113d78ef875635fcc49587f80fd2a8ddadc且干净，Solution基线
-a9a7da4f28d0dc8fd86c58faf3095a3251ad4ff1，工作区修改未提交。
+AVDK基线不变且干净，产品工作区修改未提交。
 旧boundary脚本仍锁定旧版本/旧硬件规则，结果不作为本R2工作树的通过证明。
 尚未进行本次固件的实机状态表情验收。
 
@@ -844,7 +843,7 @@ I/O引用，退出不会访问已释放context；无新增运行期分配、无P
 已核对当前公开mybot_audio.h、V2 mic配置及caps传播合同；SDK/AOSL摘要与锁一致，AVDK未修改。
 原工程AP/CP编译打包通过，AP Flash 1,878,460字节、RAM 157,524字节，DTCM 2,976字节；
 AP音频对象无aec_v3_algorithm_init引用。固件为build/bk7259/mybot/package/all-app.bin，
-实机ADC0能量及RTC声音待用户烧录验证。SDK仍e7793eba、AVDK90aaf113d、Solution基线a9a7da4，
+实机ADC0能量及RTC声音待用户烧录验证。SDK仍为e7793eba，AVDK与产品基线不变，
 本次工作区修改未提交。
 
 ## 2026-10-15 新板ADC1直通对照
@@ -882,12 +881,12 @@ DMIC及ADC追加数字参考继续关闭（dmic_en=0、adc_cfg.aec_en=0）。
 该配置对应原硬件完整的功放回采电路；R33/R34开路的新板不属于本次恢复目标。
 仅撤销音频诊断改动，已有LCD场景、手动舵机CLI及其他工作区修改保留。
 
-恢复后的bk7259_audio.c与Solution基线a9a7da4中的版本逐字节一致
+恢复后的bk7259_audio.c与当时产品基线中的版本逐字节一致
 （Git blob df74bc5f9f63b4d5f66acbd019fd53a823f76712）。已核对固定SDK提交的
 PORTING.zh-CN.md、EMBEDDED.zh-CN.md、公开mybot_audio.h，以及AVDK V2 MIC/AEC头文件。
 SDK固定为e7793eba，include/src摘要fb7bd88a4d191e3b341c54d8a993b70b4a7b7ea3bd4632411f7899156015fa67；
 AOSL基线84e08608及其已声明BK补丁摘要2e9fc3fa5571972fd31c1ab64546477a98550b6b210e38fec181c0f4daeae64e，
-均与版本锁一致。AVDK仍为90aaf113d且工作区干净，RTSA仍使用原BK7259 1.10.1包。
+均与版本锁一致。AVDK基线不变且工作区干净，RTSA仍使用原BK7259 1.10.1包。
 
 当时使用原工程make入口，AP/CP及组合打包通过。
 AP Flash 1,917,788字节、RAM 157,548字节、DTCM 35,744字节；
@@ -927,8 +926,8 @@ GPIO12配置为输出下拉，作用为ADC内部比较器放电；未外露pad�
 - 最终ELF反汇编确认 `aec_ver=20261014`，map及符号表确认AEC和SSL3均来自当前AVDK的配套新库。库SHA256为 `754ad74651b43cbe2cee29a0a882ee572fa70cf2b16dc4e6dc7006e695e65f90`。
 - 新库 `aec_size(1000)=30272`字节，低于现有32KiB DTCM缓冲；SSL3 sidecar为8968字节。输入每20ms为2560字节（三MIC 1920字节及REF 640字节），主输出640字节。第三路输入用于SSL3分析，不将其宣称为已验证的三麦联合波束成形。
 - `CONFIG_AEC_RUN_ON_M52`保持关闭；该proxy尚未适配三路MIC。本次不注册SSL3方向回调，不关联LCD或舵机。
-- AVDK基线仍为 `90aaf113d78ef875635fcc49587f80fd2a8ddadc`，仅上述4个音频文件有工作区改动。父仓库和Solution的 `git diff --check`通过；AVDK该检查报告的新增空白字符为导入音频源码的CRLF和行尾空白。
-- Solution基线仍为 `a9a7da4f28d0dc8fd86c58faf3095a3251ad4ff1`，其他UI/舵机工作区修改保留。父仓库gitlink未更新，修改未提交或推送，构建目录仍被忽略。
+- AVDK保留当时基线，仅上述4个音频文件有工作区改动。父仓库和Solution的 `git diff --check`通过；AVDK该检查报告的新增空白字符为导入音频源码的CRLF和行尾空白。
+- 产品基线不变，其他UI/舵机工作区修改保留。父仓库gitlink未更新，修改未提交或推送，构建目录仍被忽略。
 - 已核对固定SDK提交的PORTING/EMBEDDED及公开 `mybot_audio.h`、新AVDK V2 MIC/AEC与算法头文件；SDK `e7793eba`及AOSL `84e08608`基线/声明补丁的摘要仍与上文版本锁一致。
 - 旧边界脚本的版本、目录与硬件假设未更新，不能宣称检查通过。本次同步AVDK音频依赖，属于已报告的依赖变更。
 
@@ -966,4 +965,4 @@ b60a283b606775768bf928606f8bb332。库校验值必须根据完整的实际库集
 - 2026-10-16 10:34生成的 `build/bk7259/mybot/package/all-app.bin` 为3,413,280字节，SHA256 `7b2176b7f37c6f3b089cae246ce7456d49b3429850b7dab28190b897e01a5221`。
 - AP Flash 1,905,948字节、RAM 157,244字节、DTCM 35,744字节。此前三路输入算法与库保持，AVDK本轮只补库校验清单。
 - SDK/AOSL内容摘要再次与版本锁一致；父仓库和Solution的 `git diff --check`通过。旧边界脚本仍受已记录的旧版本/硬件规则影响而未通过。
-- 本轮重新核对公开音频合同、V2 AEC的VAD关闭路径及舵机Kconfig/CMake/GPIO/CLI条件；MyBot、AOSL、RTSA与两个仓库基线均沿用上文版本，工作区未提交或推送。
+- 本轮重新核对公开音频合同、V2 AEC的VAD关闭路径及舵机Kconfig/CMake/GPIO/CLI条件；SDK、AOSL、RTSA与两个仓库基线均沿用上文版本，工作区未提交或推送。

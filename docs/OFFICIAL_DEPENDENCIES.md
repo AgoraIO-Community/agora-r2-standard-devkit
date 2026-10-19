@@ -2,12 +2,13 @@
 
 ## 范围与版本
 
-`agora-r2-standard-devkit` 使用 BK 官方仓库作为两个 Git 子模块的来源，
-不再依赖 `junlon2006` 下的 BK fork。这次迁移只改变源码管理和构建准备方式，保留原 R2
-的 LCD、三路模拟输入/AEC、按键、电源和运行逻辑，不同时升级厂商 SDK 或 agent-studio-device-firmware。
+`agora-r2-standard-devkit` 使用 BK 官方仓库作为两个 Git 子模块的来源。产品工程与
+板级补丁由本仓库维护，保留原 R2 的 LCD、三路模拟输入/AEC、按键、电源和运行逻辑，
+厂商 SDK 仍固定在下表的已验证版本。
 
-厂商迁移后，SDK 快照单独更新至 `39d5ed122aab51d90c1c531298c4ead8dc35b104`，详见
-[`SDK_REVISION`](../components/mybot/mybot_sdk/SDK_REVISION)。当前云端 MCP 接受
+当前基础 SDK 固定为 [agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0)，
+提交为 `32ac74bc59cb72db70e9a68337753561b59b13d0`，并保留已应用的 BK7259 HTTPS body 日志目标补丁；
+来源、补丁路径及摘要详见 [`SDK_REVISION`](../components/mybot/mybot_sdk/SDK_REVISION)。当前云端 MCP 接受
 `message.user` 包装的 `audio.set_volume` 和 `audio.adjust_volume`；下文迁移验证记录描述
 厂商迁移时的基线。本地 LCD 表情渲染仍保留，RTM 不再执行静音或情绪命令。
 
@@ -37,9 +38,10 @@ agora-r2-standard-devkit/
 ```
 
 `projects/mybot/` 保存 AP/CP 入口、板级配置、内存/Flash 分区、资源和工程构建文件。
-`components/mybot/` 保存 agent-studio-device-firmware、BK7259 平台适配、AOSL 和 Agora RTSA；这些文件由原
-Solution 产品版本 `28f9590` 的目录迁入。SDK `include/`、`src/`、AOSL 和 RTSA 快照保持原字节内容及锁定摘要，
-并非从 BK 官方重新获取或切换到上游最新版本。
+`components/mybot/` 保存 agent-studio-device-firmware、BK7259 平台适配、AOSL 和 Agora RTSA。
+厂商构建布局调整时采用的产品文件可在[已发布的 R2 快照](https://github.com/AgoraIO-Community/agora-r2-standard-devkit/tree/5aa441e0b193974254fd7072392368183b258b7e)核对。
+当前 SDK 的版本和目标补丁以 `SDK_REVISION` 为准；AOSL 与 RTSA 保留锁定的原始字节及摘要，
+并非从 BK 子模块重新获取或自动更新。
 
 迁移保留 R2 的海内外地址和 `CONFIG_MYBOT_HTTPS` 开关。TLS 仍使用原来的 ISRG Root X1 与
 DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单根证书优化；该集合未覆盖
@@ -180,8 +182,9 @@ releases/official-r2/bk7259-en-US-video.bin
 `releases/bk7259-<language>-video.bin`。时间只代表本次开发机的编译，不是设备启动或会话延时。
 
 `python3 scripts/check_sources.py` 的70个产品源码检查通过；agent-studio-device-firmware、AOSL 和 RTSA
-不可变快照与迁移前一致。官方两个子模块保持干净；生成 AVDK 的 AP/CP/tools 与原 R2
-依赖 `2a60aa47b` 对应内容一致，生成摄像头辅助组件与原 Solution `28f9590` 对应内容一致。
+快照与当时基线一致。官方两个子模块保持干净；生成 AVDK 的 AP/CP/tools 及摄像头辅助
+组件与构建布局调整前的产品输入一致。[已发布 R2 快照](https://github.com/AgoraIO-Community/agora-r2-standard-devkit/tree/5aa441e0b193974254fd7072392368183b258b7e)
+保留了对应的固定依赖、补丁和产品输入。
 AEC 库大小和摘要与上文相同，保留 `20261014` 版本。
 
 20项构建准备主机测试、表情策略13组462条断言、HTTPS 5个案例及云台14组加CLI测试通过。
@@ -195,9 +198,10 @@ live in the parent repository under `projects/mybot` and `components/mybot`; no 
 is a build dependency. This preserves the existing R2 hardware and firmware behavior without
 upgrading the vendor SDK or agent-studio-device-firmware snapshots.
 
-After the vendor migration, the SDK snapshot was separately updated to
-`39d5ed122aab51d90c1c531298c4ead8dc35b104`; see
-[`SDK_REVISION`](../components/mybot/mybot_sdk/SDK_REVISION). Current cloud MCP commands use
+The current SDK pins [agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0)
+at commit `32ac74bc59cb72db70e9a68337753561b59b13d0`, with the BK7259 HTTPS body-logging target patch already
+applied. See [`SDK_REVISION`](../components/mybot/mybot_sdk/SDK_REVISION) for
+the release snapshot, reviewable patch and content digests. Current cloud MCP commands use
 `message.user` envelopes with `audio.set_volume` or `audio.adjust_volume`. The migration validation
 records describe the earlier baseline. Local LCD expression rendering remains available; RTM no
 longer executes mute or emotion commands.
@@ -212,8 +216,9 @@ Use `git submodule update --init --recursive` to restore the reviewed revisions.
 remote branch tips with `--remote`. An upstream upgrade must update the gitlinks, version lock,
 and patch set together, then rebuild both languages and complete the board regression checks.
 
-agent-studio-device-firmware, AOSL, and RTSA snapshots retain their previous bytes, revision records, and applicable
-licenses. Board configuration and runtime behavior are preserved, including disabled VAD/gimbal
+The vendor-migration validation retained the then-current SDK, AOSL and RTSA snapshots.
+Current SDK version and target changes are recorded separately in `SDK_REVISION`;
+AOSL and RTSA retain their locked bytes, revision records and applicable licenses. Board configuration and runtime behavior are preserved, including disabled VAD/gimbal
 and the previous two-root TLS store (ISRG + DigiCert, without GoDaddy G2). Both language builds and
 host checks passed; a successful build does not replace R2 hardware regression testing. See the
 root English README for build commands and output paths.

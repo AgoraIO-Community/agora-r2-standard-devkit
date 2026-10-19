@@ -15,10 +15,11 @@ inputs and an appended digital AEC reference. The product lives in the
 parent repository; official BK dependencies receive versioned patches in isolated build copies.
 Its normal UI renders a gray pixel-glasses face.
 
-The vendored SDK pins the `agent-studio-device-firmware` snapshot
-[`39d5ed122aab51d90c1c531298c4ead8dc35b104`](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/39d5ed122aab51d90c1c531298c4ead8dc35b104)
-(version 1.2.0), with the existing
-HTTPS request/response body logging patch. MCP control over RTM requires one `message.user`
+The vendored SDK pins [agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0)
+at commit `32ac74bc59cb72db70e9a68337753561b59b13d0`, with the existing HTTPS request/response body logging
+patch already applied. The [recorded patch](../../patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch) identifies
+this target-specific delta; the firmware build does not apply it again. Platform interfaces,
+RTC and media behavior retain the preceding snapshot's integration. MCP control over RTM requires one `message.user`
 envelope, `data_type: "message"`, and string `content` containing DeviceCommand v1. It supports
 `audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`:
 integer -100–100). Positive deltas increase volume, negative deltas decrease it, and zero leaves

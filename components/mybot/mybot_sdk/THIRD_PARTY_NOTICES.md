@@ -2,12 +2,14 @@
 
 ## agent-studio-device-firmware
 
-The sources under `include/` and `src/` are based on a snapshot of
-https://github.com/junlon2006/mybot at commit
-`39d5ed122aab51d90c1c531298c4ead8dc35b104`, with the BK7259 HTTPS debug patch
-recorded in `SDK_REVISION`. Its source digests identify the upstream snapshot
-and vendored contents. They are provided under the Apache License 2.0 in `LICENSE`,
-except where a source file states otherwise.
+The sources under `include/` and `src/` are based on
+[agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0) at commit
+`32ac74bc59cb72db70e9a68337753561b59b13d0`, with the BK7259 HTTPS debug patch
+recorded in `SDK_REVISION`. The already-applied target delta is preserved in
+[`0001-bk7259-https-debug-log.patch`](../../../patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch); it is not
+reapplied during firmware builds. Source digests identify both the release
+snapshot and the patched contents. They are provided under the Apache License
+2.0 in `LICENSE`, except where a source file states otherwise.
 
 `src/support/mybot_json.c` and `src/internal/mybot_json.h` are namespaced
 derivatives of cJSON. Their MIT license and Dave Gamble copyright notice are
@@ -24,8 +26,9 @@ Expression mappings, mask reproduction, and resource limits are recorded in
 `platforms/bk7259/display/SOURCES.md`.
 
 The preceding status view and generated resources were adapted from
-`junlon2006/mybot-esp32` commit `19af3bdfaf1dd35461af48def8f9558e3503e755`.
-Their notices remain preserved after the face rewrite.
+[agora-esp32-devkit commit `19af3bdfaf1dd35461af48def8f9558e3503e755`](https://github.com/AgoraIO-Community/agora-esp32-devkit/tree/19af3bdfaf1dd35461af48def8f9558e3503e755).
+Its original layout, source-font and emoji notices remain preserved after the
+face rewrite.
 The following asset paths are relative to `platforms/bk7259/`.
 
 - `display/pixel_expression_masks.h` contains five immutable A8 geometry masks
@@ -40,8 +43,9 @@ The following asset paths are relative to `platforms/bk7259/`.
   from Source Han Sans SC Normal, copyright 2014-2021 Adobe. It is licensed
   under SIL OFL-1.1 in `display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt`.
   The target regenerates its 152-glyph subset with
-  `display/generate-lvgl-font.py`, adapted from the MIT-licensed `mybot-esp32`
-  generator, to cover the current fixed UI and factory-reset vocabulary.
+  `display/generate-lvgl-font.py`, adapted from the MIT-licensed
+  [agora-esp32-devkit generator](https://github.com/AgoraIO-Community/agora-esp32-devkit/blob/19af3bdfaf1dd35461af48def8f9558e3503e755/scripts/generate-lvgl-font.py),
+  to cover the current fixed UI and factory-reset vocabulary.
   The source font revision remains pinned by SHA256
   `1ee89e1669362dee13851129c0a8a791a87521eb4148e5efbf5d26596738e25b`.
   The modified font uses the distinct MyBot UI Sans name.
