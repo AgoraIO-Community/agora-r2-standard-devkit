@@ -4,8 +4,8 @@
 
 The sources under `include/` and `src/` are based on a snapshot of
 https://github.com/junlon2006/mybot at commit
-`39d5ed122aab51d90c1c531298c4ead8dc35b104`, with the BK7259 HTTPS debug patch
-recorded in `SDK_REVISION`. Its source digests identify the upstream snapshot
+`58f0ef9c14be9f159b1dc167bf0f035983b25117` (tag `v1.3.0`), with the BK7259 HTTPS
+debug patch recorded in `SDK_REVISION`. Its source digests identify the upstream snapshot
 and vendored contents. They are provided under the Apache License 2.0 in `LICENSE`,
 except where a source file states otherwise.
 

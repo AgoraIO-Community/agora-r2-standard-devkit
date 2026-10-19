@@ -95,7 +95,9 @@ preparation rules, and validation boundaries.
   `lib/arm/libagora-rtc-sdk.a`).
 
 The product vendors the latest committed mybot SDK snapshot from upstream `main`
-at `39d5ed122aab51d90c1c531298c4ead8dc35b104` (PR #115; SDK version remains 1.2.0).
+at `58f0ef9c14be9f159b1dc167bf0f035983b25117` (tag `v1.3.0`, SDK version 1.3.0).
+This refresh updates the release version and source comments; platform interfaces,
+RTC and media behavior are unchanged from the previous snapshot.
 MCP control over RTM P2P and channel messages requires one `message.user` envelope with
 `data_type: "message"` and string `content` containing DeviceCommand v1. Supported actions are
 `audio.set_volume` (`params.level`: integer 0–100) and `audio.adjust_volume` (`params.delta`: integer
