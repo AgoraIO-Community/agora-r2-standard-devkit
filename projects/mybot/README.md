@@ -138,14 +138,14 @@ Without a reset marker, AP registers the platform and tries saved Wi-Fi. Missing
 or unusable credentials lead to APSTA provisioning at `http://192.168.4.1/`.
 After STA obtains IPv4 and the portal stops, the task starts the SDK for device
 authentication and pairing as needed. Pairing codes are entered in the web
-console. The product loop polls SDK state and handles key requests.
+console. The product loop polls SDK state and handles touchscreen setup/reset and key requests.
 
-Network/SDK failures retain the prepared key and display for factory-reset
-requests. Identity, platform-preparation, or descriptor-registration failures
+Network/SDK failures retain the prepared key and display for Wi-Fi setup or factory-reset
+requests. Identity or platform-preparation failures
 can exit startup; that recovery path is not guaranteed for those earlier errors.
-Descriptor-registration failure shuts down the prepared platform resources.
+Descriptor-registration failure retains settings and retries registration after a successful setup.
 
-## 5. Keys and Factory Reset
+## 5. Keys, Wi-Fi Setup and Factory Reset
 
 | KEY1/GPIO47 action | Behavior |
 | --- | --- |
@@ -158,6 +158,21 @@ the platform prepares must first be released to arm a new gesture. Factory reset
 uses Settings at the upper right, Factory reset and a separate Confirm/Cancel dialog.
 Opening or cancelling this dialog keeps the current conversation running. The CEN button remains
 hardware reset only; double-press, volume, and other key actions are not registered.
+
+Settings → Wi-Fi setup → Start setup changes Wi-Fi independently of factory reset.
+Opening or cancelling confirmation leaves the conversation running. After confirmation,
+the product owner stops the SDK and requires both `STOPPED` and `!mybot_is_running()`
+before starting APSTA. The screen shows the `mybot-xxxx` hotspot and
+`http://192.168.4.1`. Connect a phone to that hotspot and submit the new network in the portal.
+The candidate must obtain IPv4 before credentials are committed. After the portal and
+SoftAP stop, the owner restarts the SDK without rebooting. Device authentication, ID,
+server binding and saved volume are preserved.
+
+Cancel setup is accepted only before credential commit starts. It closes the portal,
+scan and candidate STA, then tries the saved network once and restarts the SDK on success.
+No saved network or a failed reconnect leaves Retry Wi-Fi setup and Settings available;
+it does not automatically reopen the hotspot. Cancellation is rejected once saving starts.
+Factory reset takes priority throughout; failed network teardown retains ownership for retry.
 
 Normal conversation hangup stops local video/RTC and clears session PCM before
 publishing READY and sending one HTTP(S) stop notification. Notification failure
@@ -193,12 +208,13 @@ failed/rebooting pages across SDK stop/detach.
 Module declarations are independent of the platform abstraction:
 
 - `platforms/bk7259/include/bk7259_key.h`: conversation request and event dispatch.
+- `platforms/bk7259/include/bk7259_provision.h`: independent setup/cancel mailbox and presentation.
 - `platforms/bk7259/include/bk7259_factory_reset.h`: reset requests, persistent
   intent/cleanup, network teardown, and reset display phases.
 - `platforms/bk7259/include/mybot_bk7259_platform.h`: platform registration and
   preparation abstraction.
 
-These paths are relative to `components/mybot/mybot_sdk/`. The first two APIs
+These paths are relative to `components/mybot/mybot_sdk/`. The product APIs
 use `bk7259_*` names. Reset storage is implemented in `bk7259_factory_reset.c`;
 it does not erase the whole EasyFlash environment.
 
@@ -451,11 +467,15 @@ Video-specific checks require a build with `CONFIG_MYBOT_VIDEO=y`.
 - [ ] Test wrapped `audio.adjust_volume` with positive, negative and zero deltas, including -100 and 100; results must clamp to 0–100, and repeating a command ID must not adjust the volume again.
 - [ ] Verify phase/voiceprint text appears only during a real conversation, voiceprint-only updates preserve the face, and hangup removes session fields and cancels pending expression deadlines.
 - [ ] Verify both languages, web-console pairing instructions, round-bezel clearance, and factory-reset display priority.
-- [ ] A hold below 5 seconds performs only the state-appropriate short action on release; a 5-second hold resets once and suppresses that action.
-- [ ] Hold the key across reboot, then release; confirm a new gesture is required before another reset.
+- [ ] A hold below 5 seconds performs only the state-appropriate short action on release; a 5-second hold does not reset or toggle a conversation.
+- [ ] Hold the key across reboot, then release; confirm a new gesture is required before another conversation action.
+- [ ] Open or cancel setup/reset confirmation during a conversation; neither action stops it or leaks a tap through two pages.
+- [ ] Start Wi-Fi setup while idle and in conversation; APSTA must wait for SDK shutdown, and successful setup must restart services without rebooting or clearing identity, binding or volume.
+- [ ] Cancel before commit and reconnect to the original network once; bad credentials, no saved network and reconnect failure must retain retry/reset controls.
+- [ ] Reject cancellation after saving starts; factory reset must take priority on every setup/cancel/save/failure page.
 - [ ] Request reset during conversation, saved-STA connection, and APSTA provisioning; confirm shutdown precedes record deletion and the reset page remains visible.
 - [ ] Confirm Wi-Fi credentials, local authentication, and saved volume are cleared, while device ID and server-side binding are preserved.
 - [ ] Interrupt power after the reset marker is persisted; confirm boot resumes cleanup before network/SDK startup.
-- [ ] Inject shutdown/storage failures; confirm the failure page waits for a fresh 5-second hold rather than rebooting or erasing while writers remain active.
+- [ ] Inject shutdown/storage failures; confirm the failure page waits for a fresh touchscreen Retry rather than rebooting or erasing while writers remain active.
 
 See [UI_VALIDATION.md](./UI_VALIDATION.md) for build and host-test evidence.

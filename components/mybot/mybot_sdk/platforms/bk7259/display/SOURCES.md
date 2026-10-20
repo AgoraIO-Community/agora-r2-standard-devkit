@@ -233,7 +233,7 @@ notice, and the full Bitstream Vera license are retained in
 distinct BK7259 Terminal name.
 
 Chinese and English operational text uses the 20-pixel, 4 bpp MyBot UI Sans
-subset of Source Han Sans SC Normal. The current font contains 152 glyphs,
+subset of Source Han Sans SC Normal. The current font contains 185 glyphs,
 including ASCII and fixed Chinese UI vocabulary. Arbitrary Chinese SSIDs or
 chat text require a separately extended font.
 
@@ -241,7 +241,7 @@ The local `generate-lvgl-font.py` is adapted from the preceding reference's
 MIT-licensed generator and reads the fixed vocabulary in `lvgl_view.cc`. It
 uses the OFL-licensed `SourceHanSansSC-Normal.otf`, with required input SHA256
 `1ee89e1669362dee13851129c0a8a791a87521eb4148e5efbf5d26596738e25b`.
-The current bitmap uses 18,458 bytes and was generated with Pillow 10.2.0 /
+The current bitmap uses 24,638 bytes and was generated with Pillow 10.2.0 /
 FreeType 2.13.2. The source font is an external generation input; firmware
 embeds only this subset. Run
 `python3 generate-lvgl-font.py --font /path/to/SourceHanSansSC-Normal.otf` to

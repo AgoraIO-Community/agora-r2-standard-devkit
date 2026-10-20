@@ -196,6 +196,12 @@ AEC 库大小和摘要与上文相同，保留 `20261014` 版本。
 `vendor.lock.json` 记录新增补丁摘要；构建仍只在隔离副本应用。原迁移基线和历史实机记录
 保留原时间含义，触摸功能及其与视频并发的实机验证需独立完成。
 
+## 2026-10-20 设置内独立配网
+
+新增“设置 → 配网”及取消/恢复原网络流程，仅修改父仓库产品模块、应用、UI与测试。
+两个官方子模块固定提交、`vendor.lock.json`、厂商补丁、MyBot/AOSL/RTSA快照与硬件配置均不变。
+产品任务确认 SDK 完全停止后才运行门户，配网完成后重新启动 SDK；恢复出厂继续拥有最高优先级。
+
 ## English
 
 `release/v4.0.1-mybot-r2` pins the two official `bekencorp` repositories to the commits listed above. Product files

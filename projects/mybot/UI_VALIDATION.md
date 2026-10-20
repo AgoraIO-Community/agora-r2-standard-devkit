@@ -1066,3 +1066,54 @@ OUTPUT→HIGH→INPUT→IRQ顺序及共享I2C方向。六种缺失能力的变�
 包括本次GPIO43仅声明输入的错误；恢复完整声明后通过。普通及ASan/UBSan检查通过。
 用户随后反馈该修正版测试通过。触摸及恢复入口已收到本次实机通过反馈；摄像头长时间并发、
 断电续做和驱动/Flash故障仍按独立验收清单验证。
+
+## 2026-10-20 设置内独立配网
+
+在 `08a23fc` 基线的 `release/v4.0.1-mybot-r2-dev` 实现“设置 → 配网 → 开始配网”。
+确认前不影响会话；产品任务确认 SDK 为 STOPPED 且不再 running 后运行 APSTA，屏幕显示
+热点与网页地址，成功后重新启动 SDK，不重启设备。设备鉴权、ID、服务端绑定与音量不清除。
+取消在凭据提交前生效，清理门户/扫描/候选 STA 后仅尝试一次原网络；失败保留重新配网/恢复入口。
+恢复出厂始终优先，SDK/网络停止未确认时不继续启动门户或第二个 SDK。
+
+配网 mailbox 使用一个 AOSL CAS 原子状态字串行化取消与提交。新候选取得 IPv4 后才尝试提交。
+核对 EasyFlash 实现后补齐写后读回：完整新记录验证成功即完成提交，即使写 API 返回错误；
+否则恢复并验证原有效记录或原先不存在的状态，确认后才重新允许取消。回滚未验证则退出门户，
+不宣称已恢复旧配置。Flash 断电一致性仍需实机专项验证。
+
+UI 控件固定初始化，新增11个控件、无新增UI任务/定时器；中文字库185字形、bitmap 24638字节。
+确认、取消、重配保持原触摸防误触规则；NONE恢复时清除状态文字缓存，同READY/同会话阶段
+往返不会残留wifi_setup。UI worker应用NONE前检查mailbox，避免旧流程覆盖刚确认的新配网画面。
+
+已完成验证：
+
+- `python3 scripts/check_sources.py`、字体覆盖和 `git diff --check` 通过；官方子模块干净，
+  SDK/AOSL/RTSA摘要、厂商补丁和硬件配置均未改变。
+- 构建脚本20项、表情策略13组462条断言、HTTPS5项、云台14组加CLI及触摸回归通过。
+- 新 `tests/provision_network` 的12组普通及ASan/UBSan测试通过，包含256次真实线程取消/提交
+  竞争、候选IPv4、旧记录保护、写失败及回滚失败、扫描/HTTP中断和驱动清理所有权。
+- 新 `tests/provision_owner` 与既有 `tests/touch_reset` 普通及ASan/UBSan通过，覆盖两项SDK停止
+  条件、停止前/中取消、清理失败重试、单次旧网重连、初始网络中断、失败保留设置、重请求及恢复优先级。
+- 实际LVGL中文/英文/禁动画三变体ASan/UBSan通过，覆盖配网全页、防穿透/拖动/多指、重复请求、
+  迟到取消、同状态恢复及全部23表情；控件/定时器数量固定。当前ptrace环境关闭LeakSanitizer。
+- 全新目录完成中英文AP/CP编译合包，再增量纳入最终NONE竞争保护，两轮均通过：
+
+  ```sh
+  python3 scripts/build_all.py --language both \
+    --build-root build/r2-wifi-setup-20261020 \
+    --output-root releases/r2-wifi-setup-20261020
+  ```
+
+  完整构建日志 `/tmp/mybot-r2-wifi-setup.fHJEZq/build.log`，用时1分12秒；最终增量日志
+  `build-final.log`，用时7秒。镜像与对应package/all-app.bin逐字节相同；生成配置为HTTPS/视频开启、
+  舵机关闭，GPIO43实际ELF表仍有OUTPUT/INPUT双能力，AP为ARM EABI5 hard-float。
+  英文AP静态Flash 1938992字节、RAM157740字节、DTCM35744字节；堆峰值及栈高水位需目标测量。
+
+| 完整镜像（`releases/r2-wifi-setup-20261020/`） | 字节数 | SHA256 |
+| --- | ---: | --- |
+| `bk7259-zh-CN-video.bin` | 3446336 | `614583760ffc692476328160fdfcf5667df88f94fb17fb11b19a7dc8524b4846` |
+| `bk7259-en-US-video.bin` | 3446336 | `441a4828f20173823fc2ce8aafc3312eebb0820e633a641acf65c1035e7785ed` |
+
+预览保存于同目录 `ui-preview.png`。本轮核对58f0ef9版PORTING/EMBEDDED、公开Wi-Fi/LCD契约、
+AOSL CAS及EasyFlash替换顺序；MIC模拟16/数字4dB、VAD关闭、舵机关闭、视频开启保持。
+以上为构建与主机验证记录。用户随后反馈本次独立配网测试通过；Flash断电一致性、
+异常驱动/存储故障及运行时堆栈峰值仍需专项实机验证。

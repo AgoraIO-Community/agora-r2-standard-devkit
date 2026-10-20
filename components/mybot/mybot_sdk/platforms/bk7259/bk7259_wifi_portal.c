@@ -2,6 +2,7 @@
 #include "bk7259_wifi_internal.h"
 #include "bk7259_ops.h"
 #include "bk7259_factory_reset.h"
+#include "bk7259_provision.h"
 
 #include <common/bk_err.h>
 #include "bk7259_platform_log.h"
@@ -132,8 +133,9 @@ static void build_ap_ssid(char output[WIFI_SSID_STR_LEN], const char *device_id)
 }
 
 static int start_softap(portal_context_t *ctx) {
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
     netif_ip4_config_t ip4 = {0};
     (void)snprintf(ip4.ip, sizeof(ip4.ip), "%s", "192.168.4.1");
@@ -151,13 +153,25 @@ static int start_softap(portal_context_t *ctx) {
     config.security = WIFI_SECURITY_NONE;
     config.max_con = 2;
     config.disable_dns_server = 0;
-    if (bk_wifi_ap_set_config(&config) != BK_OK || bk_wifi_ap_start() != BK_OK) {
-        MYBOT_LOGE(TAG, "failed to configure or start SoftAP");
-        (void)bk_wifi_ap_stop();
+    if (bk_wifi_ap_set_config(&config) != BK_OK) {
+        MYBOT_LOGE(TAG, "failed to configure SoftAP");
         return -1;
     }
-
+    aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
+    }
+    /* An attempted start can leave partial driver state. Failed cleanup keeps
+     * this flag so the owner can retry the idempotent stop. */
     s_softap_started = true;
+    int result = bk_wifi_ap_start();
+    aborted = bk7259_provision_abort_reason();
+    if (result != BK_OK || aborted) {
+        if (bk7259_wifi_portal_stop() < 0) {
+            return -1;
+        }
+        return aborted ? aborted : -1;
+    }
     bk7259_lcd_set_provisioning_ssid(ctx->ap_ssid);
     MYBOT_LOGI(TAG, "SoftAP started");
     return 0;
@@ -178,8 +192,9 @@ int bk7259_wifi_portal_stop(void) {
 }
 
 static int wait_socket(int fd, bool writable, uint32_t timeout_ms) {
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
     fd_set read_fds;
     fd_set write_fds;
@@ -197,9 +212,8 @@ static int wait_socket(int fd, bool writable, uint32_t timeout_ms) {
     }
     int result = select(fd + 1, writable ? NULL : &read_fds,
                         writable ? &write_fds : NULL, NULL, &timeout);
-    return bk7259_factory_reset_requested()
-               ? BK7259_NETWORK_CANCELLED
-               : result;
+    aborted = bk7259_provision_abort_reason();
+    return aborted ? aborted : result;
 }
 
 static int send_all(int fd, const void *data, size_t length) {
@@ -208,7 +222,7 @@ static int send_all(int fd, const void *data, size_t length) {
 
     while (length > 0 && !timeout_elapsed(started, PORTAL_HTTP_IO_TIMEOUT_MS)) {
         int ready = wait_socket(fd, true, PORTAL_HTTP_POLL_MS);
-        if (ready == BK7259_NETWORK_CANCELLED) {
+        if (ready < -1) {
             return ready;
         }
         if (ready < 0) {
@@ -231,9 +245,8 @@ static int send_all(int fd, const void *data, size_t length) {
         cursor += (size_t)sent;
         length -= (size_t)sent;
     }
-    return bk7259_factory_reset_requested()
-               ? BK7259_NETWORK_CANCELLED
-               : (length == 0 ? 0 : -1);
+    int aborted = bk7259_provision_abort_reason();
+    return aborted ? aborted : (length == 0 ? 0 : -1);
 }
 
 static int send_http_response(int fd, const char *status, const char *content_type,
@@ -342,7 +355,7 @@ static int receive_http_request(int fd, portal_http_request_t *request) {
     while (received < capacity &&
            !timeout_elapsed(started, PORTAL_HTTP_REQUEST_TIMEOUT_MS)) {
         int ready = wait_socket(fd, false, PORTAL_HTTP_POLL_MS);
-        if (ready == BK7259_NETWORK_CANCELLED) {
+        if (ready < -1) {
             result = ready;
             break;
         }
@@ -399,9 +412,8 @@ static int receive_http_request(int fd, portal_http_request_t *request) {
 
     secure_zero(buffer, received);
     os_free(buffer);
-    return bk7259_factory_reset_requested()
-               ? BK7259_NETWORK_CANCELLED
-               : result;
+    int aborted = bk7259_provision_abort_reason();
+    return aborted ? aborted : result;
 }
 
 static int security_to_authmode(wifi_security_t security) {
@@ -484,10 +496,10 @@ static int handle_scan(int fd) {
     }
     char *json = scan_result == 0 ? build_scan_json(results, result_count) : NULL;
     os_free(results);
-    if (scan_result == BK7259_NETWORK_CANCELLED ||
-        bk7259_factory_reset_requested()) {
+    int aborted = bk7259_provision_abort_reason();
+    if (scan_result < -1 || aborted) {
         cJSON_free(json);
-        return BK7259_NETWORK_CANCELLED;
+        return aborted ? aborted : scan_result;
     }
     if (!json) {
         MYBOT_LOGW(TAG, "Wi-Fi scan failed: result=%d count=%u", scan_result,
@@ -600,14 +612,15 @@ static bool target_is_captive_probe(const char *target) {
     return false;
 }
 
-/* Returns one only after verified credentials are saved, or CANCELLED when
- * factory reset takes precedence over the submitted network. */
+/* Returns one only after candidate IPv4 and a serialized credential commit.
+ * Old credentials remain untouched until that commit is claimed. */
 static int handle_submit(int fd, const portal_http_request_t *request) {
     char ssid[WIFI_SSID_STR_LEN] = {0};
     char password[WIFI_PASSWORD_LEN] = {0};
     int result = 0;
-    if (bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        result = aborted;
         goto done;
     }
 
@@ -622,9 +635,9 @@ static int handle_submit(int fd, const portal_http_request_t *request) {
     MYBOT_LOGI(TAG, "testing submitted Wi-Fi network");
     int connect_result = bk7259_wifi_manager_connect_candidate(
         ssid, password, PORTAL_CONNECT_TIMEOUT_MS);
-    if (connect_result == BK7259_NETWORK_CANCELLED ||
-        bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    aborted = bk7259_provision_abort_reason();
+    if (connect_result < -1 || aborted) {
+        result = aborted ? aborted : connect_result;
         goto done;
     }
     if (connect_result < 0) {
@@ -635,13 +648,15 @@ static int handle_submit(int fd, const portal_http_request_t *request) {
         goto done;
     }
     int save_result = bk7259_wifi_manager_save_credentials(ssid, password);
-    if (save_result == BK7259_NETWORK_CANCELLED ||
-        bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    aborted = bk7259_provision_abort_reason();
+    if (save_result < -1 || aborted) {
+        result = aborted ? aborted : save_result;
         goto done;
     }
     if (save_result < 0) {
-        (void)bk7259_wifi_manager_disconnect();
+        if (bk7259_wifi_manager_disconnect() < 0) {
+            MYBOT_LOGE(TAG, "credential save cleanup incomplete; disconnect must retry");
+        }
         MYBOT_LOGE(TAG, "Wi-Fi submit failed: credential save failed");
         result = send_json_literal(
             fd, "500 Internal Server Error",
@@ -652,8 +667,9 @@ static int handle_submit(int fd, const portal_http_request_t *request) {
     /* The APSTA channel may change as the STA joins the selected AP, so the
      * phone can leave our SoftAP before it receives this best-effort reply. */
     (void)send_json_literal(fd, "200 OK", "{\"success\":true}");
-    if (bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        result = aborted;
         goto done;
     }
     result = 1;
@@ -668,7 +684,7 @@ static int handle_http_client(int fd) {
     portal_http_request_t request = {0};
     int result = 0;
     int receive_result = receive_http_request(fd, &request);
-    if (receive_result == BK7259_NETWORK_CANCELLED) {
+    if (receive_result < -1) {
         result = receive_result;
         goto done;
     }
@@ -698,9 +714,8 @@ static int handle_http_client(int fd) {
 
 done:
     secure_zero(request.body, sizeof(request.body));
-    return bk7259_factory_reset_requested()
-               ? BK7259_NETWORK_CANCELLED
-               : result;
+    int aborted = bk7259_provision_abort_reason();
+    return aborted ? aborted : result;
 }
 
 static int create_http_server(void) {
@@ -710,6 +725,11 @@ static int create_http_server(void) {
     }
 
     int reuse_address = 1;
+    /* A ready connection can disappear before accept(). Bound that wait too. */
+    struct timeval accept_timeout = {
+        .tv_sec = 0,
+        .tv_usec = (long)(PORTAL_HTTP_POLL_MS * 1000U),
+    };
     struct sockaddr_in address = {
         .sin_family = AF_INET,
         .sin_port = htons(PORTAL_HTTP_PORT),
@@ -717,6 +737,8 @@ static int create_http_server(void) {
     };
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address,
                    sizeof(reuse_address)) < 0 ||
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &accept_timeout,
+                   sizeof(accept_timeout)) < 0 ||
         bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0 ||
         listen(fd, 2) < 0) {
         close(fd);
@@ -743,12 +765,13 @@ int bk7259_wifi_portal_run(const char *device_id) {
         MYBOT_LOGE(TAG, "portal start rejected: missing device id");
         return -1;
     }
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
-    }
     if (bk7259_wifi_portal_stop() < 0) {
         MYBOT_LOGE(TAG, "portal start rejected: previous SoftAP still owned");
         return -1;
+    }
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
 
     portal_context_t ctx = {0};
@@ -766,10 +789,11 @@ int bk7259_wifi_portal_run(const char *device_id) {
     }
     MYBOT_LOGI(TAG, "APSTA portal ready: ssid=%s url=http://192.168.4.1",
             ctx.ap_ssid);
+    (void)bk7259_lcd_show_provision(BK7259_PROVISION_ACTIVE);
 
     for (;;) {
         int ready = wait_socket(listen_fd, false, PORTAL_HTTP_POLL_MS);
-        if (ready == BK7259_NETWORK_CANCELLED) {
+        if (ready < -1) {
             result = ready;
             break;
         }
@@ -803,16 +827,18 @@ int bk7259_wifi_portal_run(const char *device_id) {
         }
         (void)shutdown(client_fd, SHUT_RDWR);
         close(client_fd);
-        if (request_result == BK7259_NETWORK_CANCELLED ||
-            bk7259_factory_reset_requested()) {
-            result = BK7259_NETWORK_CANCELLED;
+        if (bk7259_wifi_manager_storage_fault()) {
+            result = -1;
+            break;
+        }
+        aborted = bk7259_provision_abort_reason();
+        if (request_result < -1 || aborted) {
+            result = aborted ? aborted : request_result;
             break;
         }
         if (request_result == 1) {
             (void)rtos_delay_milliseconds(PORTAL_EXIT_DELAY_MS);
-            result = bk7259_factory_reset_requested()
-                         ? BK7259_NETWORK_CANCELLED
-                         : 0;
+            result = bk7259_provision_abort_reason();
             break;
         }
     }
@@ -820,12 +846,17 @@ int bk7259_wifi_portal_run(const char *device_id) {
     close(listen_fd);
 
 done:
-    if (bk7259_wifi_portal_stop() < 0) {
-        result = -1;
-    }
-    if (bk7259_factory_reset_requested()) {
-        (void)bk7259_wifi_manager_disconnect();
-        result = BK7259_NETWORK_CANCELLED;
+    {
+        int portal_stop = bk7259_wifi_portal_stop();
+        aborted = bk7259_provision_abort_reason();
+        int sta_stop = (result != 0 || aborted) ? bk7259_wifi_manager_disconnect() : 0;
+        if (portal_stop < 0 || sta_stop < 0) {
+            /* Retain the driver's ownership and report failure even when an
+             * accepted cancel/reset still exists in the request mailbox. */
+            result = -1;
+        } else if (aborted) {
+            result = aborted;
+        }
     }
     MYBOT_LOGI(TAG, "APSTA portal stopped: result=%d", result);
     return result;
