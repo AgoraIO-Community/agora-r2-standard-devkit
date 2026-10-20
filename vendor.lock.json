@@ -16,6 +16,10 @@
         {
           "path": "patches/bk_avdk_smp/0003-r2-trimic-aec.patch",
           "sha256": "46f3198fd67a5dfe9dda811c2e22395414ef61b4ba036f0ea6bff38d33fedc4a"
+        },
+        {
+          "path": "patches/bk_avdk_smp/0004-r2-cst7xx-touch.patch",
+          "sha256": "063652b91ede12521b1bdda96f3b8bd49a36e4a61f927ddfbd11af2a2d017709"
         }
       ]
     },

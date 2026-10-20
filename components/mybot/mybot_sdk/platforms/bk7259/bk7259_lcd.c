@@ -4,6 +4,7 @@
 #include "bk7259_factory_reset.h"
 #include "bk7259_gimbal.h"
 #include "bk7259_lcd.h"
+#include "bk7259_touch.h"
 #include "bk7259_platform_log.h"
 #include "display/expression_policy.h"
 #include "display/lvgl_view.h"
@@ -70,6 +71,7 @@ typedef struct {
     lv_display_t *display;
     uint8_t *draw_buffer;
     bool view_created;
+    bool touch_attempted;
     int composing;
     int previous;
     bool discard_refresh;
@@ -287,6 +289,9 @@ static void ui_worker(void *arg)
 {
     (void)arg;
     while (!aosl_atomic_read(&s_lcd.stopping)) {
+        /* LVGL and its input device belong to this worker. Hardware callbacks
+         * only copy touch frames; availability changes update the same view. */
+        bk7259_lvgl_view_set_touch_available(bk7259_touch_available());
         /* Serialize the brief content application with SDK detach and portal
          * updates. The snapshot lock is never held during rendering/flush. */
         if (rtos_lock_mutex(&s_snapshot_lock) == BK_OK) {
@@ -492,7 +497,7 @@ static int panel_power_off(void)
 
 static bool resources_owned(void)
 {
-    return s_lcd.worker || s_lcd.display || s_lcd.draw_buffer ||
+    return s_lcd.worker || s_lcd.display || s_lcd.draw_buffer || s_lcd.touch_attempted ||
            s_lcd.controller || s_lcd.panel || s_lcd.bus || s_lcd.frames[0] ||
            s_lcd.frames[1] ||
            s_lcd.vddio_owned || s_lcd.power_gpio_owned || s_lcd.power_2v8_gpio_owned ||
@@ -524,6 +529,15 @@ static int teardown_locked(void)
 {
     if (stop_worker() < 0) {
         return -1;
+    }
+    /* No more LVGL reads can run. Do not free its display or input device while
+     * the TP driver may still own a callback or shared software-I2C handle. */
+    if (s_lcd.touch_attempted) {
+        if (bk7259_touch_shutdown() < 0) {
+            MYBOT_LOGE(TAG, "touch shutdown incomplete; retaining display resources");
+            return -1;
+        }
+        s_lcd.touch_attempted = false;
     }
     if (s_lcd.backlight_gpio_owned && set_backlight(false) < 0) {
         MYBOT_LOGW(TAG, "failed to disable display backlight");
@@ -697,6 +711,13 @@ int bk7259_lcd_prepare(void)
         goto failed;
     }
     s_lcd.view_created = true;
+    /* The product UI is available before boot reset-intent/network handling.
+     * A missing panel touch controller must not prevent ordinary SDK startup. */
+    s_lcd.touch_attempted = true;
+    if (bk7259_touch_prepare(s_lcd.display) < 0) {
+        MYBOT_LOGW(TAG, "touch unavailable; screen recovery controls are disabled");
+    }
+    bk7259_lvgl_view_set_touch_available(bk7259_touch_available());
     lv_refr_now(s_lcd.display);
     if (s_lcd.flush_fault || set_backlight(true) < 0) {
         goto failed;

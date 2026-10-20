@@ -93,6 +93,7 @@ set(platform_srcs
     platforms/bk7259/bk7259_factory_reset.c
     platforms/bk7259/bk7259_expression.c
     platforms/bk7259/bk7259_lcd.c
+    platforms/bk7259/bk7259_touch.c
     platforms/bk7259/display/lvgl_view.cc
     platforms/bk7259/display/lvgl_fonts.c
     platforms/bk7259/display/pixel_fonts.c

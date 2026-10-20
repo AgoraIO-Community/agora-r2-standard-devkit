@@ -995,3 +995,74 @@ b60a283b606775768bf928606f8bb332。新参考包含不同的完整库集合，不
 - AP Flash 1,905,948字节、RAM 157,244字节、DTCM 35,744字节。此前三路输入算法与库保持，AVDK本轮只补库校验清单。
 - SDK/AOSL内容摘要再次与版本锁一致；父仓库和Solution的 `git diff --check`通过。旧边界脚本仍受已记录的旧版本/硬件/参考目录扫描规则影响而未通过，日志 `/tmp/mybot-trimic-no-vad-no-gimbal-boundary.log`。
 - 本轮重新核对公开音频合同、V2 AEC的VAD关闭路径及舵机Kconfig/CMake/GPIO/CLI条件；MyBot、AOSL、RTSA与两个仓库基线均沿用上文版本，工作区未提交或推送。
+
+## 2026-10-20 R2 触屏恢复出厂
+
+以R2远端最新合并提交 `5a6b4eb` 为基线，恢复入口改为右上角“设置”→“恢复出厂”→二次确认。
+GPIO47保留20ms扫描、双采样去抖和松手切换会话，达到5秒只忽略，松手不再执行任何动作。
+打开设置和取消确认不停止会话；确认/重试先锁定恢复中界面再投递原子请求。
+恢复请求移至独立恢复模块，复用原持久意图、SDK STOPPED检查、网络清理、三记录删除校验与断电续做。
+失败页面直接提供“重试”，只接受新的触摸确认，不能返回已经停止的会话。
+
+使用参考新AVDK的CST7XX驱动，GPIO44复位、GPIO43中断、SDA65/SCL64，20ms输入读取。
+物理480×640映射到逻辑640×480：`x=639-raw_y, y=raw_x`。摄像头与触摸沿用现有软件I2C
+全局互斥及引脚引用计数，触摸先于摄像头准备，SDK停止后不关闭触摸。
+`0004-r2-cst7xx-touch.patch`补齐驱动/注册、双触点整帧回调和有界合作退出，不修改原官方子模块。
+每次触摸不申请堆内存，平台固定16项队列，TP沿用2KiB工作线程；两个通知信号量和一把平台锁
+保留进程生命周期，覆盖跨核通知尚未返回的窗口。停止失败保留资源，后续可以重试。
+
+已完成验证：
+
+- `python3 scripts/check_sources.py`通过；MyBot SDK、AOSL、RTSA摘要及官方固定依赖未变化。
+- 构建工具20项、表情策略13组462条断言、HTTPS5项、云台14组及CLI测试通过。
+- `tests/touch`实际生产模块、CST7XX解析器、原生TP线程三层测试通过普通与ASan/UBSan。
+  覆盖首次触摸/开机按住、四角映射、无MOVE的最终UP、多指/非法帧/队列溢出取消、连续读取失败
+  和空闲恢复、初始化错误、I2C阻塞停止超时与重试，以及10次初始化/关闭。
+- `tests/touch_reset`真实恢复/key/app集成测试通过普通与ASan/UBSan。覆盖原子请求合并、
+  五秒边界、SDK/网络停止与存储错误、必须新触屏请求重试、异常标记及掉电续做。
+- `tests/touch_ui`以固定AVDK的真实LVGL进行中文、英文和禁动画三变体ASan/UBSan测试。
+  覆盖全部SDK页面入口、抬手触发、跨层屏蔽、拖入/拖出再返回、取消、输入重置、重复确认、
+  最新背景恢复、失败重试及23表情；控件和定时器数量固定。中文子集为173个字符。
+  当前ptrace环境关闭LeakSanitizer，Address/Undefined检查均通过。
+- 完整双语AP/CP构建及合包通过：
+
+  ```sh
+  python3 scripts/build_all.py --language both \
+    --build-root build/r2-touch-reset-20261020 \
+    --output-root releases/r2-touch-reset-20261020
+  ```
+
+  日志 `/tmp/mybot-r2-touch-reset.ocfQDt/build.log`，总用时约1分10秒。
+  生成配置含CST7XX及正确引脚，AP ELF为ARM EABI5 hard-float；发布镜像与对应all-app.bin相同。
+  英文AP静态Flash为1,932,744字节、RAM157,652字节、DTCM35,744字节；运行时堆峰值和栈高水位仍需目标测量。
+
+| 完整镜像 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| `releases/r2-touch-reset-20261020/bk7259-zh-CN-video.bin` | 3440096 | `3d4c4660a110a1c6735b2bcbfe39a99811c43264314b3cf15d309ad43a0a0865` |
+| `releases/r2-touch-reset-20261020/bk7259-en-US-video.bin` | 3440096 | `d95636acb7de8020de6a9d1190685d025227ae82495c89fd23698c3308c366cc` |
+
+本轮核对公开LCD/按键契约和58f0ef9版PORTING/EMBEDDED要求。MIC模拟16/数字4dB、VAD关闭、
+舵机关闭及音视频参数保持。以上为首版构建与主机验证记录，后续GPIO43修正及用户反馈见下文；
+Flash断电、异常驱动和存储故障仍需专项实机验证。
+
+### 2026-10-20 GPIO43 输入/输出声明修正
+
+用户烧录首版触摸固件后，日志在1009ms报告 `gpio 43 not configured as OUTPUT in usr_gpio_cfg.h`，
+随后 `bk_tp_driver_init` 的 GPIO 初始化失败。此时尚未进行CST7XX I2C识别，不能据此推断芯片或接线异常。
+原因是首版将GPIO43仅声明为输入，而参考驱动的复位序列需要先把INT输出高电平，再切为输入。
+
+AP表已按参考R2设置为 `GPIO_DEV_GPIO_OUTPUT` + `GPIO_DEV_GPIO_INPUT`，GPIO44及I2C引脚不变。
+重新编译中英文AP/CP并直接检查最终ELF的板级GPIO表，GPIO43的两项功能均存在。
+新镜像独立输出到 `releases/r2-touch-reset-gpio-fix-20261020/`，避免与首版混用。
+
+| 完整镜像 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| `bk7259-zh-CN-video.bin` | 3440096 | `ee39e2debac7a81fd104addf69101ddc64fa7c8672d1b12bb9fc11c7c450a54c` |
+| `bk7259-en-US-video.bin` | 3440096 | `8d3f6daa5502c32706ba443e99dd3a9e08081a73a6e946ecc4ac3d629c8fa9ea` |
+
+增量双语构建通过，用时约7秒；日志 `/tmp/mybot-r2-touch-gpio-fix.thLcvx/build.log`。
+`tests/touch`新增真实AP GPIO表、官方枚举和bitfield结构的板级fixture；按表校验TP初始化的
+OUTPUT→HIGH→INPUT→IRQ顺序及共享I2C方向。六种缺失能力的变体均导致实际TP初始化失败，
+包括本次GPIO43仅声明输入的错误；恢复完整声明后通过。普通及ASan/UBSan检查通过。
+用户随后反馈该修正版测试通过。触摸及恢复入口已收到本次实机通过反馈；摄像头长时间并发、
+断电续做和驱动/Flash故障仍按独立验收清单验证。

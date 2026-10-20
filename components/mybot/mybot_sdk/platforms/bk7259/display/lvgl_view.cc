@@ -33,6 +33,10 @@ constexpr uint32_t kGreeting = 0xf1ca79;
 constexpr uint32_t kTerminal = 0x639589;
 constexpr uint32_t kMuted = 0xa0a6a3;
 constexpr uint32_t kError = 0xe57876;
+constexpr int kTapSlop = 10;
+
+enum class SettingsPage { Closed, Menu, Confirm };
+enum class ButtonAction { Settings, Return, ResetMenu, Cancel, Confirm, Retry };
 
 struct Presentation {
     const char *title;
@@ -55,10 +59,19 @@ constexpr Presentation kScreens[] = {
 };
 constexpr Presentation kResetScreens[] = {
     {"正在恢复出厂设置", "请勿断电", kGreeting},
-    {"恢复失败，\n请长按重试", "长按5秒重试", kError},
+    {"恢复出厂失败", "轻触按钮重试", kError},
     {"恢复完成，正在重启", "请勿断电", kNeutral},
 };
 constexpr const char *kPortalNotice = "请连接设备热点\nhttp://192.168.4.1";
+constexpr const char *kSettings = "设置";
+constexpr const char *kReset = "恢复出厂";
+constexpr const char *kReturn = "返回";
+constexpr const char *kConfirmTitle = "恢复出厂？";
+constexpr const char *kConfirmNotice = "将清除本机Wi-Fi、设备凭据及音量，完成后重启";
+constexpr const char *kConfirm = "确认恢复";
+constexpr const char *kCancel = "取消";
+constexpr const char *kRetry = "重试";
+constexpr const char *kNoTouch = "触控不可用";
 #else
 constexpr Presentation kScreens[] = {
     {"Starting", "Please wait", kNeutral},
@@ -74,10 +87,20 @@ constexpr Presentation kScreens[] = {
 };
 constexpr Presentation kResetScreens[] = {
     {"Restoring factory settings", "Keep power connected", kGreeting},
-    {"Reset failed.\nHold 5s to retry", "Hold 5s to retry", kError},
+    {"Factory reset failed", "Tap Retry to try again", kError},
     {"Reset complete. Restarting", "Keep power connected", kNeutral},
 };
 constexpr const char *kPortalNotice = "Connect to device Wi-Fi\nhttp://192.168.4.1";
+constexpr const char *kSettings = "Setup";
+constexpr const char *kReset = "Factory reset";
+constexpr const char *kReturn = "Back";
+constexpr const char *kConfirmTitle = "Factory reset?";
+constexpr const char *kConfirmNotice =
+    "Clear this device's Wi-Fi, device credentials and volume, then restart.";
+constexpr const char *kConfirm = "Reset";
+constexpr const char *kCancel = "Cancel";
+constexpr const char *kRetry = "Retry";
+constexpr const char *kNoTouch = "Touch unavailable";
 #endif
 
 static_assert(sizeof(kScreens) / sizeof(kScreens[0]) == MYBOT_LCD_SCREEN_COUNT,
@@ -99,6 +122,18 @@ struct View {
     lv_obj_t *code;
     lv_obj_t *detail;
     lv_obj_t *notice;
+    lv_obj_t *settings_button;
+    lv_obj_t *touch_hint;
+    lv_obj_t *settings_overlay;
+    lv_obj_t *settings_menu;
+    lv_obj_t *settings_confirm;
+    lv_obj_t *retry_button;
+    lv_obj_t *gesture_button;
+    lv_point_t gesture_start;
+    SettingsPage settings_page;
+    bk7259_factory_reset_screen_t reset_screen;
+    bool gesture_cancelled;
+    bool touch_available;
     lv_timer_t *timer;
     mybot_lcd_content_t previous;
     bk7259_lcd_runtime_status_t runtime_status;
@@ -476,6 +511,227 @@ bool create_guide() {
     return s_view.divider && s_view.title && s_view.code && s_view.detail && s_view.notice;
 }
 
+void cancel_button_gesture(bool wait_release) {
+    s_view.gesture_button = nullptr;
+    s_view.gesture_cancelled = true;
+    lv_indev_t *input = lv_indev_active();
+    if (wait_release && input && lv_indev_get_type(input) == LV_INDEV_TYPE_POINTER) {
+        lv_indev_wait_release(input);
+    }
+}
+
+void show_settings(SettingsPage page) {
+    cancel_button_gesture(true);
+    s_view.settings_page = page;
+    set_hidden(s_view.settings_overlay, page == SettingsPage::Closed);
+    set_hidden(s_view.settings_menu, page != SettingsPage::Menu);
+    set_hidden(s_view.settings_confirm, page != SettingsPage::Confirm);
+}
+
+bool action_available(ButtonAction action) {
+    if (!s_view.touch_available) {
+        return false;
+    }
+    if (s_view.factory_reset) {
+        return action == ButtonAction::Retry && s_view.reset_screen == BK7259_FACTORY_RESET_FAILED;
+    }
+    switch (action) {
+    case ButtonAction::Settings:
+        return s_view.settings_page == SettingsPage::Closed;
+    case ButtonAction::Return:
+    case ButtonAction::ResetMenu:
+        return s_view.settings_page == SettingsPage::Menu;
+    case ButtonAction::Cancel:
+    case ButtonAction::Confirm:
+        return s_view.settings_page == SettingsPage::Confirm;
+    case ButtonAction::Retry:
+        return false;
+    }
+    return false;
+}
+
+void perform_button_action(ButtonAction action) {
+    switch (action) {
+    case ButtonAction::Settings:
+        show_settings(SettingsPage::Menu);
+        break;
+    case ButtonAction::ResetMenu:
+        show_settings(SettingsPage::Confirm);
+        break;
+    case ButtonAction::Return:
+    case ButtonAction::Cancel:
+        show_settings(SettingsPage::Closed);
+        break;
+    case ButtonAction::Confirm:
+    case ButtonAction::Retry:
+        /* Lock locally before posting. The owner may not publish its recovery
+         * snapshot until the next control tick; no second request can escape. */
+        bk7259_lvgl_view_show_factory_reset(BK7259_FACTORY_RESET_RESTORING);
+        bk7259_factory_reset_request();
+        break;
+    }
+}
+
+bool moved_too_far(const lv_point_t &point) {
+    const int32_t dx = point.x - s_view.gesture_start.x;
+    const int32_t dy = point.y - s_view.gesture_start.y;
+    return dx * dx + dy * dy > kTapSlop * kTapSlop;
+}
+
+void button_event(lv_event_t *event) {
+    const lv_event_code_t code = lv_event_get_code(event);
+    auto *button = static_cast<lv_obj_t *>(lv_event_get_current_target(event));
+    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL || code == LV_EVENT_DELETE) {
+        if (s_view.gesture_button == button) {
+            cancel_button_gesture(false);
+        }
+        return;
+    }
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED) {
+        return;
+    }
+    auto action =
+        static_cast<ButtonAction>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event)));
+    lv_indev_t *input = lv_indev_active();
+    if (!input || lv_indev_get_type(input) != LV_INDEV_TYPE_POINTER || !action_available(action)) {
+        cancel_button_gesture(false);
+        return;
+    }
+    lv_point_t point{};
+    lv_indev_get_point(input, &point);
+    if (code == LV_EVENT_PRESSED) {
+        s_view.gesture_button = button;
+        s_view.gesture_start = point;
+        s_view.gesture_cancelled = false;
+        return;
+    }
+    if (s_view.gesture_button != button) {
+        return;
+    }
+    if (moved_too_far(point)) {
+        s_view.gesture_cancelled = true;
+    }
+    if (code == LV_EVENT_RELEASED) {
+        lv_area_t bounds{};
+        lv_obj_get_coords(button, &bounds);
+        const bool valid = !s_view.gesture_cancelled && point.x >= bounds.x1 &&
+                           point.x <= bounds.x2 && point.y >= bounds.y1 && point.y <= bounds.y2;
+        cancel_button_gesture(true);
+        if (valid) {
+            perform_button_action(action);
+        }
+    }
+}
+
+lv_obj_t *make_ui_label(lv_obj_t *parent, int x, int y, int width, int height, const char *text,
+                        uint32_t ink) {
+    lv_obj_t *label = lv_label_create(parent);
+    if (!label) {
+        return nullptr;
+    }
+    prepare_object(label, x, y, width, height);
+    lv_obj_set_style_text_font(label, &mybot_lvgl_font_20, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(ink), 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text_static(label, text);
+    return label;
+}
+
+lv_obj_t *make_button(lv_obj_t *parent, int x, int y, int width, int height, const char *text,
+                      ButtonAction action, bool destructive = false) {
+    lv_obj_t *button = make_panel(parent, x, y, width, height, destructive ? 0x552b2c : 0x202a2b);
+    if (!button) {
+        return nullptr;
+    }
+    lv_obj_add_flag(button,
+                    static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+    lv_obj_set_style_border_width(button, 1, 0);
+    lv_obj_set_style_border_color(button, lv_color_hex(destructive ? kError : kTerminal), 0);
+    lv_obj_set_style_radius(button, 8, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(destructive ? 0x733b3c : 0x354849),
+                              LV_STATE_PRESSED);
+    lv_obj_set_style_opa(button, LV_OPA_40, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(button, button_event, LV_EVENT_ALL,
+                        reinterpret_cast<void *>(static_cast<uintptr_t>(action)));
+    if (!make_ui_label(button, 0, (height - mybot_lvgl_font_20.line_height) / 2, width,
+                       mybot_lvgl_font_20.line_height, text, kNeutral)) {
+        return nullptr;
+    }
+    return button;
+}
+
+void update_touch_controls() {
+    set_hidden(s_view.settings_button, s_view.factory_reset);
+    set_hidden(s_view.touch_hint, s_view.touch_available || s_view.factory_reset);
+    const bool failed = s_view.factory_reset && s_view.reset_screen == BK7259_FACTORY_RESET_FAILED;
+    set_hidden(s_view.retry_button, !failed);
+    if (s_view.touch_available) {
+        lv_obj_remove_state(s_view.settings_button, LV_STATE_DISABLED);
+        lv_obj_remove_state(s_view.retry_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(s_view.settings_button, LV_STATE_DISABLED);
+        lv_obj_add_state(s_view.retry_button, LV_STATE_DISABLED);
+    }
+    if (failed) {
+        set_text(s_view.notice, s_view.touch_available
+                                    ? kResetScreens[BK7259_FACTORY_RESET_FAILED].notice
+                                    : kNoTouch);
+    }
+}
+
+bool create_settings(int width, int height) {
+    s_view.settings_button =
+        make_button(s_view.root, width - 80, 12, 64, 48, kSettings, ButtonAction::Settings);
+    s_view.touch_hint = make_ui_label(s_view.root, width - 190, 70, 174, 30, kNoTouch, kMuted);
+    s_view.retry_button = make_button(s_view.root, (width - 184) / 2, (height - 56) / 2 + 72, 184,
+                                      56, kRetry, ButtonAction::Retry, true);
+    s_view.settings_overlay = make_panel(s_view.root, 0, 0, width, height, 0x000000, LV_OPA_90);
+    if (!s_view.settings_button || !s_view.touch_hint || !s_view.retry_button ||
+        !s_view.settings_overlay) {
+        return false;
+    }
+    lv_obj_add_flag(s_view.settings_overlay,
+                    static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+    constexpr int panel_width = 464;
+    constexpr int panel_height = 316;
+    s_view.settings_menu =
+        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - panel_height) / 2,
+                   panel_width, panel_height, 0x151b1d);
+    s_view.settings_confirm =
+        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - panel_height) / 2,
+                   panel_width, panel_height, 0x151b1d);
+    if (!s_view.settings_menu || !s_view.settings_confirm) {
+        return false;
+    }
+    lv_obj_t *panels[] = {s_view.settings_menu, s_view.settings_confirm};
+    for (auto *panel : panels) {
+        lv_obj_set_style_radius(panel, 12, 0);
+        lv_obj_set_style_border_width(panel, 1, 0);
+        lv_obj_set_style_border_color(panel, lv_color_hex(kTerminal), 0);
+    }
+    if (!make_ui_label(s_view.settings_menu, 24, 22, 416, 36, kSettings, kNeutral) ||
+        !make_button(s_view.settings_menu, 40, 92, 384, 64, kReset, ButtonAction::ResetMenu,
+                     true) ||
+        !make_button(s_view.settings_menu, 40, 204, 384, 56, kReturn, ButtonAction::Return) ||
+        !make_ui_label(s_view.settings_confirm, 24, 22, 416, 36, kConfirmTitle, kNeutral) ||
+        !make_button(s_view.settings_confirm, 32, 224, 184, 56, kCancel, ButtonAction::Cancel) ||
+        !make_button(s_view.settings_confirm, 248, 224, 184, 56, kConfirm, ButtonAction::Confirm,
+                     true)) {
+        return false;
+    }
+    lv_obj_t *description =
+        make_ui_label(s_view.settings_confirm, 32, 78, 400, 112, kConfirmNotice, kMuted);
+    if (!description) {
+        return false;
+    }
+    lv_obj_set_style_text_align(description, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_line_space(description, 6, 0);
+    show_settings(SettingsPage::Closed);
+    update_touch_controls();
+    return true;
+}
+
 } // namespace
 
 int mybot_lvgl_view_create(lv_display_t *display) {
@@ -499,10 +755,15 @@ int mybot_lvgl_view_create(lv_display_t *display) {
         mybot_lvgl_view_destroy();
         return -1;
     }
+    /* A drag beginning on artwork stays on that background until release;
+     * sliding into Settings must never become a fresh button press. */
+    lv_obj_add_flag(s_view.root,
+                    static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
     s_view.artwork = make_panel(s_view.root, (width - s_view.artwork_width) / 2,
                                 (height - s_view.artwork_height) / 2, s_view.artwork_width,
                                 s_view.artwork_height, kBackground, LV_OPA_TRANSP);
-    if (!s_view.artwork || !create_chrome() || !create_face() || !create_guide()) {
+    if (!s_view.artwork || !create_chrome() || !create_face() || !create_guide() ||
+        !create_settings(width, height)) {
         mybot_lvgl_view_destroy();
         return -1;
     }
@@ -618,9 +879,23 @@ void bk7259_lvgl_view_show_factory_reset(bk7259_factory_reset_screen_t screen) {
         return;
     }
     s_view.factory_reset = true;
+    s_view.reset_screen = screen;
+    show_settings(SettingsPage::Closed);
     show_guide(kResetScreens[screen]);
     /* Recovery is product-owned; do not retain phase/VP text from its session. */
     lv_label_set_text_static(s_view.terminal[2], "> state: factory_reset");
+    update_touch_controls();
+}
+
+void bk7259_lvgl_view_set_touch_available(bool available) {
+    if (!s_view.root || s_view.touch_available == available) {
+        return;
+    }
+    s_view.touch_available = available;
+    if (!available) {
+        show_settings(SettingsPage::Closed);
+    }
+    update_touch_controls();
 }
 
 void mybot_lvgl_view_destroy(void) {
