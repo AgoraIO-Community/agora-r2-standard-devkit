@@ -5,6 +5,7 @@
 #include "bk7259_expression.h"
 #include "bk7259_factory_reset.h"
 #include "bk7259_lcd.h"
+#include "bk7259_provision.h"
 #include "lvgl.h"
 #include <mybot/platform/mybot_lcd.h>
 
@@ -38,6 +39,14 @@ int bk7259_lvgl_view_replay_expression(bk7259_expression_t expression);
 /* Product-owned override; the LCD snapshot owner keeps SDK updates from
  * replacing it. Uses existing widgets/timer and borrows no external strings. */
 void bk7259_lvgl_view_show_factory_reset(bk7259_factory_reset_screen_t screen);
+/* Product-owned Wi-Fi setup override. Copies at most 32 SSID bytes; NONE
+ * releases the override and waits for the owner's newest ordinary snapshot.
+ * Factory reset has priority. Calls stay on the existing display owner. */
+void bk7259_lvgl_view_show_provision(bk7259_provision_screen_t screen, const char *ssid);
+/* Display-owner-only availability snapshot. Repeated values are a no-op.
+ * Loss of input cancels an armed button and closes ordinary settings layers;
+ * the product-owned recovery page remains visible and its retry is disabled. */
+void bk7259_lvgl_view_set_touch_available(bool available);
 void mybot_lvgl_view_destroy(void);
 
 #ifdef __cplusplus

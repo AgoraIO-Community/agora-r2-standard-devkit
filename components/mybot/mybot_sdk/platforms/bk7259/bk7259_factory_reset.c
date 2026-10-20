@@ -3,6 +3,7 @@
 #include "bk7259_wifi_internal.h"
 #include "bk7259_platform_log.h"
 
+#include <api/aosl_atomic.h>
 #include <easyflash.h>
 #include <stdint.h>
 #include <string.h>
@@ -11,6 +12,22 @@
 #define RESET_INTENT_KEY "mybot.factory_reset.v1"
 #define RESET_INTENT_MAGIC 0x4d425246U
 #define RESET_INTENT_VERSION 1U
+
+/* The UI can post before SDK attachment. Only the product owner consumes;
+ * network setup observes the same request without clearing cancellation. */
+static aosl_atomic_t s_factory_reset_requested;
+
+void bk7259_factory_reset_request(void) {
+    aosl_atomic_set(&s_factory_reset_requested, 1);
+}
+
+bool bk7259_factory_reset_requested(void) {
+    return aosl_atomic_read(&s_factory_reset_requested) != 0;
+}
+
+bool bk7259_factory_reset_take_request(void) {
+    return aosl_atomic_xchg(&s_factory_reset_requested, 0) != 0;
+}
 
 typedef struct {
     uint32_t magic;
@@ -98,7 +115,7 @@ int bk7259_factory_reset_begin(void) {
     if (pending == 1) {
         return 0;
     }
-    /* Only a new explicit long press may begin a reset when an invalid marker
+    /* Only a new explicit confirmation may begin a reset when an invalid marker
      * exists. Boot detects that error and waits for the user's new request. */
     if (write_intent() < 0) {
         return -1;

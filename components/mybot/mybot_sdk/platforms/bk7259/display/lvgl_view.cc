@@ -33,6 +33,20 @@ constexpr uint32_t kGreeting = 0xf1ca79;
 constexpr uint32_t kTerminal = 0x639589;
 constexpr uint32_t kMuted = 0xa0a6a3;
 constexpr uint32_t kError = 0xe57876;
+constexpr int kTapSlop = 10;
+
+enum class SettingsPage { Closed, Menu, Confirm, ConfirmProvision };
+enum class ButtonAction {
+    Settings,
+    Return,
+    ResetMenu,
+    ProvisionMenu,
+    Cancel,
+    Confirm,
+    Retry,
+    CancelProvision,
+    RetryProvision
+};
 
 struct Presentation {
     const char *title;
@@ -55,10 +69,35 @@ constexpr Presentation kScreens[] = {
 };
 constexpr Presentation kResetScreens[] = {
     {"正在恢复出厂设置", "请勿断电", kGreeting},
-    {"恢复失败，\n请长按重试", "长按5秒重试", kError},
+    {"恢复出厂失败", "轻触按钮重试", kError},
     {"恢复完成，正在重启", "请勿断电", kNeutral},
 };
 constexpr const char *kPortalNotice = "请连接设备热点\nhttp://192.168.4.1";
+constexpr const char *kSettings = "设置";
+constexpr const char *kReset = "恢复出厂";
+constexpr const char *kReturn = "返回";
+constexpr const char *kConfirmTitle = "恢复出厂？";
+constexpr const char *kConfirmNotice = "将清除本机Wi-Fi、设备凭据及音量，完成后重启";
+constexpr const char *kConfirm = "确认恢复";
+constexpr const char *kCancel = "取消";
+constexpr const char *kRetry = "重试";
+constexpr const char *kNoTouch = "触控不可用";
+constexpr const char *kProvision = "配网";
+constexpr const char *kProvisionConfirmTitle = "开始配网？";
+constexpr const char *kProvisionConfirmNotice =
+    "将结束当前会话。连接设备热点后，可在网页设置Wi-Fi。";
+constexpr const char *kProvisionConfirm = "开始配网";
+constexpr const char *kCancelProvision = "取消配网";
+constexpr const char *kRetryProvision = "重新配网";
+constexpr Presentation kProvisionScreens[] = {
+    {"", "", kNeutral},
+    {"正在准备配网", "正在结束当前会话", kGreeting},
+    {"Wi-Fi 配网", "http://192.168.4.1", kGreeting},
+    {"正在取消配网", "请稍候", kMuted},
+    {"正在连接Wi-Fi", "正在恢复网络连接", kNeutral},
+    {"配网失败", "请检查网络后重试", kError},
+    {"正在保存Wi-Fi", "正在完成网络设置", kNeutral},
+};
 #else
 constexpr Presentation kScreens[] = {
     {"Starting", "Please wait", kNeutral},
@@ -74,14 +113,43 @@ constexpr Presentation kScreens[] = {
 };
 constexpr Presentation kResetScreens[] = {
     {"Restoring factory settings", "Keep power connected", kGreeting},
-    {"Reset failed.\nHold 5s to retry", "Hold 5s to retry", kError},
+    {"Factory reset failed", "Tap Retry to try again", kError},
     {"Reset complete. Restarting", "Keep power connected", kNeutral},
 };
 constexpr const char *kPortalNotice = "Connect to device Wi-Fi\nhttp://192.168.4.1";
+constexpr const char *kSettings = "Setup";
+constexpr const char *kReset = "Factory reset";
+constexpr const char *kReturn = "Back";
+constexpr const char *kConfirmTitle = "Factory reset?";
+constexpr const char *kConfirmNotice =
+    "Clear this device's Wi-Fi, device credentials and volume, then restart.";
+constexpr const char *kConfirm = "Reset";
+constexpr const char *kCancel = "Cancel";
+constexpr const char *kRetry = "Retry";
+constexpr const char *kNoTouch = "Touch unavailable";
+constexpr const char *kProvision = "Wi-Fi setup";
+constexpr const char *kProvisionConfirmTitle = "Start Wi-Fi setup?";
+constexpr const char *kProvisionConfirmNotice =
+    "End the current conversation and set up Wi-Fi using the device hotspot.";
+constexpr const char *kProvisionConfirm = "Start setup";
+constexpr const char *kCancelProvision = "Cancel setup";
+constexpr const char *kRetryProvision = "Retry Wi-Fi setup";
+constexpr Presentation kProvisionScreens[] = {
+    {"", "", kNeutral},
+    {"Preparing Wi-Fi setup", "Ending the current conversation", kGreeting},
+    {"Wi-Fi setup", "http://192.168.4.1", kGreeting},
+    {"Cancelling Wi-Fi setup", "Please wait", kMuted},
+    {"Connecting to Wi-Fi", "Restoring network connection", kNeutral},
+    {"Wi-Fi setup failed", "Check the network and retry", kError},
+    {"Saving Wi-Fi", "Finishing network setup", kNeutral},
+};
 #endif
 
 static_assert(sizeof(kScreens) / sizeof(kScreens[0]) == MYBOT_LCD_SCREEN_COUNT,
               "Every SDK workflow screen needs a presentation");
+static_assert(sizeof(kProvisionScreens) / sizeof(kProvisionScreens[0]) ==
+                  BK7259_PROVISION_FINISHING + 1,
+              "Every provisioning phase needs a presentation");
 
 struct View {
     lv_obj_t *root;
@@ -99,6 +167,31 @@ struct View {
     lv_obj_t *code;
     lv_obj_t *detail;
     lv_obj_t *notice;
+    lv_obj_t *settings_button;
+    lv_obj_t *touch_hint;
+    lv_obj_t *settings_overlay;
+    lv_obj_t *settings_menu;
+    lv_obj_t *settings_confirm;
+    lv_obj_t *confirm_title;
+    lv_obj_t *confirm_notice;
+    lv_obj_t *confirm_button;
+    lv_obj_t *provision_menu_button;
+    lv_obj_t *provision_page;
+    lv_obj_t *provision_title;
+    lv_obj_t *provision_detail;
+    lv_obj_t *provision_notice;
+    lv_obj_t *provision_divider;
+    lv_obj_t *provision_cancel_button;
+    lv_obj_t *provision_retry_button;
+    lv_obj_t *retry_button;
+    lv_obj_t *gesture_button;
+    lv_point_t gesture_start;
+    SettingsPage settings_page;
+    bk7259_factory_reset_screen_t reset_screen;
+    bk7259_provision_screen_t provision_screen;
+    char provision_page_ssid[kSsidCapacity];
+    bool gesture_cancelled;
+    bool touch_available;
     lv_timer_t *timer;
     mybot_lcd_content_t previous;
     bk7259_lcd_runtime_status_t runtime_status;
@@ -341,6 +434,7 @@ void timer_callback(lv_timer_t *) {
 void show_face(bk7259_expression_t expression) {
     const bool was_visible = s_view.face_visible;
     set_hidden(s_view.guide, true);
+    set_hidden(s_view.provision_page, true);
     set_hidden(s_view.face, false);
     set_hidden(s_view.cursor, false);
     s_view.face_visible = true;
@@ -374,6 +468,7 @@ void show_guide(const Presentation &presentation) {
     set_hidden(s_view.face, true);
     set_hidden(s_view.cursor, true);
     set_hidden(s_view.guide, false);
+    set_hidden(s_view.provision_page, true);
     set_hidden(s_view.code, true);
     set_hidden(s_view.detail, true);
     set_text(s_view.title, presentation.title);
@@ -476,6 +571,337 @@ bool create_guide() {
     return s_view.divider && s_view.title && s_view.code && s_view.detail && s_view.notice;
 }
 
+bool create_provision_page() {
+    s_view.provision_page = make_panel(s_view.artwork, 0, 0, s_view.artwork_width,
+                                       s_view.artwork_height, kBackground, LV_OPA_TRANSP);
+    if (!s_view.provision_page) {
+        return false;
+    }
+    s_view.provision_divider =
+        make_artwork_panel(s_view.provision_page, 104, 292, 816, 2, kNeutral);
+    s_view.provision_title =
+        make_label(s_view.provision_page, 72, 330, 880, 100, &mybot_lvgl_font_20, kNeutral);
+    s_view.provision_detail =
+        make_label(s_view.provision_page, 72, 450, 880, 135, &mybot_lvgl_font_20, kNeutral);
+    s_view.provision_notice =
+        make_label(s_view.provision_page, 72, 620, 880, 90, &mybot_lvgl_font_20, kMuted);
+    if (!s_view.provision_divider || !s_view.provision_title || !s_view.provision_detail ||
+        !s_view.provision_notice) {
+        return false;
+    }
+    set_hidden(s_view.provision_page, true);
+    return true;
+}
+
+void cancel_button_gesture(bool wait_release) {
+    s_view.gesture_button = nullptr;
+    s_view.gesture_cancelled = true;
+    lv_indev_t *input = lv_indev_active();
+    if (wait_release && input && lv_indev_get_type(input) == LV_INDEV_TYPE_POINTER) {
+        lv_indev_wait_release(input);
+    }
+}
+
+void update_touch_controls();
+
+bool provision_in_progress() {
+    return bk7259_provision_busy() || (s_view.provision_screen != BK7259_PROVISION_NONE &&
+                                       s_view.provision_screen != BK7259_PROVISION_FAILED);
+}
+
+void show_settings(SettingsPage page) {
+    cancel_button_gesture(true);
+    s_view.settings_page = page;
+    set_hidden(s_view.settings_overlay, page == SettingsPage::Closed);
+    set_hidden(s_view.settings_menu, page != SettingsPage::Menu);
+    const bool provision = page == SettingsPage::ConfirmProvision;
+    set_hidden(s_view.settings_confirm, page != SettingsPage::Confirm && !provision);
+    if (page == SettingsPage::Confirm || provision) {
+        set_text(s_view.confirm_title, provision ? kProvisionConfirmTitle : kConfirmTitle);
+        set_text(s_view.confirm_notice, provision ? kProvisionConfirmNotice : kConfirmNotice);
+        set_text(lv_obj_get_child(s_view.confirm_button, 0),
+                 provision ? kProvisionConfirm : kConfirm);
+        lv_obj_set_style_bg_color(s_view.confirm_button,
+                                  lv_color_hex(provision ? 0x202a2b : 0x552b2c), 0);
+        lv_obj_set_style_bg_color(s_view.confirm_button,
+                                  lv_color_hex(provision ? 0x354849 : 0x733b3c), LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(s_view.confirm_button,
+                                      lv_color_hex(provision ? kTerminal : kError), 0);
+    }
+    update_touch_controls();
+}
+
+bool action_available(ButtonAction action) {
+    if (!s_view.touch_available) {
+        return false;
+    }
+    if (s_view.factory_reset) {
+        return action == ButtonAction::Retry && s_view.reset_screen == BK7259_FACTORY_RESET_FAILED;
+    }
+    switch (action) {
+    case ButtonAction::Settings:
+        return s_view.settings_page == SettingsPage::Closed;
+    case ButtonAction::Return:
+    case ButtonAction::ResetMenu:
+        return s_view.settings_page == SettingsPage::Menu;
+    case ButtonAction::ProvisionMenu:
+        return s_view.settings_page == SettingsPage::Menu && !provision_in_progress();
+    case ButtonAction::Cancel:
+        return s_view.settings_page == SettingsPage::Confirm ||
+               s_view.settings_page == SettingsPage::ConfirmProvision;
+    case ButtonAction::Confirm:
+        return s_view.settings_page == SettingsPage::Confirm ||
+               (s_view.settings_page == SettingsPage::ConfirmProvision && !provision_in_progress());
+    case ButtonAction::Retry:
+        return false;
+    case ButtonAction::CancelProvision:
+        return s_view.settings_page == SettingsPage::Closed &&
+               (s_view.provision_screen == BK7259_PROVISION_PREPARING ||
+                s_view.provision_screen == BK7259_PROVISION_ACTIVE);
+    case ButtonAction::RetryProvision:
+        return s_view.settings_page == SettingsPage::Closed &&
+               s_view.provision_screen == BK7259_PROVISION_FAILED && !provision_in_progress();
+    }
+    return false;
+}
+
+void perform_button_action(ButtonAction action) {
+    switch (action) {
+    case ButtonAction::Settings:
+        show_settings(SettingsPage::Menu);
+        break;
+    case ButtonAction::ResetMenu:
+        show_settings(SettingsPage::Confirm);
+        break;
+    case ButtonAction::ProvisionMenu:
+        show_settings(SettingsPage::ConfirmProvision);
+        break;
+    case ButtonAction::Return:
+    case ButtonAction::Cancel:
+        show_settings(SettingsPage::Closed);
+        break;
+    case ButtonAction::Confirm:
+        if (s_view.settings_page == SettingsPage::ConfirmProvision) {
+            if (bk7259_provision_request()) {
+                show_settings(SettingsPage::Closed);
+                bk7259_lvgl_view_show_provision(BK7259_PROVISION_PREPARING, nullptr);
+            }
+            break;
+        }
+        [[fallthrough]];
+    case ButtonAction::Retry:
+        /* Lock locally before posting. The owner may not publish its recovery
+         * snapshot until the next control tick; no second request can escape. */
+        bk7259_lvgl_view_show_factory_reset(BK7259_FACTORY_RESET_RESTORING);
+        bk7259_factory_reset_request();
+        break;
+    case ButtonAction::CancelProvision:
+        if (bk7259_provision_cancel()) {
+            bk7259_lvgl_view_show_provision(BK7259_PROVISION_CANCELLING, nullptr);
+        }
+        break;
+    case ButtonAction::RetryProvision:
+        if (bk7259_provision_request()) {
+            bk7259_lvgl_view_show_provision(BK7259_PROVISION_PREPARING, nullptr);
+        }
+        break;
+    }
+}
+
+bool moved_too_far(const lv_point_t &point) {
+    const int32_t dx = point.x - s_view.gesture_start.x;
+    const int32_t dy = point.y - s_view.gesture_start.y;
+    return dx * dx + dy * dy > kTapSlop * kTapSlop;
+}
+
+void button_event(lv_event_t *event) {
+    const lv_event_code_t code = lv_event_get_code(event);
+    auto *button = static_cast<lv_obj_t *>(lv_event_get_current_target(event));
+    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL || code == LV_EVENT_DELETE) {
+        if (s_view.gesture_button == button) {
+            cancel_button_gesture(false);
+        }
+        return;
+    }
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED) {
+        return;
+    }
+    auto action =
+        static_cast<ButtonAction>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event)));
+    lv_indev_t *input = lv_indev_active();
+    if (!input || lv_indev_get_type(input) != LV_INDEV_TYPE_POINTER || !action_available(action)) {
+        cancel_button_gesture(false);
+        return;
+    }
+    lv_point_t point{};
+    lv_indev_get_point(input, &point);
+    if (code == LV_EVENT_PRESSED) {
+        s_view.gesture_button = button;
+        s_view.gesture_start = point;
+        s_view.gesture_cancelled = false;
+        return;
+    }
+    if (s_view.gesture_button != button) {
+        return;
+    }
+    if (moved_too_far(point)) {
+        s_view.gesture_cancelled = true;
+    }
+    if (code == LV_EVENT_RELEASED) {
+        lv_area_t bounds{};
+        lv_obj_get_coords(button, &bounds);
+        const bool valid = !s_view.gesture_cancelled && point.x >= bounds.x1 &&
+                           point.x <= bounds.x2 && point.y >= bounds.y1 && point.y <= bounds.y2;
+        cancel_button_gesture(true);
+        if (valid) {
+            perform_button_action(action);
+        }
+    }
+}
+
+lv_obj_t *make_ui_label(lv_obj_t *parent, int x, int y, int width, int height, const char *text,
+                        uint32_t ink) {
+    lv_obj_t *label = lv_label_create(parent);
+    if (!label) {
+        return nullptr;
+    }
+    prepare_object(label, x, y, width, height);
+    lv_obj_set_style_text_font(label, &mybot_lvgl_font_20, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(ink), 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text_static(label, text);
+    return label;
+}
+
+lv_obj_t *make_button(lv_obj_t *parent, int x, int y, int width, int height, const char *text,
+                      ButtonAction action, bool destructive = false) {
+    lv_obj_t *button = make_panel(parent, x, y, width, height, destructive ? 0x552b2c : 0x202a2b);
+    if (!button) {
+        return nullptr;
+    }
+    lv_obj_add_flag(button,
+                    static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+    lv_obj_set_style_border_width(button, 1, 0);
+    lv_obj_set_style_border_color(button, lv_color_hex(destructive ? kError : kTerminal), 0);
+    lv_obj_set_style_radius(button, 8, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(destructive ? 0x733b3c : 0x354849),
+                              LV_STATE_PRESSED);
+    lv_obj_set_style_opa(button, LV_OPA_40, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(button, button_event, LV_EVENT_ALL,
+                        reinterpret_cast<void *>(static_cast<uintptr_t>(action)));
+    if (!make_ui_label(button, 0, (height - mybot_lvgl_font_20.line_height) / 2, width,
+                       mybot_lvgl_font_20.line_height, text, kNeutral)) {
+        return nullptr;
+    }
+    return button;
+}
+
+void update_touch_controls() {
+    set_hidden(s_view.settings_button, s_view.factory_reset);
+    set_hidden(s_view.touch_hint, s_view.touch_available || s_view.factory_reset);
+    const bool failed = s_view.factory_reset && s_view.reset_screen == BK7259_FACTORY_RESET_FAILED;
+    set_hidden(s_view.retry_button, !failed);
+    const bool setup_cancellable =
+        !s_view.factory_reset && (s_view.provision_screen == BK7259_PROVISION_PREPARING ||
+                                  s_view.provision_screen == BK7259_PROVISION_ACTIVE);
+    const bool setup_failed =
+        !s_view.factory_reset && s_view.provision_screen == BK7259_PROVISION_FAILED;
+    set_hidden(s_view.provision_cancel_button, !setup_cancellable);
+    set_hidden(s_view.provision_retry_button, !setup_failed);
+    if (s_view.touch_available) {
+        lv_obj_remove_state(s_view.settings_button, LV_STATE_DISABLED);
+        lv_obj_remove_state(s_view.retry_button, LV_STATE_DISABLED);
+        lv_obj_remove_state(s_view.provision_cancel_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(s_view.settings_button, LV_STATE_DISABLED);
+        lv_obj_add_state(s_view.retry_button, LV_STATE_DISABLED);
+        lv_obj_add_state(s_view.provision_cancel_button, LV_STATE_DISABLED);
+    }
+    const bool disable_provision = !s_view.touch_available || provision_in_progress();
+    lv_obj_t *start_buttons[] = {s_view.provision_menu_button, s_view.provision_retry_button};
+    for (auto *button : start_buttons) {
+        if (disable_provision) {
+            lv_obj_add_state(button, LV_STATE_DISABLED);
+        } else {
+            lv_obj_remove_state(button, LV_STATE_DISABLED);
+        }
+    }
+    if (!s_view.touch_available ||
+        (s_view.settings_page == SettingsPage::ConfirmProvision && disable_provision)) {
+        lv_obj_add_state(s_view.confirm_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_remove_state(s_view.confirm_button, LV_STATE_DISABLED);
+    }
+    if (failed) {
+        set_text(s_view.notice, s_view.touch_available
+                                    ? kResetScreens[BK7259_FACTORY_RESET_FAILED].notice
+                                    : kNoTouch);
+    }
+}
+
+bool create_settings(int width, int height) {
+    s_view.settings_button =
+        make_button(s_view.root, width - 80, 12, 64, 48, kSettings, ButtonAction::Settings);
+    s_view.touch_hint = make_ui_label(s_view.root, width - 190, 70, 174, 30, kNoTouch, kMuted);
+    s_view.retry_button = make_button(s_view.root, (width - 184) / 2, (height - 56) / 2 + 72, 184,
+                                      56, kRetry, ButtonAction::Retry, true);
+    s_view.provision_cancel_button =
+        make_button(s_view.root, (width - 224) / 2, height - 92, 224, 56, kCancelProvision,
+                    ButtonAction::CancelProvision);
+    s_view.provision_retry_button = make_button(s_view.root, (width - 224) / 2, height - 92, 224,
+                                                56, kRetryProvision, ButtonAction::RetryProvision);
+    s_view.settings_overlay = make_panel(s_view.root, 0, 0, width, height, 0x000000, LV_OPA_90);
+    if (!s_view.settings_button || !s_view.touch_hint || !s_view.retry_button ||
+        !s_view.provision_cancel_button || !s_view.provision_retry_button ||
+        !s_view.settings_overlay) {
+        return false;
+    }
+    lv_obj_add_flag(s_view.settings_overlay,
+                    static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+    constexpr int panel_width = 464;
+    constexpr int panel_height = 316;
+    s_view.settings_menu =
+        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - panel_height) / 2,
+                   panel_width, panel_height, 0x151b1d);
+    s_view.settings_confirm =
+        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - panel_height) / 2,
+                   panel_width, panel_height, 0x151b1d);
+    if (!s_view.settings_menu || !s_view.settings_confirm) {
+        return false;
+    }
+    lv_obj_t *panels[] = {s_view.settings_menu, s_view.settings_confirm};
+    for (auto *panel : panels) {
+        lv_obj_set_style_radius(panel, 12, 0);
+        lv_obj_set_style_border_width(panel, 1, 0);
+        lv_obj_set_style_border_color(panel, lv_color_hex(kTerminal), 0);
+    }
+    s_view.provision_menu_button =
+        make_button(s_view.settings_menu, 40, 70, 384, 56, kProvision, ButtonAction::ProvisionMenu);
+    s_view.confirm_title =
+        make_ui_label(s_view.settings_confirm, 24, 22, 416, 36, kConfirmTitle, kNeutral);
+    s_view.confirm_button = make_button(s_view.settings_confirm, 248, 224, 184, 56, kConfirm,
+                                        ButtonAction::Confirm, true);
+    if (!s_view.provision_menu_button || !s_view.confirm_title || !s_view.confirm_button ||
+        !make_ui_label(s_view.settings_menu, 24, 22, 416, 36, kSettings, kNeutral) ||
+        !make_button(s_view.settings_menu, 40, 142, 384, 56, kReset, ButtonAction::ResetMenu,
+                     true) ||
+        !make_button(s_view.settings_menu, 40, 218, 384, 56, kReturn, ButtonAction::Return) ||
+        !make_button(s_view.settings_confirm, 32, 224, 184, 56, kCancel, ButtonAction::Cancel)) {
+        return false;
+    }
+    s_view.confirm_notice =
+        make_ui_label(s_view.settings_confirm, 32, 78, 400, 112, kConfirmNotice, kMuted);
+    if (!s_view.confirm_notice) {
+        return false;
+    }
+    lv_obj_set_style_text_align(s_view.confirm_notice, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_line_space(s_view.confirm_notice, 6, 0);
+    show_settings(SettingsPage::Closed);
+    update_touch_controls();
+    return true;
+}
+
 } // namespace
 
 int mybot_lvgl_view_create(lv_display_t *display) {
@@ -499,10 +925,15 @@ int mybot_lvgl_view_create(lv_display_t *display) {
         mybot_lvgl_view_destroy();
         return -1;
     }
+    /* A drag beginning on artwork stays on that background until release;
+     * sliding into Settings must never become a fresh button press. */
+    lv_obj_add_flag(s_view.root,
+                    static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
     s_view.artwork = make_panel(s_view.root, (width - s_view.artwork_width) / 2,
                                 (height - s_view.artwork_height) / 2, s_view.artwork_width,
                                 s_view.artwork_height, kBackground, LV_OPA_TRANSP);
-    if (!s_view.artwork || !create_chrome() || !create_face() || !create_guide()) {
+    if (!s_view.artwork || !create_chrome() || !create_face() || !create_guide() ||
+        !create_provision_page() || !create_settings(width, height)) {
         mybot_lvgl_view_destroy();
         return -1;
     }
@@ -555,6 +986,15 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content, const char *ssid
         !s_view.has_content || normalized.indicators != s_view.previous.indicators ||
         copied_status.in_conversation != s_view.runtime_status.in_conversation ||
         std::strcmp(copied_status.state, s_view.runtime_status.state) != 0;
+    if (s_view.provision_screen != BK7259_PROVISION_NONE) {
+        /* Keep the newest borrowed SDK data, but never let a delayed ordinary
+         * snapshot erase the local PREPARING/CANCELLING acknowledgement. */
+        s_view.previous = normalized;
+        s_view.runtime_status = copied_status;
+        std::memcpy(s_view.provisioning_ssid, copied_ssid, sizeof(s_view.provisioning_ssid));
+        s_view.has_content = true;
+        return;
+    }
     if (!workflow_changed && !status_changed) {
         return;
     }
@@ -593,6 +1033,7 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content, const char *ssid
 
 int bk7259_lvgl_view_show_expression(bk7259_expression_t expression) {
     if (!s_view.root || !s_view.has_content || s_view.factory_reset ||
+        s_view.provision_screen != BK7259_PROVISION_NONE ||
         (s_view.previous.screen != MYBOT_LCD_SCREEN_READY &&
          s_view.previous.screen != MYBOT_LCD_SCREEN_IN_CONVERSATION) ||
         expression < BK7259_EXPRESSION_NEUTRAL || expression >= BK7259_EXPRESSION_COUNT)
@@ -604,6 +1045,7 @@ int bk7259_lvgl_view_show_expression(bk7259_expression_t expression) {
 
 int bk7259_lvgl_view_replay_expression(bk7259_expression_t expression) {
     if (!s_view.root || !s_view.has_content || s_view.factory_reset ||
+        s_view.provision_screen != BK7259_PROVISION_NONE ||
         (s_view.previous.screen != MYBOT_LCD_SCREEN_READY &&
          s_view.previous.screen != MYBOT_LCD_SCREEN_IN_CONVERSATION) ||
         expression < BK7259_EXPRESSION_NEUTRAL || expression >= BK7259_EXPRESSION_COUNT)
@@ -618,9 +1060,81 @@ void bk7259_lvgl_view_show_factory_reset(bk7259_factory_reset_screen_t screen) {
         return;
     }
     s_view.factory_reset = true;
+    s_view.reset_screen = screen;
+    show_settings(SettingsPage::Closed);
     show_guide(kResetScreens[screen]);
     /* Recovery is product-owned; do not retain phase/VP text from its session. */
     lv_label_set_text_static(s_view.terminal[2], "> state: factory_reset");
+    update_touch_controls();
+}
+
+void bk7259_lvgl_view_show_provision(bk7259_provision_screen_t screen, const char *ssid) {
+    if (!s_view.root || s_view.factory_reset || screen < BK7259_PROVISION_NONE ||
+        screen > BK7259_PROVISION_FINISHING) {
+        return;
+    }
+    /* The owner's ACTIVE snapshot may race an accepted cancel. The atomic
+     * mailbox keeps cancellation authoritative until teardown has completed. */
+    if ((screen == BK7259_PROVISION_ACTIVE || screen == BK7259_PROVISION_PREPARING) &&
+        bk7259_provision_abort_reason() == BK7259_PROVISION_CANCELLED) {
+        screen = BK7259_PROVISION_CANCELLING;
+    }
+    if (s_view.provision_screen != screen) {
+        cancel_button_gesture(true);
+    }
+    s_view.provision_screen = screen;
+    if (screen == BK7259_PROVISION_NONE) {
+        set_hidden(s_view.provision_page, true);
+        s_view.has_content = false;
+        /* The override replaced terminal[2] with a static setup label. Even an
+         * unchanged READY/conversation snapshot must restore its cached text. */
+        s_view.state_line[0] = '\0';
+        update_touch_controls();
+        return;
+    }
+    if (screen == BK7259_PROVISION_PREPARING) {
+        s_view.provision_page_ssid[0] = '\0';
+    }
+    if (ssid) {
+        std::snprintf(s_view.provision_page_ssid, sizeof(s_view.provision_page_ssid), "%.*s",
+                      static_cast<int>(sizeof(s_view.provision_page_ssid) - 1), ssid);
+    }
+    s_view.face_visible = false;
+    s_view.transitioning = false;
+    lv_obj_set_y(s_view.actor, 0);
+    update_terminal(BK7259_EXPRESSION_NEUTRAL);
+    set_hidden(s_view.face, true);
+    set_hidden(s_view.cursor, true);
+    set_hidden(s_view.guide, true);
+    set_hidden(s_view.provision_page, false);
+    const Presentation &presentation = kProvisionScreens[screen];
+    set_text(s_view.provision_title, presentation.title);
+    set_text(s_view.provision_notice, presentation.notice);
+    lv_label_set_text_static(s_view.provision_detail, s_view.provision_page_ssid);
+    set_hidden(s_view.provision_detail,
+               screen != BK7259_PROVISION_ACTIVE || !s_view.provision_page_ssid[0]);
+    lv_obj_set_style_text_color(s_view.provision_title, lv_color_hex(presentation.ink), 0);
+    lv_obj_set_style_text_color(s_view.signature, lv_color_hex(presentation.ink), 0);
+    lv_obj_set_style_bg_color(s_view.provision_divider, lv_color_hex(presentation.ink), 0);
+    for (auto *line : s_view.terminal) {
+        lv_obj_set_style_text_color(line, lv_color_hex(kTerminal), 0);
+    }
+    s_view.current_ink = 0xffffffffu;
+    s_view.current_terminal = kTerminal;
+    lv_label_set_text_static(s_view.terminal[2], "> state: wifi_setup");
+    update_touch_controls();
+    update_timer();
+}
+
+void bk7259_lvgl_view_set_touch_available(bool available) {
+    if (!s_view.root || s_view.touch_available == available) {
+        return;
+    }
+    s_view.touch_available = available;
+    if (!available) {
+        show_settings(SettingsPage::Closed);
+    }
+    update_touch_controls();
 }
 
 void mybot_lvgl_view_destroy(void) {

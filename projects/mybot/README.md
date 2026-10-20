@@ -10,10 +10,13 @@ device-service control, bidirectional RTC audio, local provisioning and UI, and
 optional one-way encoded video uplink in one conversation. Video is enabled by default.
 
 The `agora-r2-standard-devkit` firmware targets the Yunqu V1.0 R2 board with a
-GC9503CV MIPI LCD and KEY1/GPIO47. It uses three analog microphone
-inputs and an appended digital AEC reference. The product lives in the
+GC9503CV MIPI LCD and KEY1/GPIO47. The physical button provides short-press conversation
+control and hardware long-press power on/off; settings provide touchscreen Wi-Fi setup and factory reset.
+It uses three analog microphone inputs and an appended digital AEC reference. The product lives in the
 parent repository; official BK dependencies receive versioned patches in isolated build copies.
 Its normal UI renders a gray pixel-glasses face.
+
+User instructions: [R2 operation manual with UI screenshots (Chinese PDF)](../../docs/R2_操作手册.pdf).
 
 The vendored SDK pins [agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0)
 at commit `32ac74bc59cb72db70e9a68337753561b59b13d0`, with the existing HTTPS request/response body logging
@@ -132,40 +135,58 @@ initializes AOSL, and prepares the product-owned LCD, network manager, and key,
 in that order.
 It checks `mybot.factory_reset.v1` before platform registration, Wi-Fi setup, or
 SDK startup: a valid marker resumes reset; a reported marker read/validation
-error displays reset failure and waits for a fresh long press.
+error displays reset failure and waits for explicit touchscreen retry.
 
 Without a reset marker, AP registers the platform and tries saved Wi-Fi. Missing
 or unusable credentials lead to APSTA provisioning at `http://192.168.4.1/`.
 After STA obtains IPv4 and the portal stops, the task starts the SDK for device
 authentication and pairing as needed. Pairing codes are entered in the web
-console. The product loop polls SDK state and handles key requests.
+console. The product loop polls SDK state and handles touchscreen setup/reset and key requests.
 
-Network/SDK failures retain the prepared key and display for factory-reset
-requests. Identity, platform-preparation, or descriptor-registration failures
+Network/SDK failures retain the prepared key and display for Wi-Fi setup or factory-reset
+requests. Identity or platform-preparation failures
 can exit startup; that recovery path is not guaranteed for those earlier errors.
-Descriptor-registration failure shuts down the prepared platform resources.
+Descriptor-registration failure retains settings and retries registration after a successful setup.
 
-## 5. Keys and Factory Reset
+## 5. Keys, Wi-Fi Setup and Factory Reset
 
 | KEY1/GPIO47 action | Behavior |
 | --- | --- |
 | Short press and release | `READY`: start conversation; `IN_CONVERSATION`: stop conversation; other states ignore it |
-| Hold for 5 seconds | Request factory reset once; release does not toggle conversation |
+| Long press | Current hardware powers on/off; factory reset uses touchscreen settings |
 | Already held at platform preparation | Release first to arm a new gesture |
 
-The active-low key uses 20 ms scanning and two-sample debounce. Long press
-works after successful platform preparation, including provisioning and before
-SDK key attachment. A key held while the platform prepares must first be
-released to arm a new gesture. Five seconds is the gesture threshold; actual
-completion also depends on SDK and driver teardown. The CEN button remains
+Firmware `KEY_SHORT_PRESS_LIMIT_MS=5000` suppresses conversation events for a prolonged
+press and its release. Hardware defines the power-button timing independently of this filter.
+
+The active-low key uses 20 ms scanning and two-sample debounce. A key held while
+the platform prepares must first be released to arm a new gesture. Factory reset
+uses Settings at the upper right, Factory reset and a separate Confirm/Cancel dialog.
+Opening or cancelling this dialog keeps the current conversation running. The CEN button remains
 hardware reset only; double-press, volume, and other key actions are not registered.
+
+Settings → Wi-Fi setup → Start setup changes Wi-Fi independently of factory reset.
+Opening or cancelling confirmation leaves the conversation running. After confirmation,
+the product owner stops the SDK and requires both `STOPPED` and `!mybot_is_running()`
+before starting APSTA. The screen shows the `mybot-xxxx` hotspot and
+`http://192.168.4.1`. Connect a phone to that hotspot and submit the new network in the portal.
+The candidate must obtain IPv4 before credentials are committed. After the portal and
+SoftAP stop, the owner restarts the SDK without rebooting. Device authentication, ID,
+server binding and saved volume are preserved.
+
+Cancel setup is accepted before saving new Wi-Fi credentials starts, including the connection
+attempt after clicking Connect in the web page. It closes the portal,
+scan and candidate STA, then tries the saved network once and restarts the SDK on success.
+No saved network or a failed reconnect leaves Retry Wi-Fi setup and Settings available;
+it does not automatically reopen the hotspot. Cancellation is rejected once saving starts.
+Factory reset takes priority throughout; failed network teardown retains ownership for retry.
 
 Normal conversation hangup stops local video/RTC and clears session PCM before
 publishing READY and sending one HTTP(S) stop notification. Notification failure
 does not restart media or retry. Stop notifications and binding polls run on the separate
 `service_mpq`, so a slow background request does not block the next conversation trigger.
 
-The key timer posts requests; `ap_main.c` executes reset in the product task.
+The touchscreen confirmation posts one coalescing request; `ap_main.c` executes reset in the product task.
 Its order is:
 
 1. Show restoring status and persist `mybot.factory_reset.v1`.
@@ -181,10 +202,10 @@ the UID-derived device ID stays the same and no server-side unbind request is
 sent. The next SDK startup uses the default speaker volume and registers/authenticates again according to
 the server's retained binding state.
 
-Failure displays a bilingual retry page and waits for a fresh five-second hold.
+Failure displays a bilingual page with a Retry button and waits for a new tap.
 Incomplete cleanup keeps the established marker; a final marker-deletion error
 attempts to restore it. Boot resumes valid pending resets before starting the
-network or SDK. A reported marker error requires an explicit new long press.
+network or SDK. A reported marker error requires explicit touchscreen retry.
 The marker is written when the product task processes the request; loss of
 power before that point does not establish a pending reset. Failed network
 teardown keeps its resources owned for retry. Network cancellation returns control to the owner, which verifies all
@@ -194,12 +215,13 @@ failed/rebooting pages across SDK stop/detach.
 Module declarations are independent of the platform abstraction:
 
 - `platforms/bk7259/include/bk7259_key.h`: conversation request and event dispatch.
+- `platforms/bk7259/include/bk7259_provision.h`: independent setup/cancel mailbox and presentation.
 - `platforms/bk7259/include/bk7259_factory_reset.h`: reset requests, persistent
   intent/cleanup, network teardown, and reset display phases.
 - `platforms/bk7259/include/mybot_bk7259_platform.h`: platform registration and
   preparation abstraction.
 
-These paths are relative to `components/mybot/mybot_sdk/`. The first two APIs
+These paths are relative to `components/mybot/mybot_sdk/`. The product APIs
 use `bk7259_*` names. Reset storage is implemented in `bk7259_factory_reset.c`;
 it does not erase the whole EasyFlash environment.
 
@@ -428,7 +450,9 @@ configuration cannot retain stale values.
 
 The user confirmed R2 LCD bring-up, conversation start/stop without blanking,
 the previous dual-analog-microphone/ADC2-reference audio/AEC, and factory reset
-work on hardware. The current three-input audio configuration awaits device testing.
+work on hardware. Touchscreen reset with the GPIO43 correction and independent Wi-Fi setup
+also passed user device testing. The current hardware's long-press power on/off behavior was
+confirmed by the user. The current three-input audio configuration awaits device testing.
 The user confirmed basic process-gray pixel-glasses rendering. The restored
 four-line layout and complete 23-expression set await hardware validation.
 The checklist below describes regression coverage; it does not imply every
@@ -454,11 +478,15 @@ Video-specific checks require a build with `CONFIG_MYBOT_VIDEO=y`.
 - [ ] Test wrapped `audio.adjust_volume` with positive, negative and zero deltas, including -100 and 100; results must clamp to 0–100, and repeating a command ID must not adjust the volume again.
 - [ ] Verify phase/voiceprint text appears only during a real conversation, voiceprint-only updates preserve the face, and hangup removes session fields and cancels pending expression deadlines.
 - [ ] Verify both languages, web-console pairing instructions, round-bezel clearance, and factory-reset display priority.
-- [ ] A hold below 5 seconds performs only the state-appropriate short action on release; a 5-second hold resets once and suppresses that action.
-- [ ] Hold the key across reboot, then release; confirm a new gesture is required before another reset.
+- [ ] Verify hardware long-press power on/off and state-appropriate short-press conversation actions; factory reset remains in touchscreen settings.
+- [ ] Hold the key across reboot, then release; confirm a new gesture is required before another conversation action.
+- [ ] Open or cancel setup/reset confirmation during a conversation; neither action stops it or leaks a tap through two pages.
+- [ ] Start Wi-Fi setup while idle and in conversation; APSTA must wait for SDK shutdown, and successful setup must restart services without rebooting or clearing identity, binding or volume.
+- [ ] Cancel before saving new Wi-Fi starts and reconnect to the original network once; bad credentials, no saved network and reconnect failure must retain retry/reset controls.
+- [ ] Reject cancellation after saving starts; factory reset must take priority on every setup/cancel/save/failure page.
 - [ ] Request reset during conversation, saved-STA connection, and APSTA provisioning; confirm shutdown precedes record deletion and the reset page remains visible.
 - [ ] Confirm Wi-Fi credentials, local authentication, and saved volume are cleared, while device ID and server-side binding are preserved.
 - [ ] Interrupt power after the reset marker is persisted; confirm boot resumes cleanup before network/SDK startup.
-- [ ] Inject shutdown/storage failures; confirm the failure page waits for a fresh 5-second hold rather than rebooting or erasing while writers remain active.
+- [ ] Inject shutdown/storage failures; confirm the failure page waits for a fresh touchscreen Retry rather than rebooting or erasing while writers remain active.
 
 See [UI_VALIDATION.md](./UI_VALIDATION.md) for build and host-test evidence.

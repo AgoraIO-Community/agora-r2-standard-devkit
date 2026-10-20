@@ -53,7 +53,13 @@ CONFIG_LVGL_V9=y
 CONFIG_MYBOT_LVGL_UI_ANIMATIONS=y
 # CONFIG_GPU is not set
 # CONFIG_VG_LITE_GPU is not set
-# CONFIG_TP is not set
+# CST7XX touch shares the R2 software I2C bus with the camera.
+CONFIG_TP=y
+CONFIG_TP_RST_PIN=44
+CONFIG_TP_INT_PIN=43
+CONFIG_TP_I2C_SDA_PIN=65
+CONFIG_TP_I2C_SCL_PIN=64
+CONFIG_TP_CST7XX=y
 
 # MyBot encoded video uplink: MIPI CSI -> ISP MP -> HW-flexa H.264.
 CONFIG_ISP=y
