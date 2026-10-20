@@ -8,12 +8,16 @@
 extern "C" {
 #endif
 
-/* The physical key posts requests even before the SDK attaches. Network setup
- * observes without consuming; only the product application task consumes. */
+/* A confirmed UI action posts a coalesced request without blocking, even before
+ * the SDK attaches. Network setup observes without consuming; only the product
+ * application task consumes. Posting never stops the SDK or writes flash. */
+void bk7259_factory_reset_request(void);
 bool bk7259_factory_reset_requested(void);
 bool bk7259_factory_reset_take_request(void);
 
-/* Network setup has released its portal when it returns this cancellation. */
+/* Network setup yields to reset and attempts teardown before returning this
+ * cancellation. A failed driver stop retains ownership; the product owner must
+ * retry disconnect_network() successfully before clearing persistent records. */
 #define BK7259_NETWORK_CANCELLED (-2)
 
 /* pending: 1=resume durable reset, 0=no intent, -1=invalid/unreadable intent.

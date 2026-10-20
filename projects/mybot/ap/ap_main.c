@@ -166,7 +166,7 @@ static void show_factory_reset(bk7259_factory_reset_screen_t screen)
 }
 
 /* The product task owns this operation. A failed reset stays stopped and waits
- * for a fresh long press; its durable intent is also retried after power loss. */
+ * for a fresh touch confirmation; its durable intent is also retried after power loss. */
 static void mybot_factory_reset_loop(bool requested)
 {
     for (;;) {
@@ -203,7 +203,7 @@ static void mybot_factory_reset_loop(bool requested)
             continue;
         }
         if (intent_result < 0 || bk7259_factory_reset_clear() < 0) {
-            BK_LOGE(TAG, "factory reset incomplete; hold five seconds to retry\r\n");
+            BK_LOGE(TAG, "factory reset incomplete; tap Retry on the display\r\n");
             show_factory_reset(BK7259_FACTORY_RESET_FAILED);
             continue;
         }
@@ -274,7 +274,7 @@ static int mybot_run(void)
         if (reset_pending > 0) {
             BK_LOGW(TAG, "resuming factory reset after interrupted shutdown\r\n");
         } else {
-            BK_LOGE(TAG, "factory reset intent invalid; waiting for a fresh long press\r\n");
+            BK_LOGE(TAG, "factory reset intent invalid; waiting for touch confirmation\r\n");
             show_factory_reset(BK7259_FACTORY_RESET_FAILED);
         }
         mybot_factory_reset_loop(reset_pending > 0);
@@ -333,7 +333,7 @@ static int mybot_run(void)
 
     mybot_stop();
     mybot_log_state_transition(&last_state, &state_valid);
-    /* Keep the physical key and product display alive after a startup/network
+    /* Keep the product display and touch input alive after a startup/network
      * failure too, so factory reset remains available without an SDK handler. */
     if (bk7259_factory_reset_take_request()) {
         mybot_factory_reset_loop(true);

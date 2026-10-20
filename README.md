@@ -251,13 +251,14 @@ The reference device workflow is:
    the device is claimed, briefly press and release the conversation button to start an AI
    conversation with full-duplex audio; camera video uplink is included when `CONFIG_MYBOT_VIDEO=y`.
    Press and release again to stop it.
-5. Hold the same button for five seconds to reset the local device settings and restart Wi-Fi setup.
+5. Tap Settings at the upper right, choose Factory reset, and confirm to clear local settings and
+   restart Wi-Fi setup. Cancel closes the dialog without stopping a conversation.
 
 The Yunqu V1.0 product exposes one firmware-visible direct GPIO conversation key:
 
 | Button | GPIO | Active level | Short press | Long press |
 | --- | --- | --- | --- | --- |
-| Conversation | GPIO47 (`KEY1`) | Low | Release to start or stop a conversation | Hold 5 seconds to factory reset |
+| Conversation | GPIO47 (`KEY1`) | Low | Release to start or stop a conversation | At least 5 seconds is ignored, including release |
 
 GPIO assignments and display, audio, and camera peripheral connections are board-level
 configuration.
@@ -321,19 +322,34 @@ two-sample debounce. A short press posts a request on release. The product contr
 dispatches the conversation-stop event. Other SDK states ignore short presses. Double-press,
 volume, and reserved-key actions are not registered.
 
-Holding the key for five seconds posts one factory-reset request and suppresses the short action
-on release. A key already held when the platform prepares must be released before a new gesture
-can start, preventing a reset loop across reboot. Long press is available after successful
-platform preparation, including Wi-Fi provisioning and periods before the SDK attaches its key
-callback. Five seconds is the gesture threshold; completing reset also requires SDK and network
-shutdown.
+Holding the key for five seconds or longer is ignored and suppresses the short action on release.
+A key already held when the platform prepares must be released before a new gesture can start.
+Factory reset is controlled by the touchscreen Settings, Factory reset and confirmation flow.
 
 [usr_gpio_cfg.h](projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h) sets GPIO47
 (`KEY1`) as an input with an internal pull-up. The CEN button remains hardware reset only.
 
 ## Factory reset
 
-The product task owns reset execution; the key timer only posts requests. It displays the reset
+Settings at the upper right is available on provisioning, pairing, disconnected and SDK-failure
+pages as well as the face pages. Factory reset opens a separate confirmation; only a fresh,
+unmoved single-finger release activates a button. Dragging, multiple fingers, input cancellation
+and the finger that opened a dialog cannot activate its next page. Reset/Retry becomes busy
+immediately after confirmation. Restoring/rebooting cannot be cancelled, and the failure page
+offers Retry directly rather than returning to a stopped conversation.
+
+The CST7XX controller uses reset GPIO44, interrupt GPIO43 and software I2C SDA65/SCL64.
+GPIO43 declares both output and input capabilities: the controller reset sequence first drives
+INT high, then switches that pin to interrupt input. An input-only declaration fails GPIO setup.
+Its 480x640 coordinates map to the existing 640x480 display as `x=639-raw_y, y=raw_x`.
+The product display owner keeps touch alive across SDK detach; it starts before reset-marker
+checks and camera use. Camera and touch share the serialized software-I2C bus and pin references.
+The CST7XX driver and bounded shutdown support are supplied by the recorded `0004` vendor patch.
+If touch is unavailable, recovery controls are disabled with a visible indication; normal
+SDK startup and the physical conversation key remain available.
+
+The product task owns reset execution; the touchscreen confirmation only posts a coalescing request.
+It displays the reset
 status and persists `mybot.factory_reset.v1` before stopping the SDK. Cleanup starts only after
 the SDK reaches `STOPPED` and the portal, SoftAP, scan, and STA teardown succeed, so configuration
 writers cannot recreate deleted records.
@@ -350,10 +366,10 @@ setup flow. Reset removes only these product records. The UID-derived device ID 
 and reset does not send a server-side unbind request.
 
 If persistence, SDK/network shutdown, or deletion fails, the device displays a failure and waits
-for a fresh five-second press to retry. Incomplete cleanup keeps the persisted marker, or attempts
+for a new tap on Retry. Incomplete cleanup keeps the persisted marker, or attempts
 to restore it if the final marker deletion fails. Boot checks a valid marker before network/SDK
 startup and resumes cleanup. If marker lookup reports invalid or unreadable data, the failure page
-requires a fresh long press. The marker is persisted when the product task processes the request,
+requires explicit touchscreen retry. The marker is persisted when the product task processes the request,
 so power loss before that point does not establish a pending reset. Storage fault-detection limits are recorded in
 [UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
 
@@ -368,13 +384,13 @@ The CP initializes the BK runtime and starts the AP. The AP startup sequence is:
 
 1. Initialize the BK runtime and media service, then create the `mybot_app` product task.
 2. Build the server/firmware/hardware configuration and derive the device ID from the chip UID.
-3. Initialize AOSL and prepare the product-owned LCD, Wi-Fi manager, and GPIO key, in that order.
+3. Initialize AOSL and prepare the product-owned LCD/touchscreen, Wi-Fi manager, and GPIO key, in that order.
 4. Check for a pending factory reset before platform registration or network/SDK startup. A valid
-   marker resumes reset; a reported marker error waits for a fresh five-second hold.
+   marker resumes reset; a reported marker error waits for touchscreen retry.
 5. Register the complete platform descriptor and connect saved Wi-Fi, or finish APSTA provisioning.
 6. Start the SDK after STA obtains IPv4; it handles registration, authentication, and pairing
    according to the server's binding state.
-7. Poll the SDK lifecycle and handle short conversation requests and long factory-reset requests.
+7. Poll the SDK lifecycle and handle short conversation requests and touchscreen reset requests.
 
 Network/SDK startup failures and runtime exit retain the prepared key and display while waiting
 for factory reset. Earlier identity, media-service, platform-preparation, or descriptor-registration failures
@@ -424,7 +440,8 @@ also select the underlying automatic face. Repeated updates do not restart its a
 the three-second thinking clock, and do not cancel an explicit expression. No separate status
 overlay is shown.
 Chinese and English startup, provisioning, web-console pairing, error, and
-factory-reset instructions remain available. GPU and touch stay disabled, and the display does
+factory-reset instructions remain available. CST7XX touch is enabled for the settings and recovery
+controls; GPU stays disabled, and the display does
 not show a camera preview or control gimbal movement.
 
 All 23 simulator expressions are available through the independent
@@ -584,7 +601,7 @@ the portal. A regular AP is unaffected, because the rewrite only happens while t
 server is enabled.
 
 Initial provisioning is automatic when no usable saved Wi-Fi credentials exist; the portal
-completes before the SDK starts. A five-second key hold cancels network setup for factory reset,
+completes before the SDK starts. Touchscreen reset confirmation cancels network setup for factory reset,
 then clears credentials and reboots into provisioning. STA/scan waits and portal socket waits
 observe reset cancellation. Failed driver teardown retains ownership so a later reset attempt can
 retry. A cancellation return hands control back to the product task, which checks network teardown
@@ -665,8 +682,8 @@ copies, firmware, `build/`, `__pycache__/`, or local reference material.
   face transitions, extended SDK stop/start cycling, and HSRAM/stack peaks with simultaneous audio
   and video need dedicated target validation.
 - The single GPIO key is based on the Yunqu V1.0 KEY1/GPIO47 connection.
-- The five-second factory-reset feature passed user device testing. Power-interruption and
-  injected shutdown/storage failures still need target-specific validation; host fault-injection
+- The touchscreen factory-reset version with the GPIO43 correction passed user device testing.
+  Power-interruption, long-running media concurrency and injected shutdown/storage failures need target validation; host fault-injection
   coverage is recorded in [UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
 
 ## Documentation

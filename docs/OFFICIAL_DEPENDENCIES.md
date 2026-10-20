@@ -27,6 +27,7 @@ mybot-bk7259/
 │   ├── bk_avdk_smp/0001-captive-portal-dns.patch
 │   ├── bk_avdk_smp/0002-r2-gc9503cv-panel.patch
 │   ├── bk_avdk_smp/0003-r2-trimic-aec.patch
+│   ├── bk_avdk_smp/0004-r2-cst7xx-touch.patch
 │   └── bk_solution_ai/0001-mybot-camera-helper.patch
 └── scripts/                 # 准备、校验、隔离编译与双语固件发布入口
 ```
@@ -44,7 +45,8 @@ DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单�
 
 - GC9503CV LCD 物理 480x640、逻辑 640x480；GPIO20 使能 3.3V、GPIO29 使能 2.8V、
   GPIO27 使能摄像头外部 1.2V、GPIO42 复位、GPIO40 背光低有效。
-- GPIO47 短按松手切换会话，长按 5 秒恢复出厂；默认音量、恢复流程和 SDK 生命周期不变。
+- GPIO47 短按松手切换会话；迁移基线的长按恢复后续改为触屏确认，见下文2026-10-20条目。
+  默认音量、恢复清理流程和 SDK 生命周期不变。
 - 三路差分模拟 ADC0/1/2 均为 MIC，`aec_en=3` 追加数字播放 REF，形成三路 MIC 加一路 REF；
   DMIC 关闭、每路模拟增益 20 dB 加数字增益 16 dB、`dual_ch=2`、传统降噪、VAD 关闭、
   `ec_only_output=1`，扬声器 PA 为 GPIO50。
@@ -61,6 +63,7 @@ DigiCert Global Root G2 两张 PEM 根证书，不合入 `main` 的按地区单�
 | `patches/bk_avdk_smp/0001-captive-portal-dns.patch` | 在 AP、CP 的 DHCP/DNS 实现中保留强制门户行为，手机连接配网热点后可打开配网页。 |
 | `patches/bk_avdk_smp/0002-r2-gc9503cv-panel.patch` | 保留 GC9503CV MIPI 屏驱动及屏注册/构建配置，共 4 个文本文件。 |
 | `patches/bk_avdk_smp/0003-r2-trimic-aec.patch` | 保留三麦 AEC wrapper、配置/算法头文件、配套算法库校验清单及 Git binary patch 形式的 `libaec_v3.a`。 |
+| `patches/bk_avdk_smp/0004-r2-cst7xx-touch.patch` | 后续触屏恢复功能：CST7XX 驱动/注册、固定输入回调及有界安全关闭，供产品已有 UI owner 使用。 |
 | `patches/bk_solution_ai/0001-mybot-camera-helper.patch` | 保留 MyBot 使用的摄像头辅助组件构建裁剪、关闭保护、XCLK 和低帧率模式匹配等既有适配。 |
 
 补丁从原 R2 依赖与上述官方基线的差异提取。它们由父仓库跟踪，应用前验证基线，
@@ -99,7 +102,7 @@ python3 scripts/build_all.py
 ```text
 build/
 ├── _vendor/<digest>/
-│   ├── bk_avdk_smp/            # 官方基线 + DNS/LCD/三麦 AEC 补丁
+│   ├── bk_avdk_smp/            # 官方基线 + DNS/LCD/三麦 AEC/触摸补丁
 │   └── bk_solution_ai/         # 官方基线 + 摄像头补丁 + 产品组件副本
 ├── build-bk7259-zh-CN-video/solution/projects/mybot/
 └── build-bk7259-en-US-video/solution/projects/mybot/
@@ -182,6 +185,17 @@ AEC 库大小和摘要与上文相同，保留 `20261014` 版本。
 本次没有改变 UI 策略或外设运行逻辑，也未将历史实机结果视为本次迁移后的实机结果。
 仍需用户烧录后验证。
 
+## 2026-10-20 触摸恢复入口
+
+在既有官方固定提交上增加 `0004-r2-cst7xx-touch.patch`，不升级厂商子模块、不修改 SDK/AOSL/RTSA。
+参考新 R2 的 `CONFIG_TP_CST7XX`，配置 GPIO44 reset、GPIO43 interrupt、SDA65/SCL64。
+触摸及摄像头沿用软件 I²C 的共享锁与引脚引用；产品显示 owner 串行处理 LVGL 输入和设置弹层。
+恢复请求改由设置中的二次确认投递，GPIO47 达到五秒只忽略。SDK 停止、持久意图、三记录删除
+校验及断电续做仍归原产品恢复 owner。失败专页通过触屏重试，SDK/网络失败时入口仍可用。
+
+`vendor.lock.json` 记录新增补丁摘要；构建仍只在隔离副本应用。原迁移基线和历史实机记录
+保留原时间含义，触摸功能及其与视频并发的实机验证需独立完成。
+
 ## English
 
 `release/v4.0.1-mybot-r2` pins the two official `bekencorp` repositories to the commits listed above. Product files
@@ -189,8 +203,9 @@ live in the parent repository under `projects/mybot` and `components/mybot`; no 
 is a build dependency. This preserves the existing R2 hardware and firmware behavior without
 upgrading the vendor SDK or MyBot snapshots.
 
-The four recorded patches preserve captive-portal DNS, GC9503CV LCD, three-microphone AEC and
-camera-helper integration. The binary AEC archive remains the previous 591224-byte `20261014`
+The recorded patches preserve captive-portal DNS, GC9503CV LCD, three-microphone AEC and
+camera-helper integration; the later `0004` patch adds CST7XX touch and bounded driver shutdown.
+The binary AEC archive remains the previous 591224-byte `20261014`
 library, with its SHA256 recorded above. Preparation verifies the pins and applies patches in isolated vendor copies,
 leaving the official tracked checkouts unchanged. A patch failure is an error, not permission to
 silently build unpatched or use a different upstream commit.

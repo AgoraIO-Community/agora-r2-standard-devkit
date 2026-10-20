@@ -132,7 +132,7 @@ initializes AOSL, and prepares the product-owned LCD, network manager, and key,
 in that order.
 It checks `mybot.factory_reset.v1` before platform registration, Wi-Fi setup, or
 SDK startup: a valid marker resumes reset; a reported marker read/validation
-error displays reset failure and waits for a fresh long press.
+error displays reset failure and waits for explicit touchscreen retry.
 
 Without a reset marker, AP registers the platform and tries saved Wi-Fi. Missing
 or unusable credentials lead to APSTA provisioning at `http://192.168.4.1/`.
@@ -150,14 +150,13 @@ Descriptor-registration failure shuts down the prepared platform resources.
 | KEY1/GPIO47 action | Behavior |
 | --- | --- |
 | Short press and release | `READY`: start conversation; `IN_CONVERSATION`: stop conversation; other states ignore it |
-| Hold for 5 seconds | Request factory reset once; release does not toggle conversation |
+| Hold for at least 5 seconds | Ignore the gesture; release does not toggle conversation |
 | Already held at platform preparation | Release first to arm a new gesture |
 
-The active-low key uses 20 ms scanning and two-sample debounce. Long press
-works after successful platform preparation, including provisioning and before
-SDK key attachment. A key held while the platform prepares must first be
-released to arm a new gesture. Five seconds is the gesture threshold; actual
-completion also depends on SDK and driver teardown. The CEN button remains
+The active-low key uses 20 ms scanning and two-sample debounce. A key held while
+the platform prepares must first be released to arm a new gesture. Factory reset
+uses Settings at the upper right, Factory reset and a separate Confirm/Cancel dialog.
+Opening or cancelling this dialog keeps the current conversation running. The CEN button remains
 hardware reset only; double-press, volume, and other key actions are not registered.
 
 Normal conversation hangup stops local video/RTC and clears session PCM before
@@ -165,7 +164,7 @@ publishing READY and sending one HTTP(S) stop notification. Notification failure
 does not restart media or retry. Stop notifications and binding polls run on the separate
 `service_mpq`, so a slow background request does not block the next conversation trigger.
 
-The key timer posts requests; `ap_main.c` executes reset in the product task.
+The touchscreen confirmation posts one coalescing request; `ap_main.c` executes reset in the product task.
 Its order is:
 
 1. Show restoring status and persist `mybot.factory_reset.v1`.
@@ -181,10 +180,10 @@ the UID-derived device ID stays the same and no server-side unbind request is
 sent. The next SDK startup uses the default speaker volume and registers/authenticates again according to
 the server's retained binding state.
 
-Failure displays a bilingual retry page and waits for a fresh five-second hold.
+Failure displays a bilingual page with a Retry button and waits for a new tap.
 Incomplete cleanup keeps the established marker; a final marker-deletion error
 attempts to restore it. Boot resumes valid pending resets before starting the
-network or SDK. A reported marker error requires an explicit new long press.
+network or SDK. A reported marker error requires explicit touchscreen retry.
 The marker is written when the product task processes the request; loss of
 power before that point does not establish a pending reset. Failed network
 teardown keeps its resources owned for retry. Network cancellation returns control to the owner, which verifies all
