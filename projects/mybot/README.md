@@ -9,11 +9,15 @@ device-service control, bidirectional RTC audio, local provisioning and UI, and
 optional one-way encoded video uplink in one conversation. Video is enabled by default.
 
 The `release/v4.0.1-mybot-r2` branch targets the Yunqu V1.0 R2 board with a
-GC9503CV MIPI LCD and KEY1/GPIO47. It preserves the paired-reference audio configuration,
+GC9503CV MIPI LCD and KEY1/GPIO47. The physical button provides short-press conversation
+control and hardware long-press power on/off; settings provide touchscreen Wi-Fi setup and factory reset.
+It preserves the paired-reference audio configuration,
 with three analog inputs and an appended digital AEC reference. The product lives in the
 parent repository; official BK dependencies receive versioned patches in isolated build copies.
 Its normal UI follows the simulator's
 process-gray skin and pixel-glasses face.
+
+User instructions: [R2 operation manual with UI screenshots (Chinese PDF)](../../docs/R2_操作手册.pdf).
 
 The vendored SDK follows the latest committed upstream `main` snapshot
 `58f0ef9c14be9f159b1dc167bf0f035983b25117` (tag `v1.3.0`, version 1.3.0), with the existing
@@ -150,8 +154,11 @@ Descriptor-registration failure retains settings and retries registration after 
 | KEY1/GPIO47 action | Behavior |
 | --- | --- |
 | Short press and release | `READY`: start conversation; `IN_CONVERSATION`: stop conversation; other states ignore it |
-| Hold for at least 5 seconds | Ignore the gesture; release does not toggle conversation |
+| Long press | Current hardware powers on/off; factory reset uses touchscreen settings |
 | Already held at platform preparation | Release first to arm a new gesture |
+
+Firmware `KEY_SHORT_PRESS_LIMIT_MS=5000` suppresses conversation events for a prolonged
+press and its release. Hardware defines the power-button timing independently of this filter.
 
 The active-low key uses 20 ms scanning and two-sample debounce. A key held while
 the platform prepares must first be released to arm a new gesture. Factory reset
@@ -168,7 +175,8 @@ The candidate must obtain IPv4 before credentials are committed. After the porta
 SoftAP stop, the owner restarts the SDK without rebooting. Device authentication, ID,
 server binding and saved volume are preserved.
 
-Cancel setup is accepted only before credential commit starts. It closes the portal,
+Cancel setup is accepted before saving new Wi-Fi credentials starts, including the connection
+attempt after clicking Connect in the web page. It closes the portal,
 scan and candidate STA, then tries the saved network once and restarts the SDK on success.
 No saved network or a failed reconnect leaves Retry Wi-Fi setup and Settings available;
 it does not automatically reopen the hotspot. Cancellation is rejected once saving starts.
@@ -441,7 +449,9 @@ configuration cannot retain stale values.
 
 The user confirmed R2 LCD bring-up, conversation start/stop without blanking,
 the previous dual-analog-microphone/ADC2-reference audio/AEC, and factory reset
-work on hardware. The current three-input audio configuration awaits device testing.
+work on hardware. Touchscreen reset with the GPIO43 correction and independent Wi-Fi setup
+also passed user device testing. The current hardware's long-press power on/off behavior was
+confirmed by the user. The current three-input audio configuration awaits device testing.
 The user confirmed basic process-gray pixel-glasses rendering. The restored
 four-line layout and complete 23-expression set await hardware validation.
 The checklist below describes regression coverage; it does not imply every
@@ -467,11 +477,11 @@ Video-specific checks require a build with `CONFIG_MYBOT_VIDEO=y`.
 - [ ] Test wrapped `audio.adjust_volume` with positive, negative and zero deltas, including -100 and 100; results must clamp to 0–100, and repeating a command ID must not adjust the volume again.
 - [ ] Verify phase/voiceprint text appears only during a real conversation, voiceprint-only updates preserve the face, and hangup removes session fields and cancels pending expression deadlines.
 - [ ] Verify both languages, web-console pairing instructions, round-bezel clearance, and factory-reset display priority.
-- [ ] A hold below 5 seconds performs only the state-appropriate short action on release; a 5-second hold does not reset or toggle a conversation.
+- [ ] Verify hardware long-press power on/off and state-appropriate short-press conversation actions; factory reset remains in touchscreen settings.
 - [ ] Hold the key across reboot, then release; confirm a new gesture is required before another conversation action.
 - [ ] Open or cancel setup/reset confirmation during a conversation; neither action stops it or leaks a tap through two pages.
 - [ ] Start Wi-Fi setup while idle and in conversation; APSTA must wait for SDK shutdown, and successful setup must restart services without rebooting or clearing identity, binding or volume.
-- [ ] Cancel before commit and reconnect to the original network once; bad credentials, no saved network and reconnect failure must retain retry/reset controls.
+- [ ] Cancel before saving new Wi-Fi starts and reconnect to the original network once; bad credentials, no saved network and reconnect failure must retain retry/reset controls.
 - [ ] Reject cancellation after saving starts; factory reset must take priority on every setup/cancel/save/failure page.
 - [ ] Request reset during conversation, saved-STA connection, and APSTA provisioning; confirm shutdown precedes record deletion and the reset page remains visible.
 - [ ] Confirm Wi-Fi credentials, local authentication, and saved volume are cleared, while device ID and server-side binding are preserved.

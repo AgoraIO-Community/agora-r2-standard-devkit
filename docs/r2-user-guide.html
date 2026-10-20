@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MyBot R2 中文操作手册：配网、配对、对话、屏幕状态、更换 Wi-Fi 与恢复出厂。">
+  <title>MyBot R2 操作手册</title>
+  <style>
+    @page { size: A4; margin: 0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #1d3032; background: #e7edec;
+      font: 10pt/1.65 "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+    .page { width: 210mm; height: 297mm; padding: 14mm 17mm 18mm; margin: 8mm auto;
+      position: relative; background: #fff; break-after: page; }
+    .page:last-child { break-after: auto; }
+    .masthead { display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 3mm; border-bottom: 0.4mm solid #1b655e; margin-bottom: 6mm;
+      color: #346760; font-size: 8pt; letter-spacing: 0.7pt; }
+    .masthead b { font-size: 10pt; letter-spacing: 1.2pt; }
+    .chapter { color: #65847f; font-size: 9pt; margin: 0 0 1mm; letter-spacing: 1pt; }
+    h1, h2, h3, p, figure { margin: 0; }
+    h1 { font-size: 36pt; line-height: 1.22; font-weight: 700; letter-spacing: -0.6pt; }
+    h2 { font-size: 25pt; line-height: 1.35; font-weight: 700; margin-bottom: 3mm; }
+    h3 { font-size: 11pt; color: #155e57; margin-bottom: 1.5mm; }
+    .lead { font-size: 10.5pt; color: #526a6a; margin-bottom: 5mm; }
+    .subtitle { color: #496a65; font-size: 13pt; margin: 3mm 0 2mm; }
+    .small { font-size: 8.5pt; color: #607574; }
+    .muted { color: #607574; }
+    .footer { position: absolute; left: 17mm; right: 17mm; bottom: 9mm; display: flex;
+      justify-content: space-between; padding-top: 2mm; border-top: 0.2mm solid #dce5e2;
+      font-size: 8pt; color: #728884; }
+    .image { display: block; width: 100%; height: auto; border-radius: 3mm;
+      border: 0.25mm solid #243c3d; }
+    figure { break-inside: avoid; }
+    figcaption { margin-top: 1.7mm; color: #5d7471; font-size: 8.5pt; line-height: 1.5; }
+    .hero { width: 143mm; margin: 5mm auto 4mm; }
+    .pair-hero { width: 141mm; margin: 5mm auto; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; margin: 4mm 0; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; margin: 4mm 0; }
+    .grid3 figcaption { text-align: center; }
+    .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; margin: 4mm 0; }
+    .quick div { background: #f0f6f3; border-radius: 2mm; padding: 3mm 3.5mm; }
+    .quick b { display: block; color: #155e57; font-size: 10pt; }
+    .quick span { font-size: 9pt; color: #4e6462; }
+    .note { background: #edf5f1; border-left: 0.8mm solid #43897b;
+      padding: 3mm 4mm; margin: 4mm 0; border-radius: 0 2mm 2mm 0; }
+    .attention { background: #faf2e6; border-left-color: #b98935; }
+    .note strong { color: #155e57; }
+    .attention strong { color: #8a601c; }
+    .steps { margin: 3mm 0; padding-left: 6mm; }
+    .steps li { margin: 2mm 0; padding-left: 1mm; }
+    .steps li::marker { color: #1b7569; font-weight: 700; }
+    .compact li { margin: 1.4mm 0; }
+    table { width: 100%; border-collapse: collapse; margin: 4mm 0; font-size: 9pt; }
+    th { background: #edf3f1; color: #1b5d56; text-align: left; font-weight: 700; }
+    th, td { border-bottom: 0.2mm solid #dce5e2; padding: 2.5mm 3mm; vertical-align: top; }
+    code { font: 9pt/1.5 "DejaVu Sans Mono", monospace; color: #155e57; white-space: nowrap; }
+    .chip { display: inline-block; background: #edf3f1; color: #175e56; border-radius: 1.2mm;
+      padding: 0.2mm 1.6mm; font-weight: 500; }
+    .network-layout { display: grid; grid-template-columns: 1fr 64mm; gap: 7mm; align-items: start; }
+    .portal { padding: 2mm; background: #f3f5f7; border: 0.3mm solid #d9e3df; border-radius: 4mm; }
+    .portal img { display: block; width: 100%; height: auto; border-radius: 2mm; }
+    .section-gap { margin-top: 5mm; }
+    .status-table th:first-child, .status-table td:first-child { width: 37mm; }
+    .faq th:first-child, .faq td:first-child { width: 39mm; }
+    .faq td { padding-top: 2.4mm; padding-bottom: 2.4mm; }
+    .two-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin: 4mm 0; }
+    .two-actions div { border: 0.25mm solid #d4e1db; border-radius: 2mm; padding: 3mm; }
+    .two-actions b { display: block; color: #1b655e; margin-bottom: 1mm; }
+    a { color: #1b655e; text-decoration: none; }
+    @media print { body { background: white; } .page { margin: 0; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+</head>
+<body>
+
+<section class="page" aria-label="封面与快速开始">
+  <header class="masthead"><b>MYBOT / R2</b><span>中文操作手册 · v1.0</span></header>
+  <p class="chapter">开始使用你的 R2</p>
+  <h1>开机，联网，<br>开始对话。</h1>
+  <p class="subtitle">触屏设置 · 像素眼镜 · 按键会话</p>
+  <figure class="hero">
+    <img class="image" src="images/r2-user-guide/ready.png" alt="待机界面：像素眼镜，第三行显示 state: ready，右上角是设置。">
+    <figcaption>看到 <code>state: ready</code>，表示设备已就绪，可以按会话键开始对话。</figcaption>
+  </figure>
+  <div class="quick">
+    <div><b>01　长按开机</b><span>准备好供电，长按按钮开机。</span></div>
+    <div><b>02　连接 Wi-Fi</b><span>首次使用时，连接设备热点完成配网。</span></div>
+    <div><b>03　完成配对</b><span>若显示配对码，在网页控制台输入六位数字。</span></div>
+    <div><b>04　短按开聊</b><span>按下并松开会话键；再次短按结束会话。</span></div>
+  </div>
+  <p class="small">适用于长按按钮可开关机、带“设置 → 配网 / 恢复出厂”入口的 R2 中文版本；
+    图中热点名、网络名及配对码均为示例，以设备实际显示为准。</p>
+  <footer class="footer"><span>使用顺序：配网 02 → 配对 03 → 对话 04</span><span>01 / 07</span></footer>
+</section>
+
+<section class="page" aria-label="首次配网">
+  <header class="masthead"><b>MYBOT / R2</b><span>联网</span></header>
+  <p class="chapter">01 / 首次使用</p>
+  <h2>先让设备连接 Wi-Fi</h2>
+  <p class="lead">准备一部手机，以及可正常上网的 2.4 GHz Wi-Fi 名称和密码。</p>
+  <div class="network-layout">
+    <div>
+      <figure>
+        <img class="image" src="images/r2-user-guide/provision-active.png" alt="Wi-Fi 配网页面：设备热点 mybot-a1b2、地址 http://192.168.4.1 和取消配网按钮。">
+        <figcaption>设备屏幕：热点名位于中间，网页地址位于下方。</figcaption>
+      </figure>
+      <ol class="steps compact">
+        <li>没有可用的已保存网络时，设备会进入“Wi-Fi 配网”。</li>
+        <li>打开手机的 Wi-Fi 设置，连接屏幕所示的 <code>mybot-xxxx</code> 热点；热点没有密码。</li>
+        <li>配网页通常会自动弹出。没有弹出时，在浏览器地址栏输入 <code>http://192.168.4.1</code>。</li>
+        <li>选择目标 Wi-Fi，输入密码，点击网页上的 <span class="chip">Connect</span>，等待设备连接。</li>
+      </ol>
+    </div>
+    <figure class="portal">
+      <img src="images/r2-user-guide/wifi-portal.png" alt="实际配网页：Network 下拉框、SSID 输入框、Password 密码框及 Connect 按钮。">
+      <figcaption>手机网页示例。配网页的按钮和字段使用英文。</figcaption>
+    </figure>
+  </div>
+  <table>
+    <thead><tr><th>网页字段</th><th>怎么填写</th></tr></thead>
+    <tbody>
+      <tr><td>Network</td><td>从扫描结果选择目标网络；没有结果时，可直接填写 SSID。</td></tr>
+      <tr><td>SSID / Password</td><td>目标 Wi-Fi 的名称 / 密码，注意大小写。</td></tr>
+      <tr><td>Connect</td><td>开始连接；失败时检查名称与密码，修改后再次点击。</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><strong>以设备屏幕判断结果。</strong>成功后设备热点会关闭，并自动连接服务，
+    无需重启。手机网页可能在显示 Connected 前就断开热点，这是可能出现的正常切换。</div>
+  <p class="small">手机提示热点“无法上网”时，选择继续保持连接。该页面用于设置设备 Wi-Fi，
+    与账号配对使用的网页控制台是两个不同入口。</p>
+  <footer class="footer"><span>首次联网完成后，继续查看配对步骤</span><span>02 / 07</span></footer>
+</section>
+
+<section class="page" aria-label="设备配对">
+  <header class="masthead"><b>MYBOT / R2</b><span>配对与绑定</span></header>
+  <p class="chapter">02 / 连接账号与智能体</p>
+  <h2>在网页控制台完成配对</h2>
+  <p class="lead">网络连接成功后，设备会连接服务。未绑定的设备会显示并播报配对码。</p>
+  <figure class="pair-hero">
+    <img class="image" src="images/r2-user-guide/pair-code.png" alt="配对码界面，示例为固定六位数字 001028，提示在网页控制台输入。">
+    <figcaption>示例配对码为 <code>001028</code>。配对码固定六位，开头的 0 也需要输入。</figcaption>
+  </figure>
+  <ol class="steps">
+    <li>在手机或电脑上，使用设备提供方给出的网页控制台地址与账号登录。</li>
+    <li>在控制台的设备配对入口，输入设备屏幕当前显示的六位数字。</li>
+    <li>按照控制台提示完成配对及智能体关联。</li>
+    <li>等待设备进入像素眼镜待机画面，并确认第三行显示 <code>state: ready</code>。</li>
+  </ol>
+  <div class="note"><strong>已经绑定的设备</strong>可能直接进入待机画面，不再要求输入配对码。
+    更换 Wi-Fi 后也不需要重新解除或建立原有绑定。</div>
+  <h3 class="section-gap">配对没有完成时</h3>
+  <p>使用屏幕当前显示的配对码。如果代码更新，请改用新码；获取代码暂时失败时，设备会重试。
+    如果一直停留在“连接服务中”或“等待配对”，先确认目标 Wi-Fi 可以访问互联网。</p>
+  <p class="small section-gap">没有控制台地址或账号时，请先向设备提供方索取，并确认与设备使用的服务版本一致。
+    网页控制台的具体菜单位置以当前服务页面为准；
+    不要在 <code>192.168.4.1</code> 配网页输入账号配对码。</p>
+  <footer class="footer"><span>配对完成后，短按会话键即可开聊</span><span>03 / 07</span></footer>
+</section>
+
+<section class="page" aria-label="日常对话与状态">
+  <header class="masthead"><b>MYBOT / R2</b><span>日常使用</span></header>
+  <p class="chapter">03 / 按键与屏幕</p>
+  <h2>短按对话，长按开关机</h2>
+  <div class="two-actions">
+    <div><b>待机时：短按并松开</b>当 <code>state: ready</code> 时，开始会话。</div>
+    <div><b>会话中：再次短按并松开</b>结束当前会话，屏幕回到待机画面。</div>
+  </div>
+  <p><strong>长按同一按钮：开机或关机。</strong>日常会话操作请短按并松手；恢复出厂使用触屏设置。</p>
+  <p>开启会话后，等待连接完成再说话。屏幕会短暂切换表情，随后显示服务返回的聆听、思考或回复状态。</p>
+  <div class="grid3">
+    <figure><img class="image" src="images/r2-user-guide/conversation-listening.png" alt="会话聆听状态，state: listening。"><figcaption>聆听 listening</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/conversation-thinking.png" alt="会话思考状态，state: thinking。"><figcaption>思考 thinking</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/conversation-speaking.png" alt="会话回复状态，state: speaking。"><figcaption>回复 speaking</figcaption></figure>
+  </div>
+  <table class="status-table">
+    <thead><tr><th>第三行状态</th><th>含义与操作</th></tr></thead>
+    <tbody>
+      <tr><td><code>ready</code></td><td>已经就绪，可以短按开始会话。</td></tr>
+      <tr><td><code>listening</code></td><td>正在聆听，可以向设备说话。</td></tr>
+      <tr><td><code>thinking</code></td><td>智能体正在思考，等待回复。</td></tr>
+      <tr><td><code>speaking</code></td><td>智能体正在回复。</td></tr>
+      <tr><td><code>in_conversation</code></td><td>处于会话中，当前没有更具体的阶段提示。</td></tr>
+      <tr><td><code>vp:pending</code></td><td>本次会话尚未确认声纹注册成功；不等于注册失败，也不妨碍普通对话。</td></tr>
+      <tr><td><code>vp:ok</code></td><td>本次会话已收到声纹注册成功通知。</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><strong>看状态，不只看表情。</strong>第二行 <code>mood</code> 是当前表情名称，
+    第三行 <code>state</code> 才是实际工作状态。思考时间较长时，表情会变化，但状态仍是 thinking。</div>
+  <p class="small">配网、配对及其他非会话就绪状态中，短按不会开聊。
+    长按开机后，先松开按钮，再用短按开始会话。</p>
+  <footer class="footer"><span>需要更换网络或恢复出厂时，使用屏幕右上角“设置”</span><span>04 / 07</span></footer>
+</section>
+
+<section class="page" aria-label="更换 Wi-Fi 与取消配网">
+  <header class="masthead"><b>MYBOT / R2</b><span>设置 · 配网</span></header>
+  <p class="chapter">04 / 更换网络</p>
+  <h2>保留绑定，更换 Wi-Fi</h2>
+  <p class="lead">待机、会话中或网络异常时，都可从右上角“设置”进入配网。</p>
+  <div class="grid2">
+    <figure><img class="image" src="images/r2-user-guide/settings.png" alt="设置菜单：配网、恢复出厂、返回。"><figcaption>① 打开设置，轻触“配网”。</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/provision-confirmation.png" alt="开始配网确认框，包含取消和开始配网按钮。"><figcaption>② 确认要更换网络后，轻触“开始配网”。</figcaption></figure>
+  </div>
+  <ol class="steps compact">
+    <li>只打开设置、返回或取消确认，不会结束当前会话。</li>
+    <li>轻触“开始配网”后，设备结束当前会话并准备热点。</li>
+    <li>看到“Wi-Fi 配网”后，手机连接屏幕显示的热点，按第 02 页步骤设置新网络。</li>
+    <li>新网络连接成功后，设备自动重新连接服务；等待出现 <code>ready</code> 再开聊。</li>
+  </ol>
+  <div class="note"><strong>只更换网络，保留已有设置。</strong>设备身份、账号绑定、设备凭据和保存的音量不会清除，
+    也不会重启整机。</div>
+  <h3 class="section-gap">不想继续时，轻触“取消配网”</h3>
+  <p>进入“正在保存Wi-Fi”前，可以取消配网。即使已经点击网页 Connect，
+    只要还在尝试连接、尚未开始保存，也可以取消。</p>
+  <table>
+    <thead><tr><th>取消时的情况</th><th>设备接下来会做什么</th></tr></thead>
+    <tbody>
+      <tr><td>已有可用的旧网络</td><td>关闭配网，尝试一次旧网络；成功后恢复服务。</td></tr>
+      <tr><td>没有旧网络或连接失败</td><td>显示“配网失败”，轻触“重新配网”，或从设置选择恢复出厂。</td></tr>
+      <tr><td>已经开始保存 Wi-Fi</td><td>不再接受取消，请等待本次设置完成。</td></tr>
+    </tbody>
+  </table>
+  <p class="small">触屏操作请单指按下并在同一按钮内松开。拖动或多指操作不会确认，打开一层页面后，
+    需要重新轻触下一层按钮。</p>
+  <footer class="footer"><span>配网入口用于换网；恢复出厂入口用于清除本机设置</span><span>05 / 07</span></footer>
+</section>
+
+<section class="page" aria-label="恢复出厂设置">
+  <header class="masthead"><b>MYBOT / R2</b><span>设置 · 恢复出厂</span></header>
+  <p class="chapter">05 / 重新设置设备</p>
+  <h2>从触摸屏恢复出厂设置</h2>
+  <p class="lead">需要清除本机配置时，依次轻触“设置 → 恢复出厂 → 确认恢复”。</p>
+  <div class="grid2">
+    <figure><img class="image" src="images/r2-user-guide/factory-confirmation.png" alt="恢复出厂确认框，说明清除 Wi-Fi、设备凭据和音量，提供取消及确认恢复。"><figcaption>确认前可以“取消”，不会清除任何配置。</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/restoring.png" alt="正在恢复出厂设置，请勿断电。"><figcaption>确认后结束服务并清理配置，恢复过程中不能取消。</figcaption></figure>
+  </div>
+  <div class="note attention"><strong>恢复和重启期间，请保持供电，不要长按关机。</strong>看到“恢复完成，正在重启”后，
+    等待设备自动重启，再重新配网。</div>
+  <table>
+    <thead><tr><th>项目</th><th>恢复出厂后的结果</th></tr></thead>
+    <tbody>
+      <tr><td>本机 Wi-Fi</td><td>清除；重启后需要重新配网。</td></tr>
+      <tr><td>本机设备凭据</td><td>清除；联网后重新完成设备鉴权。</td></tr>
+      <tr><td>保存的音量</td><td>清除；恢复为固件默认音量。</td></tr>
+      <tr><td>设备 ID、已烧录固件</td><td>保留，不会更换设备身份或回退固件。</td></tr>
+      <tr><td>服务器上的账号 / 智能体绑定</td><td>保留；重新联网后继续按服务端绑定状态工作。</td></tr>
+    </tbody>
+  </table>
+  <h3 class="section-gap">如果显示“恢复出厂失败”</h3>
+  <p>轻触失败页的“重试”。设备不会自行反复重启，也不会直接回到原会话。
+    若恢复过程因断电中断，重新上电后可能继续尚未完成的恢复。</p>
+  <div class="note"><strong>恢复出厂不等于解除绑定。</strong>如需更换所属账号或智能体，
+    请在网页控制台处理服务器侧绑定关系。</div>
+  <footer class="footer"><span>长按按钮用于开关机；恢复出厂请在触屏确认</span><span>06 / 07</span></footer>
+</section>
+
+<section class="page" aria-label="常见问题与处理">
+  <header class="masthead"><b>MYBOT / R2</b><span>遇到问题</span></header>
+  <p class="chapter">06 / 常见问题</p>
+  <h2>按屏幕提示处理</h2>
+  <div class="grid2">
+    <figure><img class="image" src="images/r2-user-guide/provision-failed.png" alt="配网失败，提供重新配网与右上角设置入口。"><figcaption>配网失败：轻触“重新配网”。</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/reset-failed.png" alt="恢复出厂失败，提供重试按钮。"><figcaption>恢复失败：轻触“重试”。</figcaption></figure>
+  </div>
+  <table class="faq">
+    <thead><tr><th>现象</th><th>处理方法</th></tr></thead>
+    <tbody>
+      <tr><td>找不到设备热点</td><td>已联网待机时不会常开热点。先从“设置 → 配网”确认进入，
+        再按屏幕显示的名称查找。</td></tr>
+      <tr><td>手机没有弹出配网页</td><td>保持连接设备热点，手动打开 <code>http://192.168.4.1</code>；
+        手机提示无法上网时，选择保持连接。</td></tr>
+      <tr><td>扫描不到目标 Wi-Fi</td><td>在 SSID 手动输入准确名称，确认使用 2.4 GHz 网络。密码区分大小写。</td></tr>
+      <tr><td>网页提示连接失败</td><td>检查 Wi-Fi 名称、密码及路由器网络，修改后重新点击 Connect。
+        设备进入失败页时可轻触“重新配网”。</td></tr>
+      <tr><td>短按按键没有开聊</td><td>先确认已经完成配对，且屏幕显示 <code>ready</code>。
+        按下后及时松手，避免长按触发关机。</td></tr>
+      <tr><td>显示“触控不可用”</td><td>重启设备后再试；仍提示时，请联系维护人员检查固件与触摸功能。
+        此时触屏设置不可使用。</td></tr>
+      <tr><td>一直连接服务或启动失败</td><td>先检查 Wi-Fi 是否可上网，再从设置重新配网。
+        仍无法恢复时，记录屏幕提示并联系维护人员。</td></tr>
+      <tr><td>会话期间网络中断</td><td>本次会话会结束。等待网络恢复且出现 <code>ready</code> 后，
+        再短按开始，不会自动续接原会话。</td></tr>
+    </tbody>
+  </table>
+  <p class="small">本手册对应 R2 触屏配网版，版本 1.0 / 2026-10-20。界面图由与固件相同的 UI 渲染代码生成，
+    不是实机照片；动画以静帧展示。图中示例不代表设备的实际网络、身份或配对码。</p>
+  <footer class="footer"><span>MyBot R2 · 操作手册</span><span>07 / 07</span></footer>
+</section>
+
+</body>
+</html>
