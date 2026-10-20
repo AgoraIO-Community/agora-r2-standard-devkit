@@ -15,11 +15,11 @@
 #define TAG "mybot_key"
 #define KEY_SCAN_PERIOD_MS 20U
 #define KEY_DEBOUNCE_TICKS 2U
-#define KEY_FACTORY_RESET_HOLD_MS 5000U
+#define KEY_SHORT_PRESS_LIMIT_MS 5000U
 
 /* The Yunqu V1.0 board exposes one direct GPIO key. KEY1 is connected to
  * GPIO47 with an internal pull-up and is active low. A short release requests
- * a conversation toggle; holding it for five seconds requests factory reset. */
+ * a conversation toggle; holds of five seconds or longer are ignored. */
 typedef struct {
     gpio_id_t gpio;
     uint8_t active_level;
@@ -39,7 +39,7 @@ typedef struct {
     uint32_t pressed_at_ms;
     bool gesture_armed;
     bool press_active;
-    bool long_press_fired;
+    bool long_press_ignored;
     bool prepared;
     bool scan_timer_owned;
     bool sdk_attached;
@@ -47,7 +47,6 @@ typedef struct {
 } key_state_t;
 
 static key_state_t s_key;
-static aosl_atomic_t s_factory_reset_requested;
 static aosl_atomic_t s_conversation_requested;
 static aosl_atomic_t s_short_press_enabled;
 
@@ -61,7 +60,7 @@ static void emit_key_event(mybot_key_event_t event) {
     void *user_data;
 
     rtos_lock_mutex(&s_key.lock);
-    if (!s_key.sdk_attached || s_key.detaching) {
+    if (!s_key.sdk_attached || s_key.detaching || bk7259_factory_reset_requested()) {
         MYBOT_LOGW(TAG, "drop key event=%d: sdk_attached=%u detaching=%u",
                    (int)event, s_key.sdk_attached ? 1U : 0U,
                    s_key.detaching ? 1U : 0U);
@@ -89,23 +88,8 @@ void bk7259_key_dispatch_conversation(bool start) {
                          : MYBOT_KEY_EVENT_CONVERSATION_STOP);
 }
 
-bool bk7259_factory_reset_requested(void) {
-    return aosl_atomic_read(&s_factory_reset_requested) != 0;
-}
-
-bool bk7259_factory_reset_take_request(void) {
-    return aosl_atomic_xchg(&s_factory_reset_requested, 0) != 0;
-}
-
 bool bk7259_key_take_conversation_request(void) {
     return aosl_atomic_xchg(&s_conversation_requested, 0) != 0;
-}
-
-static void key_request_factory_reset(key_state_t *key) {
-    key->long_press_fired = true;
-    aosl_atomic_set(&s_conversation_requested, 0);
-    aosl_atomic_set(&s_factory_reset_requested, 1);
-    MYBOT_LOGW(TAG, "conversation key held five seconds: factory reset requested");
 }
 
 static void key_scan_timer(void *arg) {
@@ -138,18 +122,17 @@ static void key_scan_timer(void *arg) {
         if (key->stable_pressed) {
             if (key->gesture_armed) {
                 key->press_active = true;
-                key->long_press_fired = false;
+                key->long_press_ignored = false;
                 key->pressed_at_ms = key->raw_changed_ms;
             }
         } else {
-            if (key->press_active && !key->long_press_fired) {
+            if (key->press_active && !key->long_press_ignored) {
                 /* Use the first observed release time, not the later debounce
                  * completion, so release debounce cannot extend the hold. */
-                if ((uint32_t)(key->raw_changed_ms - key->pressed_at_ms) >=
-                    KEY_FACTORY_RESET_HOLD_MS) {
-                    key_request_factory_reset(key);
-                } else if (aosl_atomic_read(&s_short_press_enabled) &&
-                           !bk7259_factory_reset_requested()) {
+                if ((uint32_t)(key->raw_changed_ms - key->pressed_at_ms) <
+                        KEY_SHORT_PRESS_LIMIT_MS &&
+                    aosl_atomic_read(&s_short_press_enabled) &&
+                    !bk7259_factory_reset_requested()) {
                     aosl_atomic_set(&s_conversation_requested, 1);
                 }
             }
@@ -159,9 +142,9 @@ static void key_scan_timer(void *arg) {
         }
     }
     if (key->press_active && key->stable_pressed && key->raw_pressed &&
-        !key->long_press_fired &&
-        (uint32_t)(now_ms - key->pressed_at_ms) >= KEY_FACTORY_RESET_HOLD_MS) {
-        key_request_factory_reset(key);
+        !key->long_press_ignored &&
+        (uint32_t)(now_ms - key->pressed_at_ms) >= KEY_SHORT_PRESS_LIMIT_MS) {
+        key->long_press_ignored = true;
     }
 }
 
@@ -235,9 +218,8 @@ int bk7259_key_prepare(void) {
     s_key.stable_pressed = s_key.raw_pressed;
     s_key.gesture_armed = !s_key.raw_pressed;
     s_key.press_active = false;
-    s_key.long_press_fired = false;
+    s_key.long_press_ignored = false;
     s_key.raw_changed_ms = rtos_get_time();
-    aosl_atomic_set(&s_factory_reset_requested, 0);
     aosl_atomic_set(&s_conversation_requested, 0);
     aosl_atomic_set(&s_short_press_enabled, 0);
     s_key.prepared = true;
@@ -258,7 +240,7 @@ int bk7259_key_prepare(void) {
     }
 
     MYBOT_LOGI(TAG,
-               "key ready: short release toggles conversation, hold=5000 ms resets, gpio=%u active=%u initial_level=%u",
+               "key ready: short release toggles conversation, holds >=5000 ms ignored, gpio=%u active=%u initial_level=%u",
                (unsigned)s_key_item.gpio, (unsigned)s_key_item.active_level,
                (unsigned)bk_gpio_get_input(s_key_item.gpio));
     return 0;

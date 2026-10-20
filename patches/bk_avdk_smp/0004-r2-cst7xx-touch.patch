@@ -1,0 +1,800 @@
+diff --git a/ap/components/bk_peripheral/include/tp_sensor_devices.h b/ap/components/bk_peripheral/include/tp_sensor_devices.h
+index 6e85328..d746e3c 100755
+--- a/ap/components/bk_peripheral/include/tp_sensor_devices.h
++++ b/ap/components/bk_peripheral/include/tp_sensor_devices.h
+@@ -40,6 +40,9 @@ extern "C" {
+ #if CONFIG_TP_CST9217
+     extern const tp_sensor_config_t tp_sensor_cst9217;
+ #endif
++#if CONFIG_TP_CST7XX
++    extern const tp_sensor_config_t tp_sensor_cst7xx;
++#endif
+ #if CONFIG_TP_CST328
+     extern const tp_sensor_config_t tp_sensor_cst328;
+ #endif
+diff --git a/ap/components/bk_peripheral/src/tp/Kconfig b/ap/components/bk_peripheral/src/tp/Kconfig
+index 74ab93f..df85058 100755
+--- a/ap/components/bk_peripheral/src/tp/Kconfig
++++ b/ap/components/bk_peripheral/src/tp/Kconfig
+@@ -49,6 +49,11 @@ menu "TP"
+ 		bool "Enable TP_CST816D API"
+ 		default n
+ 
++	config TP_CST7XX
++		depends on TP
++		bool "Enable TP_CST7XX API (Hynitron CST726/CST826/CST836U)"
++		default n
++
+ 	config TP_CST9217
+ 		depends on TP
+ 		bool "Enable TP_CST9217 API"
+@@ -68,4 +73,4 @@ menu "TP"
+ 		depends on TP
+ 		bool "Enable TP_FT5316 API"
+ 		default n
+-endmenu
+\ No newline at end of file
++endmenu
+diff --git a/ap/components/bk_peripheral/src/tp/config.cmake b/ap/components/bk_peripheral/src/tp/config.cmake
+index cecc131..c1ad764 100755
+--- a/ap/components/bk_peripheral/src/tp/config.cmake
++++ b/ap/components/bk_peripheral/src/tp/config.cmake
+@@ -38,6 +38,11 @@ if (CONFIG_TP_CST9217)
+ 	list(APPEND GLOBAL_FUNCTION_SYMBOLS "cst9217_detect_sensor")
+ endif()
+ 
++if (CONFIG_TP_CST7XX)
++	list(APPEND TP_DEVICE_FILES ${TP_PATH}/tp_cst7xx.c)
++	list(APPEND GLOBAL_FUNCTION_SYMBOLS "cst7xx_detect_sensor")
++endif()
++
+ if (CONFIG_TP_CST76XX)
+ 	list(APPEND TP_DEVICE_FILES ${TP_PATH}/tp_cst76xx.c)
+ 	list(APPEND GLOBAL_FUNCTION_SYMBOLS "cst76xx_detect_sensor")
+diff --git a/ap/components/bk_peripheral/src/tp/tp_cst7xx.c b/ap/components/bk_peripheral/src/tp/tp_cst7xx.c
+new file mode 100644
+index 0000000..d193808
+--- /dev/null
++++ b/ap/components/bk_peripheral/src/tp/tp_cst7xx.c
+@@ -0,0 +1,259 @@
++// Copyright 2020-2021 Beken
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#include <driver/tp.h>
++#include <driver/tp_types.h>
++#include <os/mem.h>
++
++#define TAG "cst7xx"
++
++#define LOGE(...) BK_LOGE(TAG, ##__VA_ARGS__)
++#define LOGI(...) BK_LOGI(TAG, ##__VA_ARGS__)
++#define LOGD(...) BK_LOGD(TAG, ##__VA_ARGS__)
++#define LOGV(...) BK_LOGV(TAG, ##__VA_ARGS__)
++
++#define CST7XX_I2C_ADDRESS        (0x15)
++#define CST7XX_STATUS_REG         (0x00)
++#define CST7XX_INFO_REG           (0xA6)
++#define CST7XX_NORMAL_MODE_REG    (0xFE)
++#define CST7XX_NORMAL_MODE_VALUE  (0x00)
++#define CST7XX_EXPECTED_CHIP_TYPE (0x13)
++#define CST7XX_MAX_TOUCH_NUM      (2)
++#define CST7XX_POINT_SIZE         (6)
++#define CST7XX_REPORT_SIZE        (3 + CST7XX_POINT_SIZE * CST7XX_MAX_TOUCH_NUM)
++
++#define SENSOR_I2C_READ(reg, buff, len) \
++	cb->read_uint8(CST7XX_I2C_ADDRESS, reg, buff, len)
++#define SENSOR_I2C_WRITE(reg, buff, len) \
++	cb->write_uint8(CST7XX_I2C_ADDRESS, reg, buff, len)
++
++static bool s_tp_down[CST7XX_MAX_TOUCH_NUM];
++static uint16_t s_last_x[CST7XX_MAX_TOUCH_NUM];
++static uint16_t s_last_y[CST7XX_MAX_TOUCH_NUM];
++
++static void cst7xx_touch_up(tp_data_t *data, uint8_t slot)
++{
++	if (slot >= CST7XX_MAX_TOUCH_NUM || !s_tp_down[slot])
++	{
++		return;
++	}
++
++	data[slot].event = TP_EVENT_TYPE_UP;
++	data[slot].track_id = slot;
++	data[slot].x_coordinate = s_last_x[slot];
++	data[slot].y_coordinate = s_last_y[slot];
++	data[slot].timestamp = rtos_get_time();
++	s_tp_down[slot] = false;
++}
++
++static void cst7xx_touch_down(tp_data_t *data, uint8_t slot,
++	uint16_t x, uint16_t y, uint8_t event)
++{
++	if (slot >= CST7XX_MAX_TOUCH_NUM)
++	{
++		return;
++	}
++
++	data[slot].event = s_tp_down[slot] ? TP_EVENT_TYPE_MOVE : event;
++	data[slot].track_id = slot;
++	data[slot].x_coordinate = x;
++	data[slot].y_coordinate = y;
++	data[slot].width = 0;
++	data[slot].timestamp = rtos_get_time();
++	s_last_x[slot] = x;
++	s_last_y[slot] = y;
++	s_tp_down[slot] = true;
++}
++
++static bool cst7xx_detect(const tp_i2c_callback_t *cb)
++{
++	uint8_t info[6] = {0};
++
++	if (cb == NULL)
++	{
++		LOGE("%s, pointer is null!\r\n", __func__);
++		return false;
++	}
++
++	if (BK_OK != SENSOR_I2C_READ(CST7XX_INFO_REG, info, sizeof(info)))
++	{
++		LOGE("%s, read reg 0xA6 fail!\r\n", __func__);
++		return false;
++	}
++
++	LOGI("%s, fw=0x%02X project=0x%02X chip=0x%02X\r\n",
++		__func__, info[0], info[3], info[4]);
++
++	if (info[4] != CST7XX_EXPECTED_CHIP_TYPE)
++	{
++		LOGE("%s, chip type 0x%02X != 0x%02X\r\n",
++			__func__, info[4], CST7XX_EXPECTED_CHIP_TYPE);
++		return false;
++	}
++
++	return true;
++}
++
++static int cst7xx_init(const tp_i2c_callback_t *cb,
++	tp_sensor_user_config_t *config)
++{
++	uint8_t value = CST7XX_NORMAL_MODE_VALUE;
++
++	if (cb == NULL || config == NULL)
++	{
++		LOGE("%s, pointer is null!\r\n", __func__);
++		return BK_FAIL;
++	}
++
++	os_memset(s_tp_down, 0, sizeof(s_tp_down));
++	os_memset(s_last_x, 0, sizeof(s_last_x));
++	os_memset(s_last_y, 0, sizeof(s_last_y));
++
++	if (BK_OK != SENSOR_I2C_WRITE(CST7XX_NORMAL_MODE_REG, &value, 1))
++	{
++		LOGE("%s, enter normal mode fail!\r\n", __func__);
++		return BK_FAIL;
++	}
++
++	return BK_OK;
++}
++
++static int cst7xx_read_tp_info(const tp_i2c_callback_t *cb,
++	uint8_t max_num, uint8_t *buff)
++{
++	uint8_t report[CST7XX_REPORT_SIZE] = {0};
++	uint8_t reported_ids = 0;
++	tp_data_t *data = (tp_data_t *)buff;
++
++	if (cb == NULL || buff == NULL)
++	{
++		LOGE("%s, pointer is null!\r\n", __func__);
++		return BK_FAIL;
++	}
++
++	if (max_num == 0)
++	{
++		LOGE("%s, max_num is 0!\r\n", __func__);
++		return BK_FAIL;
++	}
++
++	if (BK_OK != SENSOR_I2C_READ(CST7XX_STATUS_REG, report, sizeof(report)))
++	{
++		LOGE("%s, read report fail!\r\n", __func__);
++		return BK_FAIL;
++	}
++
++	uint8_t touch_num = report[2];
++	if (touch_num > CST7XX_MAX_TOUCH_NUM)
++	{
++		LOGE("%s, invalid touch num %u\r\n", __func__, touch_num);
++		return BK_FAIL;
++	}
++	/* Validate the whole frame before changing retained finger state. A bad
++	 * second contact must cancel the batch, not publish a partial first touch. */
++	uint8_t seen_ids = 0;
++	for (uint8_t i = 0; i < touch_num; i++)
++	{
++		uint8_t offset = 3 + i * CST7XX_POINT_SIZE;
++		uint8_t id = (report[offset + 2] >> 4) & 0x0F;
++		uint8_t event = (report[offset] >> 6) & 0x03;
++		if (id >= CST7XX_MAX_TOUCH_NUM || id >= max_num || event > 2 ||
++		    (seen_ids & (1U << id)))
++		{
++			return BK_FAIL;
++		}
++		seen_ids |= (1U << id);
++	}
++
++	for (uint8_t i = 0; i < touch_num; i++)
++	{
++		uint8_t offset = 3 + i * CST7XX_POINT_SIZE;
++		uint8_t id = (report[offset + 2] >> 4) & 0x0F;
++		uint8_t slot = (max_num == 1) ? 0 : id;
++		uint8_t event = (report[offset] >> 6) & 0x03;
++		uint16_t x = ((uint16_t)(report[offset] & 0x0F) << 8)
++			| report[offset + 1];
++		uint16_t y = ((uint16_t)(report[offset + 2] & 0x0F) << 8)
++			| report[offset + 3];
++
++		if (id >= CST7XX_MAX_TOUCH_NUM
++			|| slot >= CST7XX_MAX_TOUCH_NUM
++			|| slot >= max_num)
++		{
++			LOGE("%s, invalid touch id %u\r\n", __func__, id);
++			continue;
++		}
++
++		LOGV("%s, id=%u slot=%u event=%u x=%u y=%u\r\n",
++			__func__, id, slot, event, x, y);
++
++		reported_ids |= (1U << slot);
++		if (event == 1)
++		{
++			/* Explicit UP carries the final position even if no MOVE report
++			 * preceded it. Do not turn a release outside a button into a tap. */
++			s_last_x[slot] = x;
++			s_last_y[slot] = y;
++			cst7xx_touch_up(data, slot);
++		}
++		else if (event == 0 || event == 2)
++		{
++			cst7xx_touch_down(data, slot, x, y,
++				event == 0 ? TP_EVENT_TYPE_DOWN : TP_EVENT_TYPE_MOVE);
++		}
++		else
++		{
++			LOGD("%s, ignore event %u for id %u\r\n", __func__, event, id);
++		}
++	}
++
++	uint8_t slot_num = (max_num < CST7XX_MAX_TOUCH_NUM)
++		? max_num : CST7XX_MAX_TOUCH_NUM;
++	for (uint8_t slot = 0; slot < slot_num; slot++)
++	{
++		if ((reported_ids & (1U << slot)) == 0)
++		{
++			cst7xx_touch_up(data, slot);
++		}
++	}
++
++	LOGV("%s, touch_num=%u\r\n", __func__, touch_num);
++	return BK_OK;
++}
++
++const tp_sensor_config_t tp_sensor_cst7xx =
++{
++	.name = "cst7xx",
++	.def_ppi = PPI_400X400,
++	.def_int_type = TP_INT_TYPE_FALLING_EDGE,
++	.def_refresh_rate = 20,
++	.def_tp_num = CST7XX_MAX_TOUCH_NUM,
++	.id = TP_ID_CST7XX,
++	.address = CST7XX_I2C_ADDRESS,
++	.detect = cst7xx_detect,
++	.init = cst7xx_init,
++	.read_tp_info = cst7xx_read_tp_info,
++};
++
++const tp_sensor_config_t *cst7xx_detect_sensor(const tp_i2c_callback_t *cb)
++{
++	if (cst7xx_detect(cb))
++	{
++		return &tp_sensor_cst7xx;
++	}
++
++	return NULL;
++}
++
++BK_TP_SENSOR_DETECT_SECTION(cst7xx_detect_sensor);
+diff --git a/ap/components/bk_peripheral/src/tp/tp_driver.c b/ap/components/bk_peripheral/src/tp/tp_driver.c
+index aef8720..80fbc2f 100755
+--- a/ap/components/bk_peripheral/src/tp/tp_driver.c
++++ b/ap/components/bk_peripheral/src/tp/tp_driver.c
+@@ -23,7 +23,6 @@
+ #include <driver/i2c.h>
+ #include <driver/tp.h>
+ #include <driver/tp_types.h>
+-#include "driver/drv_tp.h"
+ #include <common/bk_compiler.h>
+ #include <sw_i2c.h>
+ #include "tp_i2c_ext.h"
+@@ -57,16 +56,36 @@
+ 
+ static beken_semaphore_t tp_sema = NULL;
+ static beken_thread_t tp_thread_handle = NULL;
++/* Exit notification is process-lifetime: a task on the other core may wake
++ * before rtos_set_semaphore() itself has returned. Never destroy this handle. */
++static beken_semaphore_t tp_exited = NULL;
++static uint32_t tp_stop_requested;
++static bool tp_irq_owned;
++static tp_event_handler_t tp_handler;
++static void *tp_handler_arg;
++
++#define TP_OWNER_WAIT_MS 50U
++#define TP_STOP_TIMEOUT_MS 3000U
+ 
+ static const tp_sensor_config_t *current_sensor = NULL;
+ static tp_device_t tp_device = {0};
+-volatile static uint32_t tp_driver_init_flag = false;
+-volatile static uint32_t tp_driver_suspend_flag = false;
++static volatile uint32_t tp_driver_init_flag = false;
++static volatile uint32_t tp_driver_suspend_flag = false;
+ static const tp_sensor_config_t **tp_sensor_devices_list;
+ static uint16_t tp_sensor_devices_size;
+ 
+ static sw_i2c_handle_t *tp_i2c_handle = NULL;
+ 
++bk_err_t bk_tp_driver_set_callback(tp_event_handler_t handler, void *user_data)
++{
++    if (tp_thread_handle || tp_i2c_handle || tp_irq_owned) {
++        return BK_FAIL;
++    }
++    tp_handler = handler;
++    tp_handler_arg = user_data;
++    return BK_OK;
++}
++
+ static const tp_i2c_callback_t tp_i2c_cb =
+ {
+     tp_i2c_read_uint8,
+@@ -283,14 +302,18 @@ bk_err_t bk_tp_gpio_init(const tp_config_t *config)
+ 	/* INT GPIO - output high */
+ 	mode.io_mode = GPIO_OUTPUT_ENABLE;
+ 	mode.pull_mode = GPIO_PULL_DISABLE;
+-	BK_LOG_ON_ERR(bk_gpio_set_config(int_id, &mode));
+-	BK_LOG_ON_ERR(bk_gpio_set_output_high(int_id));
++	if (bk_gpio_set_config(int_id, &mode) != BK_OK ||
++	    bk_gpio_set_output_high(int_id) != BK_OK) {
++		return BK_FAIL;
++	}
+ 
+ 	/* RESET GPIO - output low */
+ 	mode.io_mode = GPIO_OUTPUT_ENABLE;
+ 	mode.pull_mode = GPIO_PULL_DISABLE;
+-	BK_LOG_ON_ERR(bk_gpio_set_config(rst_id, &mode));
+-	BK_LOG_ON_ERR(bk_gpio_set_output_low(rst_id));
++	if (bk_gpio_set_config(rst_id, &mode) != BK_OK ||
++	    bk_gpio_set_output_low(rst_id) != BK_OK) {
++		return BK_FAIL;
++	}
+ 
+ 	// this delay time maybe can optimization.
+ 	#if CONFIG_TP_HY4633
+@@ -299,15 +322,15 @@ bk_err_t bk_tp_gpio_init(const tp_config_t *config)
+ 		rtos_delay_milliseconds(20);
+ 	#elif CONFIG_TP_CST9217
+ 		rtos_delay_milliseconds(20);
++	#elif CONFIG_TP_CST7XX
++		rtos_delay_milliseconds(20);
+ 	#elif CONFIG_TP_CST76XX
+ 		rtos_delay_milliseconds(50);
+ 	#else
+ 		rtos_delay_milliseconds(10);
+ 	#endif
+ 	
+-    BK_LOG_ON_ERR(bk_gpio_set_output_high(rst_id));
+-    
+-    return BK_OK;
++    return bk_gpio_set_output_high(rst_id);
+ }
+ 
+ // tp i2c communication initialization.
+@@ -338,9 +361,11 @@ static void tp_int_gpio_isr(gpio_id_t id)
+ {
+     // LOGD("tp int isr index:%d\n", id);
+ 
+-    if ((false != tp_driver_init_flag) && (false == tp_driver_suspend_flag))
++    if (__atomic_load_n(&tp_driver_init_flag, __ATOMIC_ACQUIRE) &&
++        !__atomic_load_n(&tp_driver_suspend_flag, __ATOMIC_ACQUIRE))
+     {
+-        bk_gpio_disable_interrupt(TP_INT_PIN);
++        /* The coalescing notification and IRQ registration live across stops.
++         * An already-dispatched IRQ cannot race a deleted semaphore. */
+         rtos_set_semaphore(&tp_sema);
+     }
+ }
+@@ -365,7 +390,9 @@ bk_err_t bk_tp_int_init(const tp_config_t *config)
+ 
+ 	mode.io_mode = GPIO_INPUT_ENABLE;
+ 	mode.pull_mode = GPIO_PULL_DISABLE;
+-	BK_LOG_ON_ERR(bk_gpio_set_config(int_id, &mode));
++	if (bk_gpio_set_config(int_id, &mode) != BK_OK) {
++		return BK_FAIL;
++	}
+ 
+ 	if (TP_INT_TYPE_RISING_EDGE == config->int_type)
+ 	{
+@@ -383,72 +410,55 @@ bk_err_t bk_tp_int_init(const tp_config_t *config)
+ 	{
+ 		int_type = GPIO_INT_TYPE_HIGH_LEVEL;
+ 	}	
+-    BK_LOG_ON_ERR(bk_gpio_register_isr(int_id, tp_int_gpio_isr));
+-    BK_LOG_ON_ERR(bk_gpio_set_interrupt_type(int_id, int_type));
+-    BK_LOG_ON_ERR(bk_gpio_enable_interrupt(int_id));
+-
+-    return BK_OK;
++    if (bk_gpio_register_isr(int_id, tp_int_gpio_isr) != BK_OK ||
++        bk_gpio_set_interrupt_type(int_id, int_type) != BK_OK) {
++        return BK_FAIL;
++    }
++    tp_irq_owned = true;
++    return bk_gpio_enable_interrupt(int_id);
+ }
+ 
+ bk_err_t bk_tp_int_deinit(void)
+ {
+     gpio_id_t int_id = TP_INT_PIN;
+ 
+-    BK_LOG_ON_ERR(bk_gpio_disable_interrupt(int_id));
+-
++    if (tp_irq_owned && bk_gpio_disable_interrupt(int_id) != BK_OK) {
++        return BK_FAIL;
++    }
++    tp_irq_owned = false;
+     return BK_OK;
+ }
+ 
+ void tp_process_task(beken_thread_arg_t arg)
+ {
+-    int ret;
++    (void)arg;
+     tp_data_t tp_data[TP_SUPPORT_MAX_NUM];
+-
+-    while (1)
+-    {
+-        ret = rtos_get_semaphore(&tp_sema, BEKEN_NEVER_TIMEOUT);
+-        if(kNoErr != ret)
+-        {
+-            LOGE("%s, get semaphore fail!\r\n", __func__);
++    while (!__atomic_load_n(&tp_stop_requested, __ATOMIC_ACQUIRE)) {
++        int ret = rtos_get_semaphore(&tp_sema, TP_OWNER_WAIT_MS);
++        if (__atomic_load_n(&tp_stop_requested, __ATOMIC_ACQUIRE)) {
++            break;
+         }
+-
+-        if (false != tp_driver_suspend_flag)
+-        {
++        if (ret != BK_OK ||
++            __atomic_load_n(&tp_driver_suspend_flag, __ATOMIC_ACQUIRE)) {
+             continue;
+         }
+-
+         os_memset(tp_data, 0x00, sizeof(tp_data));
+-        if (NULL != current_sensor->read_tp_info)
+-        {
+-            if (BK_OK != current_sensor->read_tp_info(&tp_i2c_cb, TP_SUPPORT_MAX_NUM, (void *)tp_data))
+-            {
+-                LOGE("%s get tp info fail!\r\n", __func__);
+-            }
+-            else
+-            {
+-                for (uint8_t i=0; i<TP_SUPPORT_MAX_NUM; i++)
+-                {
+-                    if ((TP_EVENT_TYPE_DOWN == tp_data[i].event) || (TP_EVENT_TYPE_UP == tp_data[i].event) || (TP_EVENT_TYPE_MOVE == tp_data[i].event))
+-                    {
+-                        LOGV("event=%d, track_id=%d, x=%d, y=%d, s=%d, timestamp=%u.\r\n", 
+-                                    tp_data[i].event,
+-                                    tp_data[i].track_id,
+-                                    tp_data[i].x_coordinate,
+-                                    tp_data[i].y_coordinate,
+-                                    tp_data[i].width,
+-                                    tp_data[i].timestamp);
+-                    }
+-
+-                    bk_tp_read_info_callback(&tp_data[i]);
+-                }
+-            }
++        ret = current_sensor->read_tp_info(&tp_i2c_cb, TP_SUPPORT_MAX_NUM, (void *)tp_data);
++        if (__atomic_load_n(&tp_stop_requested, __ATOMIC_ACQUIRE)) {
++            break;
+         }
+-
+-        if (false == tp_driver_suspend_flag)
+-        {
+-            BK_LOG_ON_ERR(bk_gpio_enable_interrupt(TP_INT_PIN));
++        if (tp_handler) {
++            tp_handler(ret == BK_OK ? tp_data : NULL, TP_SUPPORT_MAX_NUM, tp_handler_arg);
++        } else if (ret == BK_OK) {
++            for (uint8_t i = 0; i < TP_SUPPORT_MAX_NUM; i++) {
++                bk_tp_read_info_callback(&tp_data[i]);
++            }
+         }
+     }
++    /* All sensor I/O, the shared I2C bus lock and borrowed callbacks are done.
++     * No resource owned by this driver is touched after this notification. */
++    rtos_set_semaphore(&tp_exited);
++    rtos_delete_thread(NULL);
+ }
+ 
+ bk_err_t bk_tp_driver_init(tp_config_t *config)
+@@ -459,17 +469,27 @@ bk_err_t bk_tp_driver_init(tp_config_t *config)
+         return BK_FAIL;
+     }
+ 
+-    if ( false != tp_driver_init_flag)
++    if (tp_driver_init_flag || tp_thread_handle || tp_i2c_handle || tp_irq_owned)
+     {
+         LOGE("%s, reinit is denied!\r\n", __func__);
+         return BK_FAIL;
+     }
+ 
+-    int ret = BK_OK;
++    int ret = BK_FAIL;
+     tp_sensor_user_config_t sensor_user_config = {0};
+ 
+     LOGD("%s, ppi=%d, int_type=%d, refresh_rate=%d, tp_num=%d.\r\n", __func__, config->ppi, config->int_type, config->refresh_rate, config->tp_num);
+ 
++    /* These two coalescing notifications are bounded, process-lifetime objects.
++     * Keeping the IRQ notification alive also covers an already-dispatched ISR
++     * after disable_interrupt() on the other core. */
++    if ((!tp_sema && rtos_init_semaphore_ex(&tp_sema, 1, 0) != BK_OK) ||
++        (!tp_exited && rtos_init_semaphore_ex(&tp_exited, 1, 0) != BK_OK)) {
++        return BK_FAIL;
++    }
++    while (rtos_get_semaphore(&tp_sema, 0) == BK_OK) {}
++    while (rtos_get_semaphore(&tp_exited, 0) == BK_OK) {}
++
+     // gpio initialization.
+     if (BK_OK != bk_tp_gpio_init((const tp_config_t *)config))
+     {
+@@ -481,29 +501,12 @@ bk_err_t bk_tp_driver_init(tp_config_t *config)
+     i2c_cfg.sda_pin = TP_I2C_SDA_PIN;
+     i2c_cfg.scl_pin = TP_I2C_SCL_PIN;
+     tp_i2c_handle = sw_i2c_init(&i2c_cfg);
+-
+-    rtos_delay_milliseconds(10);
+-
+-    ret = rtos_init_semaphore_ex(&tp_sema, 1, 0);
+-    if(kNoErr != ret)
+-    {
+-        LOGE("%s semaphore init fail!\r\n", __func__);
+-        return ret;
+-    }
+-
+-    ret = rtos_create_thread(&tp_thread_handle, TP_THREAD_PRIORITY, "tp", (beken_thread_function_t)tp_process_task, TP_THREAD_STACK_SIZE, (beken_thread_arg_t)0);     
+-    if(kNoErr != ret)
+-    {
+-        LOGE("%s create thread fail!\r\n", __func__);
+-        goto error;
+-    }
+-
+-    if (BK_OK != bk_tp_int_init((const tp_config_t *)config))
+-    {
+-        LOGE("%s tp int init fail!\r\n", __func__);
++    if (!tp_i2c_handle) {
+         return BK_FAIL;
+     }
+ 
++    rtos_delay_milliseconds(10);
++
+     #if CONFIG_TP_HY4633
+         rtos_delay_milliseconds(1000);
+     #elif CONFIG_TP_FT6336
+@@ -516,9 +519,12 @@ bk_err_t bk_tp_driver_init(tp_config_t *config)
+     if (NULL == current_sensor)
+     {
+         LOGE("%s no tp sensor found!\r\n", __func__);
+-        return BK_FAIL;
++        goto error;
+     }
+ 
++    if (current_sensor->read_tp_info == NULL) {
++        goto error;
++    }
+     if (NULL != current_sensor->init)
+     {
+         sensor_user_config.x_size = (config->ppi >> 16) & 0xFFFF;
+@@ -530,7 +536,7 @@ bk_err_t bk_tp_driver_init(tp_config_t *config)
+         if (BK_OK != current_sensor->init(&tp_i2c_cb, &sensor_user_config))
+         {
+             LOGE("%s sensor init fail!\r\n", __func__);
+-            return BK_FAIL;
++            goto error;
+         }
+     }
+ 
+@@ -543,23 +549,29 @@ bk_err_t bk_tp_driver_init(tp_config_t *config)
+     tp_device.tp_num = config->tp_num;
+     LOGD("%s, name=%s, id=%d, ppi=%d, x_size=%d, y_size=%d, int_type=%d, refresh_rate=%d, tp_num=%d.\r\n", __func__, tp_device.name, tp_device.id, tp_device.ppi, sensor_user_config.x_size, sensor_user_config.y_size, tp_device.int_type, tp_device.refresh_rate, tp_device.tp_num);
+ 
+-    // initilization finish.
+-    tp_driver_init_flag = true;
+-    tp_driver_suspend_flag = false;
+-
+-    return ret;
++    __atomic_store_n(&tp_stop_requested, false, __ATOMIC_RELEASE);
++    __atomic_store_n(&tp_driver_suspend_flag, false, __ATOMIC_RELEASE);
++    ret = rtos_create_thread(&tp_thread_handle, TP_THREAD_PRIORITY, "tp",
++                            tp_process_task, TP_THREAD_STACK_SIZE, (beken_thread_arg_t)0);
++    if (ret != BK_OK) {
++        tp_thread_handle = NULL;
++        goto error;
++    }
++    __atomic_store_n(&tp_driver_init_flag, true, __ATOMIC_RELEASE);
++    if (bk_tp_int_init(config) != BK_OK) {
++        goto error;
++    }
++    /* Read initial idle/held state; a finger held through boot must not click. */
++    if (rtos_set_semaphore(&tp_sema) != BK_OK) {
++        /* A hardware IRQ may have already queued the same coalesced wake. */
++    }
++    return BK_OK;
+ 
+ error:
+-    if (NULL != tp_sema)
+-    {
+-        if (kNoErr != rtos_deinit_semaphore(&tp_sema))
+-        {
+-            LOGE("%s deinit semaaphore fail!\r\n", __func__);
+-        }
+-        tp_sema = NULL;
++    if (bk_tp_driver_deinit() != BK_OK) {
++        LOGE("%s rollback pending; retain resources for deinit retry\r\n", __func__);
+     }
+-
+-    return ret;
++    return BK_FAIL;
+ }
+ 
+ bk_err_t bk_tp_driver_suspend(void)
+@@ -569,9 +581,8 @@ bk_err_t bk_tp_driver_suspend(void)
+         return BK_OK;
+     }
+ 
+-    tp_driver_suspend_flag = true;
+-    BK_LOG_ON_ERR(bk_gpio_disable_interrupt(TP_INT_PIN));
+-    return BK_OK;
++    __atomic_store_n(&tp_driver_suspend_flag, true, __ATOMIC_RELEASE);
++    return bk_gpio_disable_interrupt(TP_INT_PIN);
+ }
+ 
+ bk_err_t bk_tp_driver_resume(void)
+@@ -581,44 +592,38 @@ bk_err_t bk_tp_driver_resume(void)
+         return BK_OK;
+     }
+ 
+-    tp_driver_suspend_flag = false;
+-    BK_LOG_ON_ERR(bk_gpio_enable_interrupt(TP_INT_PIN));
+-    return BK_OK;
++    __atomic_store_n(&tp_driver_suspend_flag, false, __ATOMIC_RELEASE);
++    return bk_gpio_enable_interrupt(TP_INT_PIN);
+ }
+ 
+ bk_err_t bk_tp_driver_deinit(void)
+ {
+-    int ret = BK_OK;
+-
+-    if (NULL != tp_sema)
+-    {
+-        if (kNoErr != rtos_deinit_semaphore(&tp_sema))
+-        {
+-            LOGE("%s deinit semaphore fail!\r\n", __func__);
+-            ret = BK_FAIL;
+-        }
+-        tp_sema = NULL;
++    __atomic_store_n(&tp_driver_init_flag, false, __ATOMIC_RELEASE);
++    __atomic_store_n(&tp_driver_suspend_flag, true, __ATOMIC_RELEASE);
++    __atomic_store_n(&tp_stop_requested, true, __ATOMIC_RELEASE);
++    if (bk_tp_int_deinit() != BK_OK) {
++        return BK_FAIL;
+     }
+-
+-    if (NULL != tp_thread_handle)
+-    {
+-        if (kNoErr != rtos_delete_thread(&tp_thread_handle))
+-        {
+-            LOGE("%s delete thread fail!\r\n", __func__);
+-            ret = BK_FAIL;
++    if (tp_thread_handle) {
++        if (rtos_set_semaphore(&tp_sema) != BK_OK) {
++            /* A queued wake or the finite owner wait observes stop. */
++        }
++        if (rtos_get_semaphore(&tp_exited, TP_STOP_TIMEOUT_MS) != BK_OK) {
++            LOGE("%s task exit timeout; retaining resources\r\n", __func__);
++            return BK_FAIL;
+         }
++        /* The worker now only self-deletes; never join a potentially freed TCB. */
+         tp_thread_handle = NULL;
+     }
+-
+-    bk_tp_int_deinit();
+-
++    if (tp_i2c_handle) {
++        if (sw_i2c_deinit(tp_i2c_handle) != BK_OK) {
++            return BK_FAIL;
++        }
++        tp_i2c_handle = NULL;
++    }
+     current_sensor = NULL;
+     os_memset(&tp_device, 0x00, sizeof(tp_device_t));
+-
+-    tp_driver_init_flag = false;
+-    tp_driver_suspend_flag = false;
+-
+-    return ret;
++    return BK_OK;
+ }
+ 
+ tp_device_t *bk_tp_get_device(void)
+diff --git a/ap/components/bk_peripheral/src/tp/tp_sensor_devices.c b/ap/components/bk_peripheral/src/tp/tp_sensor_devices.c
+index c5d21a2..3ff5e66 100755
+--- a/ap/components/bk_peripheral/src/tp/tp_sensor_devices.c
++++ b/ap/components/bk_peripheral/src/tp/tp_sensor_devices.c
+@@ -46,6 +46,10 @@ const tp_sensor_config_t *tp_sensor_configs[] =
+ 	&tp_sensor_cst9217,
+ #endif
+ 
++#if CONFIG_TP_CST7XX
++    &tp_sensor_cst7xx,
++#endif
++
+ #if CONFIG_TP_CST328
+     &tp_sensor_cst328,
+ #endif
+diff --git a/ap/include/driver/tp.h b/ap/include/driver/tp.h
+index 1959cb3..1c17105 100755
+--- a/ap/include/driver/tp.h
++++ b/ap/include/driver/tp.h
+@@ -23,9 +23,20 @@ extern "C" {
+ 
+ // TP support maximum number.
+ #ifndef TP_SUPPORT_MAX_NUM
++  #if CONFIG_TP_CST7XX
++    #define TP_SUPPORT_MAX_NUM (2)
++  #else
+     #define TP_SUPPORT_MAX_NUM (1)
++  #endif
+ #endif
+ 
++/* Optional bounded, batch callback from the TP task (never IRQ context).
++ * points == NULL signals a read/transport failure and cancels the gesture.
++ * Register/unregister only while stopped; deinit waits for callback completion.
++ * The array is borrowed only for the call. A handler avoids drv_tp's heap queue. */
++typedef void (*tp_event_handler_t)(const tp_data_t *points, uint8_t count, void *user_data);
++bk_err_t bk_tp_driver_set_callback(tp_event_handler_t handler, void *user_data);
++
+ /**
+  * @brief     Set tp sensor device list
+  *
+diff --git a/ap/include/driver/tp_types.h b/ap/include/driver/tp_types.h
+index b2384a7..b43aa2d 100755
+--- a/ap/include/driver/tp_types.h
++++ b/ap/include/driver/tp_types.h
+@@ -39,6 +39,7 @@ typedef enum
+ 	TP_ID_CST328,
+ 	TP_ID_FT5316,
+ 	TP_ID_CST76XX,
++	TP_ID_CST7XX,
+ } tp_sensor_id_t;
+ 
+ /**

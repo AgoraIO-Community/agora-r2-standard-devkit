@@ -31,7 +31,8 @@ extern "C" {
 
 int mybot_bk7259_platform_prepare(void);
 int mybot_bk7259_platform_register(void);
-/* Returns 1 when APSTA was required, 0 for an existing connection, or -1. */
+/* Returns 1 when APSTA was required, 0 for an existing connection, or a
+ * negative error/reset/provisioning result (see bk7259_provision.h). */
 int mybot_bk7259_ensure_network(const char *device_id);
 int mybot_bk7259_provision_wifi(const char *device_id);
 void mybot_bk7259_platform_shutdown(void);

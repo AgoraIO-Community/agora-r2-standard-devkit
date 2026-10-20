@@ -33,8 +33,8 @@ to run the SDK on the BK7259 platform:
 - Three analog microphone inputs with appended digital-reference AEC, speaker playback, volume control, and audio power
   management.
 - Optional MIPI CSI camera capture, ISP MP scaling, hardware FLEXA H.264 encoding, and encoded video uplink.
-- Single GPIO conversation/factory-reset key, MIPI display, EasyFlash KV, HTTPS, and device identity
-  adapters.
+- One physical button for short-press conversation control and hardware long-press power on/off,
+  touchscreen Wi-Fi setup/factory reset, MIPI display, EasyFlash KV, HTTPS, and device identity adapters.
 - Full-duplex audio and optional uplink video for AI multimodal sessions over Agora RTSA.
 - Embedded Chinese and English OGG assets for provisioning prompts and pairing-code announcements.
 - A complete flash image and an OTA package containing both the CP and AP firmware.
@@ -64,7 +64,7 @@ The BK7259 firmware uses an AP/CP dual-core architecture:
   provisioning or normal STA mode according to the saved Wi-Fi credentials. After preparing the
   product-owned key, display, and network manager, it checks for an interrupted factory reset
   before registering the platform or starting the network and SDK. Once the network is up it
-  starts the SDK and handles conversation and factory-reset requests.
+  starts the SDK and handles conversation, Wi-Fi setup, and factory-reset requests.
 
 ## Repository layout
 
@@ -241,6 +241,9 @@ the target development board and the Beken flashing documentation shipped in `bk
 
 The reference device workflow is:
 
+On the current R2 hardware, hold the button to power on; holding it again powers off.
+Once powered on, use short press/release gestures for conversations.
+
 1. On first boot, or when no valid Wi-Fi credentials exist, the device enters APSTA provisioning
    mode and creates an open `mybot-xxxx` SoftAP.
 2. Connect to the SoftAP and open `http://192.168.4.1/`, then select the target network and submit
@@ -248,17 +251,21 @@ The reference device workflow is:
    — see [Wi-Fi provisioning](#wi-fi-provisioning).
 3. After the STA link obtains an IPv4 address, the portal and SoftAP stop and the device starts the
    SDK for registration, pairing, and authentication.
-4. An unclaimed device displays and announces its pairing code for entry in the web console. After
-   the device is claimed, briefly press and release the conversation button to start an AI
+4. An unclaimed device displays and announces its six-digit pairing code for entry in the web console;
+   preserve any leading zeros. Once the device is claimed and shows `state: ready`, briefly press
+   and release the conversation button to start an AI
    conversation with full-duplex audio; camera video uplink is included when `CONFIG_MYBOT_VIDEO=y`.
    Press and release again to stop it.
-5. Hold the same button for five seconds to reset the local device settings and restart Wi-Fi setup.
+5. To change Wi-Fi, tap Settings, Wi-Fi setup, and confirm. The device stops the SDK, opens its
+   provisioning hotspot, and starts the SDK again after connecting. Cancel attempts the saved network.
+6. Tap Settings at the upper right, choose Factory reset, and confirm to clear local settings and
+   restart Wi-Fi setup. Cancel closes the dialog without stopping a conversation.
 
 The Yunqu V1.0 product exposes one firmware-visible direct GPIO conversation key:
 
 | Button | GPIO | Active level | Short press | Long press |
 | --- | --- | --- | --- | --- |
-| Conversation | GPIO47 (`KEY1`) | Low | Release to start or stop a conversation | Hold 5 seconds to factory reset |
+| Power / conversation | GPIO47 (`KEY1`, firmware input) | Low | Release: `READY` starts; `IN_CONVERSATION` stops | Hardware power on/off |
 
 GPIO assignments and display, audio, and camera peripheral connections are board-level
 configuration.
@@ -322,19 +329,36 @@ two-sample debounce. A short press posts a request on release. The product contr
 dispatches the conversation-stop event. Other SDK states ignore short presses. Double-press,
 volume, and reserved-key actions are not registered.
 
-Holding the key for five seconds posts one factory-reset request and suppresses the short action
-on release. A key already held when the platform prepares must be released before a new gesture
-can start, preventing a reset loop across reboot. Long press is available after successful
-platform preparation, including Wi-Fi provisioning and periods before the SDK attaches its key
-callback. Five seconds is the gesture threshold; completing reset also requires SDK and network
-shutdown.
+The current R2 hardware handles power on/off when the same button is held. The firmware's
+`KEY_SHORT_PRESS_LIMIT_MS=5000` only suppresses conversation events for a prolonged press and
+its release. This is a conversation-event filter; power-button timing is defined by the hardware.
+A key already held when the platform prepares must be released before a new gesture can start.
+Factory reset is controlled by the touchscreen Settings, Factory reset and confirmation flow.
 
 [usr_gpio_cfg.h](projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h) sets GPIO47
 (`KEY1`) as an input with an internal pull-up. The CEN button remains hardware reset only.
 
 ## Factory reset
 
-The product task owns reset execution; the key timer only posts requests. It displays the reset
+Settings at the upper right is available on provisioning, pairing, disconnected and SDK-failure
+pages as well as the face pages. Factory reset opens a separate confirmation; only a fresh,
+unmoved single-finger release activates a button. Dragging, multiple fingers, input cancellation
+and the finger that opened a dialog cannot activate its next page. Reset/Retry becomes busy
+immediately after confirmation. Restoring/rebooting cannot be cancelled, and the failure page
+offers Retry directly rather than returning to a stopped conversation.
+
+The CST7XX controller uses reset GPIO44, interrupt GPIO43 and software I2C SDA65/SCL64.
+GPIO43 declares both output and input capabilities: the controller reset sequence first drives
+INT high, then switches that pin to interrupt input. An input-only declaration fails GPIO setup.
+Its 480x640 coordinates map to the existing 640x480 display as `x=639-raw_y, y=raw_x`.
+The product display owner keeps touch alive across SDK detach; it starts before reset-marker
+checks and camera use. Camera and touch share the serialized software-I2C bus and pin references.
+The CST7XX driver and bounded shutdown support are supplied by the recorded `0004` vendor patch.
+If touch is unavailable, recovery controls are disabled with a visible indication; normal
+SDK startup and the physical conversation key remain available.
+
+The product task owns reset execution; the touchscreen confirmation only posts a coalescing request.
+It displays the reset
 status and persists `mybot.factory_reset.v1` before stopping the SDK. Cleanup starts only after
 the SDK reaches `STOPPED` and the portal, SoftAP, scan, and STA teardown succeed, so configuration
 writers cannot recreate deleted records.
@@ -351,10 +375,10 @@ setup flow. Reset removes only these product records. The UID-derived device ID 
 and reset does not send a server-side unbind request.
 
 If persistence, SDK/network shutdown, or deletion fails, the device displays a failure and waits
-for a fresh five-second press to retry. Incomplete cleanup keeps the persisted marker, or attempts
+for a new tap on Retry. Incomplete cleanup keeps the persisted marker, or attempts
 to restore it if the final marker deletion fails. Boot checks a valid marker before network/SDK
 startup and resumes cleanup. If marker lookup reports invalid or unreadable data, the failure page
-requires a fresh long press. The marker is persisted when the product task processes the request,
+requires explicit touchscreen retry. The marker is persisted when the product task processes the request,
 so power loss before that point does not establish a pending reset. Storage fault-detection limits are recorded in
 [UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
 
@@ -369,17 +393,18 @@ The CP initializes the BK runtime and starts the AP. The AP startup sequence is:
 
 1. Initialize the BK runtime and media service, then create the `mybot_app` product task.
 2. Build the server/firmware/hardware configuration and derive the device ID from the chip UID.
-3. Initialize AOSL and prepare the product-owned LCD, Wi-Fi manager, and GPIO key, in that order.
+3. Initialize AOSL and prepare the product-owned LCD/touchscreen, Wi-Fi manager, and GPIO key, in that order.
 4. Check for a pending factory reset before platform registration or network/SDK startup. A valid
-   marker resumes reset; a reported marker error waits for a fresh five-second hold.
+   marker resumes reset; a reported marker error waits for touchscreen retry.
 5. Register the complete platform descriptor and connect saved Wi-Fi, or finish APSTA provisioning.
 6. Start the SDK after STA obtains IPv4; it handles registration, authentication, and pairing
    according to the server's binding state.
-7. Poll the SDK lifecycle and handle short conversation requests and long factory-reset requests.
+7. Poll the SDK lifecycle and handle short conversation requests and touchscreen Wi-Fi setup/reset requests.
 
-Network/SDK startup failures and runtime exit retain the prepared key and display while waiting
-for factory reset. Earlier identity, media-service, platform-preparation, or descriptor-registration failures
-can exit startup; the reset recovery path is not guaranteed for those failures. A key held while
+Network/SDK startup failures and runtime exit retain the prepared key and display for Wi-Fi setup
+or factory reset. Descriptor-registration failure also retains settings and retries registration after
+successful Wi-Fi setup. Earlier identity, media-service, or platform-preparation failures can exit
+startup; the reset recovery path is not guaranteed for those failures. A key held while
 the platform prepares must be released before a new gesture.
 
 ## Display
@@ -427,7 +452,8 @@ also select the underlying automatic face. Repeated updates do not restart its a
 the three-second thinking clock, and do not cancel an explicit expression. No separate status
 overlay is shown.
 Chinese and English startup, provisioning, web-console pairing, error, and
-factory-reset instructions remain available. GPU and touch stay disabled, and the display does
+factory-reset instructions remain available. CST7XX touch is enabled for the settings and recovery
+controls; GPU stays disabled, and the display does
 not show a camera preview or control gimbal movement.
 
 All 23 expressions are available through the independent
@@ -500,8 +526,8 @@ linked into the firmware. Terminal decorations use the read-only BK7259 Terminal
 15-pixel ASCII and a 16-pixel `</>` signature, totaling 4634 bitmap bytes. These compact DejaVu
 Sans Mono Bold derivatives replace Unscii 16; their actual LVGL text advances determine label
 widths. The cursor follows the actual text width. Chinese and English
-operational instructions use the 20-pixel MyBot UI Sans font. The UI font contains 152 glyphs
-covering ASCII and the fixed Chinese UI vocabulary, including reset status text; arbitrary
+operational instructions use the 20-pixel MyBot UI Sans font. The UI font contains 185 glyphs
+covering ASCII and the fixed Chinese UI vocabulary, including Wi-Fi setup and reset text; arbitrary
 Chinese SSIDs or chat text need an extended font.
 This font replaces the previous direct-renderer glyph subset. Resource provenance and licenses
 are recorded in [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md).
@@ -588,7 +614,20 @@ the portal. A regular AP is unaffected, because the rewrite only happens while t
 server is enabled.
 
 Initial provisioning is automatic when no usable saved Wi-Fi credentials exist; the portal
-completes before the SDK starts. A five-second key hold cancels network setup for factory reset,
+completes before the SDK starts. Settings also provides independent Wi-Fi setup, with a separate
+confirmation that the current conversation will end. The product task requires SDK shutdown to
+reach STOPPED before APSTA starts; setup cannot run alongside SDK services.
+
+The setup page displays the hotspot name and `http://192.168.4.1`, with Cancel available before
+the credential-commit stage. The original saved network remains until the submitted candidate has
+IPv4 and wins the atomic commit/cancel decision. A late cancel is rejected once saving starts;
+the new configuration completes instead. Successful setup restarts the SDK without rebooting.
+Cancel closes the portal, stops candidate/scan resources and tries only the saved network.
+No saved network or a failed reconnect shows Retry Wi-Fi setup and Settings for explicit
+setup/reset requests; it does not automatically reopen the portal.
+Local device credentials, identity, server binding and volume are retained. Reset keeps priority.
+
+Touchscreen reset confirmation cancels network setup for factory reset,
 then clears credentials and reboots into provisioning. STA/scan waits and portal socket waits
 observe reset cancellation. Failed driver teardown retains ownership so a later reset attempt can
 retry. A cancellation return hands control back to the product task, which checks network teardown
@@ -669,12 +708,15 @@ copies, firmware, `build/`, or `__pycache__/`.
   face transitions, extended SDK stop/start cycling, and HSRAM/stack peaks with simultaneous audio
   and video need dedicated target validation.
 - The single GPIO key is based on the Yunqu V1.0 KEY1/GPIO47 connection.
-- The five-second factory-reset feature passed user device testing. Power-interruption and
-  injected shutdown/storage failures still need target-specific validation; host fault-injection
+- The touchscreen factory-reset version with the GPIO43 correction passed user device testing.
+  Power-interruption, long-running media concurrency and injected shutdown/storage failures need target validation; host fault-injection
   coverage is recorded in [UI_VALIDATION.md](projects/mybot/UI_VALIDATION.md).
+- Independent Wi-Fi setup from Settings passed user device testing. The current hardware's
+  long-press power on/off behavior was confirmed by the user; the firmware owns short-press conversation events.
 
 ## Documentation
 
+- [R2 operation manual with UI screenshots (Chinese PDF)](docs/R2_操作手册.pdf)
 - [agora-r2-standard-devkit project guide](projects/mybot/README.md)
 - [Official dependencies and isolated builds](docs/OFFICIAL_DEPENDENCIES.md)
 - [agent-studio-device-firmware project](https://github.com/AgoraIO-Community/agent-studio-device-firmware)
