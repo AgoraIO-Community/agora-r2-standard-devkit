@@ -13,6 +13,7 @@
 
 #include <mybot_bk7259_platform.h>
 #include <bk7259_factory_reset.h>
+#include <bk7259_provision.h>
 #include <bk7259_key.h>
 #include <bk7259_lcd.h>
 #include <bk7259_gimbal.h>
@@ -170,6 +171,10 @@ static void show_factory_reset(bk7259_factory_reset_screen_t screen)
 static void mybot_factory_reset_loop(bool requested)
 {
     for (;;) {
+        /* Recovery owns the product until reboot. Discard setup requests as
+         * well as stale short presses; neither may restart SDK or networking. */
+        (void)bk7259_provision_take_request();
+        bk7259_provision_finish();
         if (!requested) {
             (void)bk7259_key_take_conversation_request();
             requested = bk7259_factory_reset_take_request();
@@ -222,7 +227,7 @@ static void mybot_factory_reset_loop(bool requested)
 static void mybot_poll_conversation_key(void)
 {
     if (!bk7259_key_take_conversation_request() ||
-        bk7259_factory_reset_requested()) {
+        bk7259_factory_reset_requested() || bk7259_provision_busy()) {
         return;
     }
     mybot_state_t state = mybot_get_state();
@@ -231,6 +236,122 @@ static void mybot_poll_conversation_key(void)
     } else if (state == MYBOT_STATE_IN_CONVERSATION) {
         bk7259_key_dispatch_conversation(false);
     }
+}
+
+static void mybot_check_factory_reset(void)
+{
+    if (bk7259_factory_reset_take_request()) {
+        mybot_factory_reset_loop(true);
+    }
+}
+
+static int show_provision(bk7259_provision_screen_t screen)
+{
+    /* finish() deliberately preserves a newer, unclaimed request. Do not clear
+     * its locally published PREPARING screen while retiring the old session. */
+    if (screen == BK7259_PROVISION_NONE && bk7259_provision_busy()) {
+        return -1;
+    }
+    int result = bk7259_lcd_show_provision(screen);
+    if (result < 0) {
+        BK_LOGW(TAG, "provision display update failed: phase=%d\r\n", (int)screen);
+    }
+    return result;
+}
+
+static bool mybot_stop_for_network(void)
+{
+    mybot_stop();
+    mybot_publish_runtime_status(mybot_get_state());
+    if (mybot_is_running() || mybot_get_state() != MYBOT_STATE_STOPPED) {
+        BK_LOGE(TAG, "network setup deferred: SDK has not stopped\r\n");
+        return false;
+    }
+    return true;
+}
+
+static bool mybot_network_ready_to_start(void)
+{
+    /* Replace the detached SDK's STOPPING snapshot before lifting the product
+     * override. LCD init is permitted only after NONE has been published. */
+    if (bk7259_lcd_show_screen(MYBOT_LCD_SCREEN_STARTING_SERVICES) < 0) {
+        BK_LOGW(TAG, "network-ready workflow display update failed\r\n");
+    }
+    return show_provision(BK7259_PROVISION_NONE) == 0;
+}
+
+/* Called only by the product owner after network setup returns. A cancellation
+ * never erases credentials, binding or volume. Confirm all portal/scan/STA
+ * ownership is released before clearing cancellation and reconnecting saved Wi-Fi. */
+static bool mybot_finish_network_setup(int result)
+{
+    mybot_check_factory_reset();
+    (void)bk7259_key_take_conversation_request();
+    if (result >= 0) {
+        bk7259_provision_finish();
+        return mybot_network_ready_to_start();
+    }
+    if (mybot_is_running() || mybot_get_state() != MYBOT_STATE_STOPPED ||
+        bk7259_factory_reset_disconnect_network() < 0) {
+        BK_LOGE(TAG, "network setup cleanup incomplete; SDK restart is blocked\r\n");
+        bk7259_provision_finish();
+        (void)show_provision(BK7259_PROVISION_FAILED);
+        return false;
+    }
+    mybot_check_factory_reset();
+    bk7259_provision_finish();
+    /* A new explicit request remains pending across finish(). Claim it in the
+     * outer loop instead of delaying it with an obsolete reconnection attempt. */
+    if (result == BK7259_PROVISION_REQUESTED || bk7259_provision_abort_reason() != 0) {
+        return false;
+    }
+    (void)show_provision(BK7259_PROVISION_RECONNECTING);
+    int restored = bk7259_wifi_restore_saved(s_config.device_id);
+    mybot_check_factory_reset();
+    (void)bk7259_key_take_conversation_request();
+    if (restored == 0) {
+        return mybot_network_ready_to_start();
+    }
+    if (bk7259_factory_reset_disconnect_network() < 0) {
+        BK_LOGE(TAG, "saved network cleanup incomplete; retaining recovery controls\r\n");
+    }
+    mybot_check_factory_reset();
+    BK_LOGW(TAG, "saved network unavailable; waiting for setup or factory reset\r\n");
+    (void)show_provision(BK7259_PROVISION_FAILED);
+    return false;
+}
+
+static void mybot_handle_provision_request(bool *sdk_started, bool *start_pending)
+{
+    (void)show_provision(BK7259_PROVISION_PREPARING);
+    (void)bk7259_key_take_conversation_request();
+    mybot_check_factory_reset();
+    if (bk7259_provision_abort_reason() == BK7259_PROVISION_CANCELLED) {
+        /* A quick cancel before SDK stop leaves a live conversation and its
+         * current network intact. A stopped product can reconnect saved Wi-Fi. */
+        if (*sdk_started || *start_pending || mybot_is_running() ||
+            mybot_get_state() != MYBOT_STATE_STOPPED) {
+            bk7259_provision_finish();
+            (void)show_provision(*sdk_started || *start_pending
+                                    ? BK7259_PROVISION_NONE : BK7259_PROVISION_FAILED);
+        } else {
+            *start_pending = mybot_finish_network_setup(BK7259_PROVISION_CANCELLED);
+        }
+        return;
+    }
+    *sdk_started = false;
+    *start_pending = false;
+    BK_LOGI(TAG, "stopping SDK for requested Wi-Fi setup\r\n");
+    bool stopped = mybot_stop_for_network();
+    mybot_check_factory_reset();
+    if (!stopped) {
+        bk7259_provision_finish();
+        (void)show_provision(BK7259_PROVISION_FAILED);
+        return;
+    }
+    int abort = bk7259_provision_abort_reason();
+    int result = abort ? abort : mybot_bk7259_provision_wifi(s_config.device_id);
+    *start_pending = mybot_finish_network_setup(result);
 }
 
 static int mybot_run(void)
@@ -279,68 +400,73 @@ static int mybot_run(void)
         }
         mybot_factory_reset_loop(reset_pending > 0);
     }
+    mybot_check_factory_reset();
 
-    if (mybot_bk7259_platform_register() < 0) {
+    bool platform_registered = mybot_bk7259_platform_register() == 0;
+    mybot_check_factory_reset();
+    if (!platform_registered) {
         BK_LOGE(TAG, "platform registration failed\r\n");
-        s_display_prepared = false;
-        mybot_bk7259_platform_shutdown();
-        aosl_dtor();
-        return -1;
+        (void)show_provision(BK7259_PROVISION_FAILED);
     }
-
-    mybot_log_state_transition(&last_state, &state_valid);
-    int network_result = mybot_bk7259_ensure_network(s_config.device_id);
-    mybot_log_state_transition(&last_state, &state_valid);
-    if (bk7259_factory_reset_take_request()) {
-        mybot_factory_reset_loop(true);
+    bool sdk_started = false;
+    bool start_pending = false;
+    if (platform_registered) {
+        mybot_log_state_transition(&last_state, &state_valid);
+        int result = mybot_bk7259_ensure_network(s_config.device_id);
+        mybot_log_state_transition(&last_state, &state_valid);
+        start_pending = mybot_finish_network_setup(result);
     }
-    if (network_result < 0) {
-        BK_LOGE(TAG, "network setup failed\r\n");
-    } else {
-        BK_LOGI(TAG, "starting SDK\r\n");
-        if (mybot_start(&s_config) < 0) {
-            mybot_log_state_transition(&last_state, &state_valid);
-            BK_LOGE(TAG, "SDK startup failed\r\n");
-            mybot_stop();
-            mybot_log_state_transition(&last_state, &state_valid);
-        } else {
-            BK_LOGI(TAG, "SDK started\r\n");
-            mybot_log_state_transition(&last_state, &state_valid);
-            while (mybot_is_running()) {
-                mybot_log_state_transition(&last_state, &state_valid);
-                if (bk7259_factory_reset_take_request()) {
-                    mybot_factory_reset_loop(true);
-                }
-                mybot_poll_conversation_key();
-                if (mybot_get_state() == MYBOT_STATE_FAILED) {
-                    BK_LOGE(TAG, "SDK entered the failed state\r\n");
-                    break;
-                }
-                (void)rtos_delay_milliseconds(MYBOT_POLL_INTERVAL_MS);
+    /* This owner persists through SDK/network failures. Settings and factory
+     * reset keep working; only a fresh explicit setup request opens a portal. */
+    for (;;) {
+        mybot_check_factory_reset();
+        if (bk7259_provision_take_request()) {
+            mybot_handle_provision_request(&sdk_started, &start_pending);
+            continue;
+        }
+        if (start_pending) {
+            mybot_check_factory_reset();
+            if (bk7259_provision_abort_reason() != 0) {
+                continue;
             }
-
-            BK_LOGI(TAG, "stopping SDK, reason=sdk_exit\r\n");
-            mybot_state_t stop_state = mybot_get_state();
-            BK_LOGI(TAG, "SDK stop requested from state=%s(%d)\r\n",
-                    mybot_state_name(stop_state), (int)stop_state);
-            mybot_stop();
-            mybot_log_state_transition(&last_state, &state_valid);
-            if (mybot_is_running() || mybot_get_state() != MYBOT_STATE_STOPPED) {
-                BK_LOGE(TAG, "SDK shutdown did not reach STOPPED\r\n");
+            start_pending = false;
+            (void)bk7259_key_take_conversation_request();
+            if (!platform_registered) {
+                platform_registered = mybot_bk7259_platform_register() == 0;
+            }
+            if (platform_registered && mybot_network_ready_to_start()) {
+                BK_LOGI(TAG, "starting SDK\r\n");
+                int start_result = mybot_start(&s_config);
+                mybot_check_factory_reset();
+                if (start_result == 0) {
+                    sdk_started = true;
+                    BK_LOGI(TAG, "SDK started\r\n");
+                } else {
+                    BK_LOGE(TAG, "SDK startup failed\r\n");
+                    (void)mybot_stop_for_network();
+                    mybot_check_factory_reset();
+                    (void)show_provision(BK7259_PROVISION_FAILED);
+                }
+            } else {
+                (void)show_provision(BK7259_PROVISION_FAILED);
             }
         }
+        mybot_log_state_transition(&last_state, &state_valid);
+        if (sdk_started) {
+            if (!mybot_is_running() || mybot_get_state() == MYBOT_STATE_FAILED) {
+                BK_LOGW(TAG, "SDK exited; retaining setup and reset controls\r\n");
+                sdk_started = false;
+                (void)mybot_stop_for_network();
+                mybot_check_factory_reset();
+                (void)show_provision(BK7259_PROVISION_FAILED);
+            } else {
+                mybot_poll_conversation_key();
+            }
+        } else {
+            (void)bk7259_key_take_conversation_request();
+        }
+        (void)rtos_delay_milliseconds(MYBOT_POLL_INTERVAL_MS);
     }
-
-    mybot_stop();
-    mybot_log_state_transition(&last_state, &state_valid);
-    /* Keep the product display and touch input alive after a startup/network
-     * failure too, so factory reset remains available without an SDK handler. */
-    if (bk7259_factory_reset_take_request()) {
-        mybot_factory_reset_loop(true);
-    }
-    BK_LOGW(TAG, "product stopped: waiting for a factory reset request\r\n");
-    mybot_factory_reset_loop(false);
-    return -1;
 }
 
 static void mybot_app_task(beken_thread_arg_t arg)

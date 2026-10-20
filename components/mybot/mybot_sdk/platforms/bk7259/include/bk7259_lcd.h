@@ -3,6 +3,7 @@
 #define BK7259_LCD_H_
 
 #include <stdbool.h>
+#include <mybot/platform/mybot_lcd.h>
 
 #define BK7259_LCD_STATE_CAPACITY 32
 
@@ -21,6 +22,10 @@ extern "C" {
  * snapshot. Repeated values are a no-op. Works after SDK detach; factory reset
  * retains priority. Returns 0 on success, -1 if unavailable or invalid. */
 int bk7259_lcd_set_runtime_status(const char *state, bool in_conversation);
+
+/* Product-owned startup/provisioning screens remain usable while the SDK is
+ * detached. The display copies the requested screen into its UI snapshot. */
+int bk7259_lcd_show_screen(mybot_lcd_screen_t screen);
 
 #ifdef __cplusplus
 }

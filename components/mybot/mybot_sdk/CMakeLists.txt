@@ -91,6 +91,7 @@ set(platform_srcs
     platforms/bk7259/bk7259_kv_store.c
     platforms/bk7259/bk7259_key.c
     platforms/bk7259/bk7259_factory_reset.c
+    platforms/bk7259/bk7259_provision.c
     platforms/bk7259/bk7259_expression.c
     platforms/bk7259/bk7259_lcd.c
     platforms/bk7259/bk7259_touch.c

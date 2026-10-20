@@ -251,7 +251,9 @@ The reference device workflow is:
    the device is claimed, briefly press and release the conversation button to start an AI
    conversation with full-duplex audio; camera video uplink is included when `CONFIG_MYBOT_VIDEO=y`.
    Press and release again to stop it.
-5. Tap Settings at the upper right, choose Factory reset, and confirm to clear local settings and
+5. To change Wi-Fi, tap Settings, Wi-Fi setup, and confirm. The device stops the SDK, opens its
+   provisioning hotspot, and starts the SDK again after connecting. Cancel attempts the saved network.
+6. Tap Settings at the upper right, choose Factory reset, and confirm to clear local settings and
    restart Wi-Fi setup. Cancel closes the dialog without stopping a conversation.
 
 The Yunqu V1.0 product exposes one firmware-visible direct GPIO conversation key:
@@ -392,8 +394,8 @@ The CP initializes the BK runtime and starts the AP. The AP startup sequence is:
    according to the server's binding state.
 7. Poll the SDK lifecycle and handle short conversation requests and touchscreen reset requests.
 
-Network/SDK startup failures and runtime exit retain the prepared key and display while waiting
-for factory reset. Earlier identity, media-service, platform-preparation, or descriptor-registration failures
+Network/SDK startup failures and runtime exit retain the prepared key and display for Wi-Fi setup
+or factory reset. Earlier identity, media-service, platform-preparation, or descriptor-registration failures
 can exit startup; the reset recovery path is not guaranteed for those failures. A key held while
 the platform prepares must be released before a new gesture.
 
@@ -514,8 +516,8 @@ linked into the firmware. Terminal decorations use the read-only BK7259 Terminal
 15-pixel ASCII and a 16-pixel `</>` signature, totaling 4634 bitmap bytes. These compact DejaVu
 Sans Mono Bold derivatives replace Unscii 16; their actual LVGL text advances match the reference's
 scaled text proportions closely. The cursor follows the actual text width. Chinese and English
-operational instructions use the 20-pixel MyBot UI Sans font. The UI font contains 152 glyphs
-covering ASCII and the fixed Chinese UI vocabulary, including reset status text; arbitrary
+operational instructions use the 20-pixel MyBot UI Sans font. The UI font contains 185 glyphs
+covering ASCII and the fixed Chinese UI vocabulary, including Wi-Fi setup and reset text; arbitrary
 Chinese SSIDs or chat text need an extended font.
 This font replaces the previous direct-renderer glyph subset. Resource provenance and licenses
 are recorded in [display/SOURCES.md](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md).
@@ -601,7 +603,19 @@ the portal. A regular AP is unaffected, because the rewrite only happens while t
 server is enabled.
 
 Initial provisioning is automatic when no usable saved Wi-Fi credentials exist; the portal
-completes before the SDK starts. Touchscreen reset confirmation cancels network setup for factory reset,
+completes before the SDK starts. Settings also provides independent Wi-Fi setup, with a separate
+confirmation that the current conversation will end. The product task requires SDK shutdown to
+reach STOPPED before APSTA starts; setup cannot run alongside SDK services.
+
+The setup page displays the hotspot name and `http://192.168.4.1`, with Cancel available before
+the credential-commit stage. The original saved network remains until the submitted candidate has
+IPv4 and wins the atomic commit/cancel decision. A late cancel is rejected once saving starts;
+the new configuration completes instead. Successful setup restarts the SDK without rebooting.
+Cancel closes the portal, stops candidate/scan resources and tries only the saved network.
+No saved network or a failed reconnect shows a retry page rather than reopening the portal forever.
+Local device credentials, identity, server binding and volume are retained. Reset keeps priority.
+
+Touchscreen reset confirmation cancels network setup for factory reset,
 then clears credentials and reboots into provisioning. STA/scan waits and portal socket waits
 observe reset cancellation. Failed driver teardown retains ownership so a later reset attempt can
 retry. A cancellation return hands control back to the product task, which checks network teardown

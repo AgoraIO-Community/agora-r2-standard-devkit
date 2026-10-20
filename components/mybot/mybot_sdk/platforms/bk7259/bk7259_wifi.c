@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_ops.h"
 #include "bk7259_factory_reset.h"
+#include "bk7259_provision.h"
 #include "bk7259_wifi_internal.h"
 
 #include <common/bk_err.h>
@@ -60,6 +61,8 @@ typedef struct {
     bool sta_has_ip;
     bool scan_in_progress;
     bool scan_done;
+    /* Only the product/network operation owner reads or writes this latch. */
+    bool credential_rollback_failed;
 } wifi_manager_t;
 
 static wifi_manager_t s_wifi;
@@ -78,23 +81,28 @@ static const char *wifi_event_name(mybot_wifi_event_t event) {
 }
 
 static int run_provisioning_portal(const char *device_id) {
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int result = bk7259_provision_begin();
+    if (result < 0) {
+        return result;
+    }
+    s_wifi.credential_rollback_failed = false;
+    if (bk7259_wifi_manager_disconnect() < 0) {
+        return -1;
     }
     (void)bk7259_lcd_show_screen(MYBOT_LCD_SCREEN_WIFI_PROVISIONING);
     if (bk7259_prompt_play_provisioning() < 0) {
         MYBOT_LOGW(TAG, "provisioning prompt unavailable; continuing without audio");
     }
-    int result = bk7259_wifi_portal_run(device_id);
-    if (result == BK7259_NETWORK_CANCELLED ||
-        bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    result = bk7259_wifi_portal_run(device_id);
+    if (result < 0) {
+        return result;
     }
     if (result == 0 && bk7259_prompt_play_success() < 0) {
         MYBOT_LOGW(TAG, "provisioning success prompt unavailable");
     }
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return bk7259_wifi_manager_disconnect() == 0 ? aborted : -1;
     }
     (void)bk7259_lcd_show_screen(result == 0 ? MYBOT_LCD_SCREEN_STARTING_SERVICES
                                              : MYBOT_LCD_SCREEN_FAILED);
@@ -299,13 +307,12 @@ static int wait_for_ipv4(wifi_manager_t *manager, const char *ssid,
                          uint32_t generation, uint32_t timeout_ms) {
     uint32_t start_ms = rtos_get_time();
     for (;;) {
-        if (bk7259_factory_reset_requested()) {
-            return BK7259_NETWORK_CANCELLED;
+        int aborted = bk7259_provision_abort_reason();
+        if (aborted) {
+            return aborted;
         }
         if (manager_accept_connected(manager, ssid, generation)) {
-            return bk7259_factory_reset_requested()
-                       ? BK7259_NETWORK_CANCELLED
-                       : 0;
+            return bk7259_provision_abort_reason();
         }
 
         if (rtos_lock_mutex(&manager->lock) != BK_OK) {
@@ -405,10 +412,11 @@ static int start_sta(wifi_manager_t *manager, const char *ssid,
         secure_zero(&config, sizeof(config));
         return -1;
     }
-    if (!manager_ready_locked(manager)) {
+    int aborted = bk7259_provision_abort_reason();
+    if (!manager_ready_locked(manager) || aborted) {
         (void)rtos_unlock_mutex(&manager->lock);
         secure_zero(&config, sizeof(config));
-        return -1;
+        return aborted ? aborted : -1;
     }
     ++manager->sta_generation;
     *generation = manager->sta_generation;
@@ -418,35 +426,40 @@ static int start_sta(wifi_manager_t *manager, const char *ssid,
 
     MYBOT_LOGI(TAG, "starting STA");
     bk_err_t result = bk_wifi_sta_set_config(&config);
-    if (result == BK_OK) {
-        result = bk_wifi_sta_start();
-    }
     secure_zero(&config, sizeof(config));
-
-    bool driver_started = result == BK_OK;
-    if (rtos_lock_mutex(&manager->lock) != BK_OK) {
-        if (driver_started) {
-            (void)bk_wifi_sta_stop();
+    if (result == BK_OK) {
+        if (rtos_lock_mutex(&manager->lock) != BK_OK) {
+            return -1;
         }
+        bool may_start = manager_ready_locked(manager) &&
+                         manager->sta_generation == *generation &&
+                         bk7259_provision_abort_reason() == 0;
+        /* A failed start may own partial driver resources. Release ownership
+         * only after the idempotent stop has actually succeeded. */
+        if (may_start) {
+            manager->sta_started = true;
+        }
+        (void)rtos_unlock_mutex(&manager->lock);
+        result = may_start ? bk_wifi_sta_start() : BK_FAIL;
+    }
+
+    if (rtos_lock_mutex(&manager->lock) != BK_OK) {
+        (void)stop_sta(manager);
         return -1;
     }
-    if (driver_started && manager_ready_locked(manager) &&
-        manager->sta_generation == *generation) {
-        manager->sta_started = true;
-    } else {
-        ++manager->sta_generation;
-        manager->sta_started = false;
-        manager->target_ssid[0] = '\0';
+    aborted = bk7259_provision_abort_reason();
+    if (!manager_ready_locked(manager) || manager->sta_generation != *generation || aborted) {
         result = BK_FAIL;
     }
     (void)rtos_unlock_mutex(&manager->lock);
 
     if (result != BK_OK) {
-        if (driver_started) {
-            (void)bk_wifi_sta_stop();
+        if (stop_sta(manager) < 0) {
+            MYBOT_LOGE(TAG, "STA start cleanup incomplete; disconnect must retry");
+            return -1;
         }
         MYBOT_LOGE(TAG, "failed to start STA");
-        return -1;
+        return aborted ? aborted : -1;
     }
     MYBOT_LOGI(TAG, "STA driver started; waiting for IPv4");
     return 0;
@@ -461,10 +474,11 @@ int bk7259_wifi_manager_connect_candidate(const char *ssid, const char *password
     }
 
     int result = -1;
-    if (bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    result = bk7259_provision_abort_reason();
+    if (result) {
         goto done;
     }
+    result = -1;
     if (rtos_lock_mutex(&manager->lock) != BK_OK) {
         goto done;
     }
@@ -475,19 +489,22 @@ int bk7259_wifi_manager_connect_candidate(const char *ssid, const char *password
     }
 
     (void)rtos_delay_milliseconds(WIFI_RESTART_DELAY_MS);
-    if (bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        result = aborted;
         goto done;
     }
     drain_event(manager);
     uint32_t generation = 0;
-    if (start_sta(manager, ssid, password, &generation) < 0) {
+    result = start_sta(manager, ssid, password, &generation);
+    if (result < 0) {
         goto done;
     }
     result = wait_for_ipv4(manager, ssid, generation, timeout_ms);
     if (result < 0) {
         if (stop_sta(manager) < 0) {
             MYBOT_LOGE(TAG, "STA connection cleanup incomplete; disconnect must retry");
+            result = -1;
         }
         if (result == BK7259_NETWORK_CANCELLED) {
             MYBOT_LOGI(TAG, "STA connection cancelled for factory reset");
@@ -517,9 +534,43 @@ int bk7259_wifi_manager_disconnect(void) {
 
 static bool manager_has_ipv4_for(const char *ssid);
 
+bool bk7259_wifi_manager_storage_fault(void) {
+    return s_wifi.credential_rollback_failed;
+}
+
+static bool credentials_match(const wifi_credential_record_t *expected) {
+    wifi_credential_record_t actual;
+    int loaded = load_credentials(&actual);
+    bool matches = loaded == 0 && memcmp(&actual, expected, sizeof(actual)) == 0;
+    secure_zero(&actual, sizeof(actual));
+    return matches;
+}
+
+static bool restore_previous_credentials(const wifi_credential_record_t *previous, int previous_state) {
+    if (previous_state == 0) {
+        if (!credentials_match(previous)) {
+            (void)ef_set_env_blob(WIFI_CREDENTIAL_KEY, previous, sizeof(*previous));
+        }
+        return credentials_match(previous);
+    }
+    if (previous_state < 0) {
+        /* An invalid/unreadable prior record is not proof of absence. Do not
+         * delete it while trying to undo an unverified replacement. */
+        return false;
+    }
+    size_t saved_length = 0;
+    (void)ef_get_env_blob(WIFI_CREDENTIAL_KEY, NULL, 0, &saved_length);
+    if (saved_length != 0) {
+        (void)ef_del_env(WIFI_CREDENTIAL_KEY);
+    }
+    (void)ef_get_env_blob(WIFI_CREDENTIAL_KEY, NULL, 0, &saved_length);
+    return saved_length == 0;
+}
+
 int bk7259_wifi_manager_save_credentials(const char *ssid, const char *password) {
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
     size_t ssid_length = bounded_string_length(ssid, WIFI_SSID_STR_LEN);
     size_t password_length = bounded_string_length(password, WIFI_PASSWORD_LEN);
@@ -537,23 +588,53 @@ int bk7259_wifi_manager_save_credentials(const char *ssid, const char *password)
     };
     memcpy(record.ssid, ssid, ssid_length + 1);
     memcpy(record.password, password, password_length + 1);
-    if (bk7259_factory_reset_requested()) {
+    wifi_credential_record_t previous;
+    int previous_state = load_credentials(&previous);
+    if (!bk7259_provision_try_commit()) {
         secure_zero(&record, sizeof(record));
-        return BK7259_NETWORK_CANCELLED;
+        secure_zero(&previous, sizeof(previous));
+        aborted = bk7259_provision_abort_reason();
+        return aborted ? aborted : -1;
+    }
+    (void)bk7259_lcd_show_provision(BK7259_PROVISION_FINISHING);
+    aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        secure_zero(&record, sizeof(record));
+        secure_zero(&previous, sizeof(previous));
+        bk7259_provision_commit_failed();
+        return aborted;
     }
     EfErrCode result = ef_set_env_blob(WIFI_CREDENTIAL_KEY, &record, sizeof(record));
+    /* EasyFlash marks an old node PRE_DELETE before replacement and may report
+     * an error after the new node became valid. Decide from verified contents,
+     * not the API status. If no complete new record exists, restore the prior
+     * valid record (or absence) before reopening cancellation. */
+    bool committed = credentials_match(&record);
+    if (!committed) {
+        s_wifi.credential_rollback_failed = !restore_previous_credentials(&previous, previous_state);
+    }
     secure_zero(&record, sizeof(record));
+    secure_zero(&previous, sizeof(previous));
+    if (!committed && !s_wifi.credential_rollback_failed) {
+        bk7259_provision_commit_failed();
+        (void)bk7259_lcd_show_provision(BK7259_PROVISION_ACTIVE);
+    }
+    if (s_wifi.credential_rollback_failed) {
+        MYBOT_LOGE(TAG, "Wi-Fi credential rollback unverified; ending portal (err=%d)", (int)result);
+        return -1;
+    }
     /* A reset requested during the synchronous flash write must still reach
      * the product owner, which clears this record before restarting. */
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
-    if (result == EF_NO_ERR) {
+    if (committed) {
         MYBOT_LOGI(TAG, "Wi-Fi credentials saved");
     } else {
         MYBOT_LOGW(TAG, "failed to save Wi-Fi credentials");
     }
-    return result == EF_NO_ERR ? 0 : -1;
+    return committed ? 0 : -1;
 }
 
 static int scan_result_compare(const wifi_scan_ap_info_t *left,
@@ -618,10 +699,11 @@ int bk7259_wifi_manager_scan_sync(wifi_scan_ap_info_t *results, size_t capacity,
     *result_count = 0;
 
     int result = -1;
-    if (bk7259_factory_reset_requested()) {
-        result = BK7259_NETWORK_CANCELLED;
+    result = bk7259_provision_abort_reason();
+    if (result) {
         goto done;
     }
+    result = -1;
     if (stop_scan(manager) < 0) {
         goto done;
     }
@@ -642,8 +724,9 @@ int bk7259_wifi_manager_scan_sync(wifi_scan_ap_info_t *results, size_t capacity,
     }
     uint32_t start_ms = rtos_get_time();
     for (;;) {
-        if (bk7259_factory_reset_requested()) {
-            result = BK7259_NETWORK_CANCELLED;
+        int aborted = bk7259_provision_abort_reason();
+        if (aborted) {
+            result = aborted;
             break;
         }
         if (rtos_lock_mutex(&manager->lock) != BK_OK) {
@@ -657,9 +740,10 @@ int bk7259_wifi_manager_scan_sync(wifi_scan_ap_info_t *results, size_t capacity,
         }
         if (done) {
             result = collect_scan_results(results, capacity, result_count);
-            if (bk7259_factory_reset_requested()) {
+            aborted = bk7259_provision_abort_reason();
+            if (aborted) {
                 *result_count = 0;
-                result = BK7259_NETWORK_CANCELLED;
+                result = aborted;
             }
             break;
         }
@@ -675,7 +759,7 @@ int bk7259_wifi_manager_scan_sync(wifi_scan_ap_info_t *results, size_t capacity,
     }
 
 finish_scan:
-    if (stop_scan(manager) < 0 && result != BK7259_NETWORK_CANCELLED) {
+    if (stop_scan(manager) < 0) {
         result = -1;
     }
 done:
@@ -821,49 +905,53 @@ static bool manager_has_ipv4_for(const char *ssid) {
     return matches;
 }
 
-int mybot_bk7259_ensure_network(const char *device_id) {
+int bk7259_wifi_restore_saved(const char *device_id) {
     wifi_manager_t *manager = &s_wifi;
     if (!device_id || !device_id[0] || !manager->prepared) {
         return -1;
     }
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
-
     wifi_credential_record_t record;
     int loaded = load_credentials(&record);
-    if (loaded == 0) {
-        MYBOT_LOGI(TAG, "connecting saved STA");
-        if (manager_has_ipv4_for(record.ssid)) {
-            secure_zero(&record, sizeof(record));
-            if (bk7259_factory_reset_requested()) {
-                return BK7259_NETWORK_CANCELLED;
-            }
-            (void)bk7259_lcd_show_screen(MYBOT_LCD_SCREEN_STARTING_SERVICES);
-            MYBOT_LOGI(TAG, "saved STA is already connected");
-            return 0;
-        }
-        (void)bk7259_lcd_show_screen(MYBOT_LCD_SCREEN_WIFI_PROVISIONING);
-        int result = bk7259_wifi_manager_connect_candidate(
-            record.ssid, record.password, WIFI_CONNECT_TIMEOUT_MS);
+    if (loaded != 0) {
         secure_zero(&record, sizeof(record));
-        if (result == BK7259_NETWORK_CANCELLED ||
-            bk7259_factory_reset_requested()) {
-            return BK7259_NETWORK_CANCELLED;
-        }
-        if (result == 0) {
-            (void)bk7259_lcd_show_screen(MYBOT_LCD_SCREEN_STARTING_SERVICES);
-            MYBOT_LOGI(TAG, "saved STA connected");
-            return 0;
-        }
-        MYBOT_LOGW(TAG, "saved Wi-Fi connection failed, starting APSTA");
-    } else if (loaded < 0) {
-        MYBOT_LOGW(TAG, "saved Wi-Fi credentials are invalid, starting APSTA");
+        return -1;
+    }
+    int result;
+    if (manager_has_ipv4_for(record.ssid)) {
+        result = bk7259_provision_abort_reason();
     } else {
-        MYBOT_LOGI(TAG, "no saved Wi-Fi credentials, starting APSTA");
+        MYBOT_LOGI(TAG, "connecting saved STA");
+        result = bk7259_wifi_manager_connect_candidate(
+            record.ssid, record.password, WIFI_CONNECT_TIMEOUT_MS);
     }
     secure_zero(&record, sizeof(record));
-    int result = run_provisioning_portal(device_id);
+    return result;
+}
+
+int mybot_bk7259_ensure_network(const char *device_id) {
+    if (!device_id || !device_id[0] || !s_wifi.prepared) {
+        return -1;
+    }
+    int result = bk7259_wifi_restore_saved(device_id);
+    if (result == 0) {
+        (void)bk7259_lcd_show_screen(MYBOT_LCD_SCREEN_STARTING_SERVICES);
+        return 0;
+    }
+    if (result < -1) {
+        return result;
+    }
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        /* A prior failed connection may still own a driver. Do not let an
+         * accepted abort conceal a failed stop from the application owner. */
+        return bk7259_wifi_manager_disconnect() == 0 ? aborted : -1;
+    }
+    MYBOT_LOGI(TAG, "no usable saved Wi-Fi connection, starting APSTA");
+    result = run_provisioning_portal(device_id);
     return result == 0 ? 1 : result;
 }
 
@@ -871,17 +959,19 @@ int mybot_bk7259_provision_wifi(const char *device_id) {
     if (!device_id || !device_id[0]) {
         return -1;
     }
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
+    int aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
     MYBOT_LOGI(TAG, "starting requested APSTA provisioning");
     int result = bk7259_wifi_manager_disconnect();
-    if (bk7259_factory_reset_requested()) {
-        return BK7259_NETWORK_CANCELLED;
-    }
     if (result != 0) {
         MYBOT_LOGE(TAG, "failed to prepare STA for APSTA provisioning");
         return -1;
+    }
+    aborted = bk7259_provision_abort_reason();
+    if (aborted) {
+        return aborted;
     }
     result = run_provisioning_portal(device_id);
     if (result == BK7259_NETWORK_CANCELLED) {

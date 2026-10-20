@@ -18,6 +18,14 @@ lv_indev_t *input;
 lv_point_t input_point{};
 lv_indev_state_t input_state = LV_INDEV_STATE_RELEASED;
 unsigned requests;
+unsigned provision_requests;
+unsigned provision_attempts;
+unsigned cancel_requests;
+unsigned cancel_attempts;
+bool provision_busy;
+bool accept_provision = true;
+bool accept_cancel = true;
+int provision_abort;
 unsigned widgets_after_create;
 unsigned timers_after_create;
 const char *output_directory;
@@ -35,6 +43,16 @@ constexpr const char *kDisconnected = "网络已断开";
 constexpr const char *kRestoring = "正在恢复出厂设置";
 constexpr const char *kFailed = "恢复出厂失败";
 constexpr const char *kRebooting = "恢复完成，正在重启";
+constexpr const char *kProvision = "配网";
+constexpr const char *kProvisionConfirmTitle = "开始配网？";
+constexpr const char *kProvisionConfirm = "开始配网";
+constexpr const char *kCancelProvision = "取消配网";
+constexpr const char *kRetryProvision = "重新配网";
+constexpr const char *kPreparing = "正在准备配网";
+constexpr const char *kCancelling = "正在取消配网";
+constexpr const char *kProvisionFailed = "配网失败";
+constexpr const char *kFinishing = "正在保存Wi-Fi";
+constexpr const char *kReconnecting = "正在连接Wi-Fi";
 #else
 constexpr const char *kSetup = "Setup";
 constexpr const char *kReset = "Factory reset";
@@ -48,6 +66,16 @@ constexpr const char *kDisconnected = "Wi-Fi disconnected";
 constexpr const char *kRestoring = "Restoring factory settings";
 constexpr const char *kFailed = "Factory reset failed";
 constexpr const char *kRebooting = "Reset complete. Restarting";
+constexpr const char *kProvision = "Wi-Fi setup";
+constexpr const char *kProvisionConfirmTitle = "Start Wi-Fi setup?";
+constexpr const char *kProvisionConfirm = "Start setup";
+constexpr const char *kCancelProvision = "Cancel setup";
+constexpr const char *kRetryProvision = "Retry Wi-Fi setup";
+constexpr const char *kPreparing = "Preparing Wi-Fi setup";
+constexpr const char *kCancelling = "Cancelling Wi-Fi setup";
+constexpr const char *kProvisionFailed = "Wi-Fi setup failed";
+constexpr const char *kFinishing = "Saving Wi-Fi";
+constexpr const char *kReconnecting = "Connecting to Wi-Fi";
 #endif
 
 lv_obj_t *screen() { return lv_display_get_screen_active(display); }
@@ -105,12 +133,28 @@ lv_obj_t *find_label(lv_obj_t *object, const char *text, bool hidden = false) {
 
 lv_obj_t *label(const char *text) { return find_label(screen(), text); }
 
+lv_obj_t *find_button(lv_obj_t *object, const char *text, bool hidden = false) {
+    hidden = hidden || lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN);
+    if (hidden) {
+        return nullptr;
+    }
+    if (lv_obj_check_type(object, &lv_label_class) &&
+        std::strcmp(lv_label_get_text(object), text) == 0 &&
+        lv_obj_has_flag(lv_obj_get_parent(object), LV_OBJ_FLAG_CLICKABLE)) {
+        return lv_obj_get_parent(object);
+    }
+    for (unsigned i = 0; i < lv_obj_get_child_count(object); ++i) {
+        if (auto *found = find_button(lv_obj_get_child(object, i), text, hidden)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
 lv_obj_t *button(const char *text) {
-    auto *found = label(text);
+    auto *found = find_button(screen(), text);
     assert(found);
-    auto *parent = lv_obj_get_parent(found);
-    assert(lv_obj_has_flag(parent, LV_OBJ_FLAG_CLICKABLE));
-    return parent;
+    return found;
 }
 
 lv_point_t center(lv_obj_t *object) {
@@ -353,7 +397,140 @@ void test_all_expressions() {
     }
 }
 
+void open_provision_confirmation() {
+    tap(kSetup);
+    tap(kProvision);
+    assert(label(kProvisionConfirmTitle) && label(kProvisionConfirm));
+}
+
+void close_provision() {
+    provision_busy = false;
+    provision_abort = 0;
+    accept_provision = accept_cancel = true;
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_NONE, nullptr);
+    update(MYBOT_LCD_SCREEN_READY);
+}
+
+void test_provision_restores_unchanged_terminal() {
+    const mybot_lcd_screen_t workflows[] = {MYBOT_LCD_SCREEN_READY,
+                                            MYBOT_LCD_SCREEN_IN_CONVERSATION};
+    const char *states[] = {"ready", "in_conversation"};
+    const char *lines[] = {"> state: ready", "> state: listening | vp:ok"};
+    for (unsigned i = 0; i < 2; ++i) {
+        update(workflows[i], states[i]);
+        assert(label(lines[i]));
+        bk7259_lvgl_view_show_provision(BK7259_PROVISION_PREPARING, nullptr);
+        assert(label("> state: wifi_setup"));
+        bk7259_lvgl_view_show_provision(BK7259_PROVISION_NONE, nullptr);
+        update(workflows[i], states[i]);
+        assert(label(lines[i]) && !label("> state: wifi_setup"));
+    }
+    close_provision();
+}
+
+void test_provision_confirmation_and_cancel() {
+    update(MYBOT_LCD_SCREEN_IN_CONVERSATION, "in_conversation");
+    open_provision_confirmation();
+    snapshot("provision-confirmation");
+    update(MYBOT_LCD_SCREEN_WIFI_DISCONNECTED, "wifi_disconnected");
+    tap(kCancel);
+    assert(label(kDisconnected));
+    assert(provision_attempts == 0 && provision_requests == 0 && requests == 0);
+    open_provision_confirmation();
+    accept_provision = false;
+    tap(kProvisionConfirm);
+    assert(provision_attempts == 1 && provision_requests == 0);
+    assert(label(kProvisionConfirmTitle) && !label(kPreparing));
+    accept_provision = true;
+    const lv_point_t point = center(button(kProvisionConfirm));
+    pointer(point, LV_INDEV_STATE_PRESSED);
+    assert(provision_requests == 0);
+    pointer(point, LV_INDEV_STATE_PRESSED);
+    pointer(point, LV_INDEV_STATE_RELEASED);
+    assert(provision_requests == 1 && label(kPreparing) && label(kCancelProvision));
+    pointer(point, LV_INDEV_STATE_RELEASED);
+    pointer(point, LV_INDEV_STATE_PRESSED);
+    pointer(point, LV_INDEV_STATE_RELEASED);
+    assert(provision_requests == 1);
+    update(MYBOT_LCD_SCREEN_FAILED, "failed");
+    assert(label(kPreparing));
+    assert(bk7259_lvgl_view_replay_expression(BK7259_EXPRESSION_HAPPY) == -1);
+    tap(kSetup);
+    assert(lv_obj_has_state(button(kProvision), LV_STATE_DISABLED));
+    tap(kProvision);
+    assert(!label(kProvisionConfirmTitle) && provision_requests == 1);
+    tap(kBack);
+    const lv_point_t cancel_point = center(button(kCancelProvision));
+    tap(kCancelProvision);
+    assert(cancel_requests == 1 && label(kCancelling));
+    assert(!label(kCancelProvision));
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_PREPARING, nullptr);
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_ACTIVE, "mybot-late-active");
+    assert(label(kCancelling) && !label("mybot-late-active"));
+    pointer(cancel_point, LV_INDEV_STATE_PRESSED);
+    pointer(cancel_point, LV_INDEV_STATE_RELEASED);
+    assert(cancel_requests == 1);
+    snapshot("provision-cancelling");
+    close_provision();
+}
+
+void test_provision_active_and_late_cancel() {
+    provision_busy = true;
+    char ssid[33];
+    std::memset(ssid, 'A', sizeof(ssid) - 1);
+    std::memcpy(ssid, "mybot-", 6);
+    ssid[sizeof(ssid) - 1] = '\0';
+    const std::string original_ssid(ssid);
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_ACTIVE, ssid);
+    std::memset(ssid, 'Z', sizeof(ssid) - 1);
+    assert(label(original_ssid.c_str()));
+    assert(label("http://192.168.4.1") && label(kCancelProvision));
+    snapshot("provision-active");
+    const unsigned before_cancel = cancel_requests;
+    accept_cancel = false; /* credential commit has already claimed the session */
+    tap(kCancelProvision);
+    assert(cancel_requests == before_cancel && label(original_ssid.c_str()));
+    assert(label(kCancelProvision) && !label(kCancelling));
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_FINISHING, nullptr);
+    assert(label(kFinishing) && !label(kCancelProvision));
+    snapshot("provision-finishing");
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_RECONNECTING, nullptr);
+    assert(label(kReconnecting) && !label(kCancelProvision));
+    snapshot("provision-reconnecting");
+    close_provision();
+}
+
+void test_provision_failed_retry() {
+    const unsigned before = provision_requests;
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_FAILED, nullptr);
+    assert(label(kProvisionFailed) && label(kRetryProvision) && label(kSetup));
+    bk7259_lvgl_view_set_touch_available(false);
+    tap(kRetryProvision);
+    assert(provision_requests == before);
+    bk7259_lvgl_view_set_touch_available(true);
+    provision_busy = true;
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_FAILED, nullptr);
+    assert(lv_obj_has_state(button(kRetryProvision), LV_STATE_DISABLED));
+    tap(kRetryProvision);
+    assert(provision_requests == before);
+    provision_busy = false;
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_FAILED, nullptr);
+    snapshot("provision-failed");
+    accept_provision = false;
+    tap(kRetryProvision);
+    assert(provision_requests == before && label(kProvisionFailed));
+    accept_provision = true;
+    tap(kRetryProvision);
+    assert(provision_requests == before + 1 && label(kPreparing));
+    assert(!label(kRetryProvision));
+    close_provision();
+}
+
 void test_confirmation_busy_and_retry() {
+    /* Factory reset stays accessible from an active setup session and always
+     * outranks a racing setup snapshot or its later NONE publication. */
+    provision_busy = true;
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_ACTIVE, "mybot-factory-priority");
     open_confirmation();
     const lv_point_t point = center(button(kConfirm));
     pointer(point, LV_INDEV_STATE_PRESSED);
@@ -361,6 +538,9 @@ void test_confirmation_busy_and_retry() {
     pointer(point, LV_INDEV_STATE_PRESSED);
     pointer(point, LV_INDEV_STATE_RELEASED);
     assert(requests == 1 && label(kRestoring));
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_ACTIVE, "mybot-stale");
+    bk7259_lvgl_view_show_provision(BK7259_PROVISION_NONE, nullptr);
+    assert(label(kRestoring) && !label(kCancelProvision));
     assert(!label(kSetup) && !label(kRetry) && !label(kCancel));
     pointer(point, LV_INDEV_STATE_RELEASED);
     pointer(point, LV_INDEV_STATE_PRESSED);
@@ -395,6 +575,30 @@ void test_confirmation_busy_and_retry() {
 
 extern "C" void bk7259_factory_reset_request(void) { ++requests; }
 
+extern "C" bool bk7259_provision_request(void) {
+    ++provision_attempts;
+    if (!accept_provision || provision_busy) {
+        return false;
+    }
+    ++provision_requests;
+    provision_busy = true;
+    provision_abort = 0;
+    return true;
+}
+
+extern "C" bool bk7259_provision_cancel(void) {
+    ++cancel_attempts;
+    if (!accept_cancel || !provision_busy) {
+        return false;
+    }
+    ++cancel_requests;
+    provision_abort = BK7259_PROVISION_CANCELLED;
+    return true;
+}
+
+extern "C" bool bk7259_provision_busy(void) { return provision_busy; }
+extern "C" int bk7259_provision_abort_reason(void) { return provision_abort; }
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     output_directory = argv[1];
@@ -420,6 +624,10 @@ int main(int argc, char **argv) {
     test_no_press_through();
     test_drag_cancel_and_indev_reset();
     test_all_expressions();
+    test_provision_restores_unchanged_terminal();
+    test_provision_confirmation_and_cancel();
+    test_provision_active_and_late_cancel();
+    test_provision_failed_retry();
     test_confirmation_busy_and_retry();
     assert(object_count(screen()) == widgets_after_create);
     lv_indev_delete(input);
@@ -435,6 +643,7 @@ int main(int argc, char **argv) {
     assert(lv_obj_get_child_count(screen()) == 0);
     lv_display_delete(display);
     lv_deinit();
-    std::puts("Touch UI: real LVGL release/cancel paths, reset gating and 23 expressions passed");
+    std::puts(
+        "Touch UI: real LVGL release/cancel paths, Wi-Fi/reset gating and 23 expressions passed");
     return 0;
 }

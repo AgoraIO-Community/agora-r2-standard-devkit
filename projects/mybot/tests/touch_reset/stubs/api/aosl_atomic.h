@@ -12,3 +12,7 @@ static inline void aosl_atomic_set(aosl_atomic_t *value, intptr_t next) {
 static inline intptr_t aosl_atomic_xchg(aosl_atomic_t *value, intptr_t next) {
   return atomic_exchange(value, next);
 }
+static inline intptr_t aosl_atomic_cmpxchg(aosl_atomic_t *value, intptr_t old, intptr_t next) {
+  atomic_compare_exchange_strong(value, &old, next);
+  return old;
+}

@@ -23,6 +23,11 @@ Chinese, English and disabled-animation variants check:
   for multi-touch, invalid samples, I2C failure and queue overflow.
 - Disabled entry/hint when touch is unavailable, and a reset-failure page with
   one-shot Retry. Recovery cannot return to ordinary pages or accept SDK updates.
+- Separate Wi-Fi setup confirmation, request rejection, release-only start,
+  immediate PREPARING protection, copied 32-byte hotspot SSID and portal address,
+  accepted cancellation retaining CANCELLING across delayed ACTIVE snapshots,
+  late cancellation rejected after commit, progress-only finishing/reconnect,
+  failed-setup retry, and factory reset taking priority over setup snapshots.
 - All 23 expression layouts, a six-digit pair code with leading zeros, glyph
   coverage, text bounds, fixed widget/timer counts, and destroy/recreate cleanup.
 
@@ -35,3 +40,7 @@ disable leak detection by default for environments using `ptrace`; override
 The suite validates the view's LVGL event behavior. Physical CST7XX coordinates,
 multi-touch frame parsing, task synchronization, flash erasure and hardware
 reboot belong to their respective integration and device tests.
+
+Provisioning request/cancel/busy/abort mocks expose only the public mailbox
+contract and selectable outcomes. The actual mailbox and network cleanup have
+their own production-source fault tests; this harness does not reproduce them.

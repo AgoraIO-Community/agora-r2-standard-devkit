@@ -12,6 +12,7 @@
 #undef TAG
 #include "bk7259_key.c"
 #undef TAG
+#include "bk7259_provision.c"
 #define mybot_start host_sdk_start
 #define mybot_stop host_sdk_stop
 #define mybot_is_running host_sdk_running
@@ -47,6 +48,18 @@ static unsigned idle_polls, touch_at_poll, stop_calls, start_calls,
     network_calls;
 static unsigned writes, deletes, reboot_calls, failures, conversation_events;
 static bool fail_start, fail_network;
+/* Optional fault/scheduling hooks used by the provisioning-owner regression.
+ * Normal reset cases below leave these unset and retain their original flow. */
+static void (*owner_poll_hook)(void);
+static void (*owner_stop_hook)(void);
+static void (*owner_start_hook)(void);
+static void (*owner_workflow_hook)(void);
+static int (*owner_ensure_hook)(const char *);
+static int (*owner_provision_hook)(const char *);
+static int (*owner_restore_hook)(const char *);
+static unsigned exit_after_polls;
+static bk7259_provision_screen_t provision_screen;
+static mybot_lcd_screen_t workflow_screen;
 static char events[128];
 static size_t event_length;
 volatile const char build_version[] = "touch-reset-host";
@@ -79,6 +92,8 @@ static void fixture(void) {
   if (s_key.prepared)
     bk7259_key_shutdown();
   (void)bk7259_factory_reset_take_request();
+  (void)bk7259_provision_take_request();
+  bk7259_provision_finish();
   memset(records, 0, sizeof(records));
   const unsigned char data[] = {1, 2, 3, 4};
   for (int i = AUTH; i < RECORDS; ++i)
@@ -92,6 +107,12 @@ static void fixture(void) {
   idle_polls = touch_at_poll = stop_calls = start_calls = network_calls = 0;
   writes = deletes = reboot_calls = failures = conversation_events = 0;
   fail_start = fail_network = false;
+  owner_poll_hook = owner_stop_hook = owner_start_hook = NULL;
+  owner_workflow_hook = NULL;
+  owner_ensure_hook = owner_provision_hook = owner_restore_hook = NULL;
+  exit_after_polls = 4;
+  provision_screen = BK7259_PROVISION_NONE;
+  workflow_screen = MYBOT_LCD_SCREEN_STARTING;
   event_length = 0;
   events[0] = '\0';
   s_display_prepared = false;
@@ -156,9 +177,11 @@ int rtos_delay_milliseconds(uint32_t ms) {
   clock_ms += ms;
   if (ms == MYBOT_POLL_INTERVAL_MS) {
     ++idle_polls;
+    if (owner_poll_hook)
+      owner_poll_hook();
     if (idle_polls == touch_at_poll)
       bk7259_factory_reset_request();
-    else if (idle_polls >= 4)
+    else if (idle_polls >= exit_after_polls)
       longjmp(exit_point, EXIT_IDLE);
   }
   return 0;
@@ -291,6 +314,16 @@ int bk7259_lcd_show_factory_reset(bk7259_factory_reset_screen_t screen) {
     ++failures;
   return 0;
 }
+int bk7259_lcd_show_provision(bk7259_provision_screen_t screen) {
+  provision_screen = screen;
+  return 0;
+}
+int bk7259_lcd_show_screen(mybot_lcd_screen_t screen) {
+  workflow_screen = screen;
+  if (owner_workflow_hook)
+    owner_workflow_hook();
+  return 0;
+}
 int bk7259_lcd_set_runtime_status(const char *state, bool active) {
   (void)state;
   (void)active;
@@ -312,18 +345,33 @@ int mybot_bk7259_ensure_network(const char *device_id) {
   assert(device_id[0]);
   ++network_calls;
   record('N');
+  if (owner_ensure_hook)
+    return owner_ensure_hook(device_id);
   if (bk7259_factory_reset_requested())
     return BK7259_NETWORK_CANCELLED;
   return fail_network ? -1 : 0;
 }
+int mybot_bk7259_provision_wifi(const char *device_id) {
+  assert(!sdk_running && sdk_state == MYBOT_STATE_STOPPED);
+  assert(device_id[0] && bk7259_provision_busy());
+  return owner_provision_hook ? owner_provision_hook(device_id) : -1;
+}
+int bk7259_wifi_restore_saved(const char *device_id) {
+  assert(!sdk_running && sdk_state == MYBOT_STATE_STOPPED && !bk7259_provision_busy());
+  return owner_restore_hook ? owner_restore_hook(device_id) : -1;
+}
 int host_sdk_start(const mybot_config_t *config) {
   assert(config->device_id[0]);
+  assert(provision_screen == BK7259_PROVISION_NONE &&
+         workflow_screen == MYBOT_LCD_SCREEN_STARTING_SERVICES);
   ++start_calls;
   record('A');
   if (fail_start)
     return -1;
   sdk_state = MYBOT_STATE_READY;
   sdk_running = true;
+  if (owner_start_hook)
+    owner_start_hook();
   return 0;
 }
 void host_sdk_stop(void) {
@@ -338,6 +386,8 @@ void host_sdk_stop(void) {
     sdk_running = false;
     sdk_state = MYBOT_STATE_STOPPED;
   }
+  if (owner_stop_hook)
+    owner_stop_hook();
 }
 bool host_sdk_running(void) { return sdk_running; }
 mybot_state_t host_sdk_state(void) { return sdk_state; }
@@ -517,11 +567,14 @@ static void test_startup_failure_and_cancel_keep_touch_entry(void) {
   fixture();
   bk7259_factory_reset_request();
   assert(run_owner(true) == EXIT_REBOOT && !start_calls);
-  assert(network_calls == 1 && strstr(events, "NBSPD") != NULL);
+  assert(network_calls == 0 && strstr(events, "LBSPD") != NULL);
   assert_erased();
 }
 
-int main(void) {
+#ifndef TOUCH_RESET_TEST_MAIN
+#define TOUCH_RESET_TEST_MAIN main
+#endif
+int TOUCH_RESET_TEST_MAIN(void) {
   test_request_is_nonblocking_and_independent();
   test_key_gestures_and_reset_priority();
   test_key_boot_hold_and_wraparound();
