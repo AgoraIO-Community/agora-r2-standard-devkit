@@ -637,7 +637,6 @@ git submodule update --init --recursive
 - [bk_avdk_smp 许可证](bk_avdk_smp/LICENSE)
 - [bk_solution_ai 许可证](bk_solution_ai/LICENSE)
 - [AOSL 许可证及附加条款](components/mybot/mybot_aosl/aosl/LICENSE)
-- [提示音资源许可证](projects/mybot/assets/LICENSE.xiaozhi-esp32)
 - [LVGL 许可证](bk_avdk_smp/ap/components/lvgl/LICENCE.txt)
 - [LVGL 视图、几何蒙版和字体来源](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
 - [BK7259 第三方声明](components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)

@@ -27,8 +27,7 @@ Expression mappings, mask reproduction, and resource limits are recorded in
 
 The preceding status view and generated resources were adapted from
 [agora-esp32-devkit commit `19af3bdfaf1dd35461af48def8f9558e3503e755`](https://github.com/AgoraIO-Community/agora-esp32-devkit/tree/19af3bdfaf1dd35461af48def8f9558e3503e755).
-Its original layout, source-font and emoji notices remain preserved after the
-face rewrite.
+Source-font and emoji notices remain preserved after the face rewrite.
 The following asset paths are relative to `platforms/bk7259/`.
 
 - `display/pixel_expression_masks.h` contains five immutable A8 geometry masks
@@ -36,8 +35,8 @@ The following asset paths are relative to `platforms/bk7259/`.
   `display/generate-expression-masks.py`. Its MIT notice and copyright are
   preserved. Generation uses Pillow 10.2.0, fourfold coverage sampling, and
   Lanczos downsampling of geometric contours; no full-face images are imported.
-- The view is MIT-licensed. Its original xiaozhi-esp32 layout attribution and
-  notices are preserved in `display/assets/licenses/LVGL_VIEW_LICENSE.txt`;
+- The view is MIT-licensed. Its terms and current Project Contributors
+  copyright notice are in `display/assets/licenses/LVGL_VIEW_LICENSE.txt`;
   the asset API header retains Apache-2.0.
 - `display/lvgl_fonts.c` contains the MyBot UI Sans 20-pixel subset derived
   from Source Han Sans SC Normal, copyright 2014-2021 Adobe. It is licensed
@@ -72,13 +71,6 @@ decorations use the separate BK7259 Terminal subsets described above, and
 the built-in Unscii 16 font is not enabled. LVGL's license is
 recorded in that component's `LICENCE.txt`; source-specific notices remain
 applicable. The BK7259 view does not copy the ESP-IDF display driver.
-
-## Voice prompts
-
-The embedded Chinese and English Ogg/Opus prompt assets under
-`projects/mybot/assets/` are derived from the MIT-licensed `xiaozhi-esp32`
-resources. Their license and attribution are retained in
-`projects/mybot/assets/LICENSE.xiaozhi-esp32`.
 
 ## AOSL
 

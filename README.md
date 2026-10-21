@@ -752,7 +752,6 @@ terms of use, including but not limited to:
 - [bk_avdk_smp license](bk_avdk_smp/LICENSE)
 - [bk_solution_ai license](bk_solution_ai/LICENSE)
 - [AOSL license and additional terms](components/mybot/mybot_aosl/aosl/LICENSE)
-- [Prompt asset license](projects/mybot/assets/LICENSE.xiaozhi-esp32)
 - [LVGL license](bk_avdk_smp/ap/components/lvgl/LICENCE.txt)
 - [LVGL view, geometry masks, and font provenance](components/mybot/mybot_sdk/platforms/bk7259/display/SOURCES.md)
 - [BK7259 third-party notices](components/mybot/mybot_sdk/THIRD_PARTY_NOTICES.md)

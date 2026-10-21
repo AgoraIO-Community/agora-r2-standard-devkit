@@ -177,7 +177,7 @@ the firmware build uses the committed header.
 The preceding platform-independent status view and generated resources were
 adapted from [agora-esp32-devkit commit `19af3bdfaf1dd35461af48def8f9558e3503e755`](https://github.com/AgoraIO-Community/agora-esp32-devkit/tree/19af3bdfaf1dd35461af48def8f9558e3503e755).
 
-The view's MIT license, original layout reference, and copyright notice remain
+The view's MIT terms and current Project Contributors copyright notice are
 in `assets/licenses/LVGL_VIEW_LICENSE.txt`. The historical asset API header
 retains its Apache-2.0 SPDX identifier. The generated font and emoji pixel data
 retain SIL OFL-1.1 notices in `assets/licenses/LVGL_VIEW_FONT_LICENSE.txt` and
