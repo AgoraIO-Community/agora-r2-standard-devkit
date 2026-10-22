@@ -38,7 +38,7 @@ the command above because the current ptrace environment cannot run it. These
 tests validate the native algorithms/lifecycle, not physical I2C timing or the
 panel's actual coordinate orientation; those require the target board.
 
-The CST7XX parser comes from the supplied BK v4.0.1 reference AVDK and preserves
+The CST7XX parser comes from the reviewed BK v4.0.1 AVDK baseline and preserves
 its Apache-2.0 copyright/license. The maintained patch additionally validates a
 complete frame before updating retained contacts and preserves explicit UP
 coordinates. Kconfig, source registration, sensor ID and 20 ms reset timing are
