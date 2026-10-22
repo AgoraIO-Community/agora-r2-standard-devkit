@@ -36,9 +36,9 @@ The following asset paths are relative to `platforms/bk7259/`.
   are preserved. Generation uses Pillow 10.2.0, fourfold coverage sampling, and
   Lanczos downsampling of geometric contours; no full-face images are imported.
   This does not establish a separate license grant for the reference simulator.
-- The view is MIT-licensed. Its original xiaozhi-esp32 layout attribution and
-  notices are preserved in `display/assets/licenses/LVGL_VIEW_LICENSE.txt`;
-  the asset API header retains Apache-2.0.
+- The view is MIT-licensed. Its license terms are recorded in
+  `display/assets/licenses/LVGL_VIEW_LICENSE.txt`; the asset API header retains
+  Apache-2.0.
 - `display/lvgl_fonts.c` contains the MyBot UI Sans 20-pixel subset derived
   from Source Han Sans SC Normal, copyright 2014-2021 Adobe. It is licensed
   under SIL OFL-1.1 in `display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt`.
@@ -75,9 +75,9 @@ applicable. The BK7259 view does not copy the ESP-IDF display driver.
 ## Voice prompts
 
 The embedded Chinese and English Ogg/Opus prompt assets under
-`projects/mybot/assets/` are derived from the MIT-licensed `xiaozhi-esp32`
-resources. Their license and attribution are retained in
-`projects/mybot/assets/LICENSE.xiaozhi-esp32`.
+`projects/mybot/assets/` are part of this repository. No standalone
+third-party attribution is recorded for these files; confirm their ownership
+and redistribution terms before release.
 
 ## AOSL
 
