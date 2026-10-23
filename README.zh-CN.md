@@ -67,12 +67,12 @@ BK 平台源码只通过 `<mybot/platform/...>` 公共平台头文件访问 MyBo
 | --- | --- |
 | `bk_avdk_smp` | `584b947920c414230f9909375f008e7d6a2c6c6b` |
 | `bk_solution_ai` | `03aadb49756a5109bfede04002b9b6820f407c3f` |
-| MyBot SDK 快照 | `58f0ef9c14be9f159b1dc167bf0f035983b25117`，版本 1.3.0 |
+| MyBot SDK 快照 | `baf41bac3b6ca25bad9820f9fc857c94698607d8`，版本 1.3.0 |
 | AOSL 基线 | `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | Agora RTSA | v1.10.1 build `1278380` |
 
-父仓库通过 `vendor.lock.json` 固定子模块 gitlink，通过 `SDK_REVISION` 和
-`AOSL_REVISION` 记录目标源码修改，并通过
+父仓库通过 `vendor.lock.json` 固定子模块 gitlink，通过 `SDK_REVISION` 记录 MyBot
+源码提交和摘要，通过 `AOSL_REVISION` 记录 AOSL 修改，并通过
 `components/mybot/mybot_rtsa/PACKAGE_INFO` 记录 RTSA 包。构建时在隔离副本中应用已记录
 的厂商补丁，不修改官方子模块 checkout。
 
