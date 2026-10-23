@@ -19,7 +19,7 @@
 - `components/mybot/mybot_rtsa/`：目标 Agora RTSA 输入。
 - `patches/` 与 `vendor.lock.json`：厂商修改及其摘要。
 
-MyBot SDK 快照为 `58f0ef9c14be9f159b1dc167bf0f035983b25117`，版本 1.3.0。
+MyBot SDK 快照为 `baf41bac3b6ca25bad9820f9fc857c94698607d8`，版本 1.3.0。
 源码和许可证摘要记录在 `components/mybot/mybot_sdk/SDK_REVISION`。
 AOSL 基线为 `84e086084ebcd0ae2455a0ce5721950c5fe2e656`，内容摘要和 BK7259 HAL
 修改记录在 `components/mybot/mybot_aosl/AOSL_REVISION`。

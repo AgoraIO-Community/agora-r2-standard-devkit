@@ -826,28 +826,6 @@ static void set_gimbal_conversation(bool active)
     }
 }
 
-static int read_emotion(uint32_t indicators, bk7259_expression_t *expression)
-{
-    switch (indicators & MYBOT_LCD_INDICATOR_EMOTION_MASK) {
-    case MYBOT_LCD_INDICATOR_HAPPY:
-        *expression = BK7259_EXPRESSION_HAPPY;
-        return 1;
-    case MYBOT_LCD_INDICATOR_SAD:
-        *expression = BK7259_EXPRESSION_SAD;
-        return 1;
-    case MYBOT_LCD_INDICATOR_ANGRY:
-        *expression = BK7259_EXPRESSION_ANNOYED;
-        return 1;
-    case MYBOT_LCD_INDICATOR_SURPRISED:
-        *expression = BK7259_EXPRESSION_SURPRISED;
-        return 1;
-    case MYBOT_LCD_INDICATOR_NONE:
-        return 0;
-    default:
-        return -1;
-    }
-}
-
 /* Caller holds snapshot lock. No borrowed SDK pointer crosses this boundary. */
 static int publish_content(const mybot_lcd_content_t *content)
 {
@@ -859,28 +837,14 @@ static int publish_content(const mybot_lcd_content_t *content)
     if (s_lcd.factory_reset_active) {
         return 0;
     }
-    bk7259_expression_t expression = BK7259_EXPRESSION_NEUTRAL;
     const bool in_conversation = content->screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
-    const int emotion = in_conversation
-        ? read_emotion(content->indicators, &expression) : 0;
-    if (emotion < 0) {
-        MYBOT_LOGW(TAG, "mutually exclusive emotion indicators required: 0x%x",
-                   (unsigned)(content->indicators & MYBOT_LCD_INDICATOR_EMOTION_MASK));
-        return -1;
-    }
     if ((s_lcd.latest.screen == MYBOT_LCD_SCREEN_IN_CONVERSATION) != in_conversation) {
         set_gimbal_conversation(in_conversation);
     }
     bk7259_expression_policy_update(&s_lcd.expression_policy, content, rtos_get_time());
-    /* Consume the one-shot before retaining the ordinary latest snapshot.
-     * Consecutive requests for the same scene intentionally restart it. */
-    if (emotion) {
-        if (!bk7259_expression_policy_mcp(&s_lcd.expression_policy, expression))
-            return -1;
-        MYBOT_LOGI(TAG, "MCP expression requested: %s", bk7259_expression_name(expression));
-    }
     s_lcd.latest = *content;
-    s_lcd.latest.indicators &= ~MYBOT_LCD_INDICATOR_EMOTION_MASK;
+    s_lcd.latest.indicators &=
+        MYBOT_LCD_INDICATOR_VP_REGISTERED | MYBOT_LCD_INDICATOR_SERVER_STATE_MASK;
     s_lcd.pending = true;
     notify(&s_lcd.wake);
     return 0;

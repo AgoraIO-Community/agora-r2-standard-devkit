@@ -75,14 +75,15 @@ directories are not build inputs.
 | --- | --- |
 | `bk_avdk_smp` | `584b947920c414230f9909375f008e7d6a2c6c6b` |
 | `bk_solution_ai` | `03aadb49756a5109bfede04002b9b6820f407c3f` |
-| MyBot SDK snapshot | `58f0ef9c14be9f159b1dc167bf0f035983b25117`, version 1.3.0 |
+| MyBot SDK snapshot | `baf41bac3b6ca25bad9820f9fc857c94698607d8`, version 1.3.0 |
 | AOSL base | `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | Agora RTSA | v1.10.1 build `1278380` |
 
-The parent repository pins exact submodule gitlinks in `vendor.lock.json`, records target
-source modifications in `SDK_REVISION` and `AOSL_REVISION`, and records the RTSA package in
-`components/mybot/mybot_rtsa/PACKAGE_INFO`. The build applies the recorded vendor patches to
-isolated copies; it does not modify the official submodule checkouts.
+The parent repository pins exact submodule gitlinks in `vendor.lock.json`, records the
+MyBot source commit and digests in `SDK_REVISION`, records AOSL modifications in
+`AOSL_REVISION`, and records the RTSA package in
+`components/mybot/mybot_rtsa/PACKAGE_INFO`. The build applies the recorded vendor patches
+to isolated copies; it does not modify the official submodule checkouts.
 
 See [Official dependencies and isolated builds](docs/OFFICIAL_DEPENDENCIES.md) for patch
 provenance, digests, upgrade rules, and verification boundaries.
