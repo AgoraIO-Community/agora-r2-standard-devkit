@@ -22,7 +22,7 @@ python3 scripts/check_sources.py
 This verifies:
 
 - AVDK and Solution gitlinks and tracked-tree cleanliness.
-- Patch hashes and the SDK/AOSL content digests.
+- Patch hashes and the MyBot/AOSL content digests.
 - RTSA header and static-library hashes.
 - Product include boundaries.
 
@@ -33,21 +33,21 @@ python3 scripts/build_all.py
 ```
 
 It builds both languages, both cores, the combined image, and the OTA package.
-The latest observed runtime was about 1 minute 8 seconds on the development host.
+The latest observed runtime was about 1 minute 9 seconds on the development host.
 Generated endpoints and configuration were verified by the build script.
 
 Latest local build footprint:
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,933,944 B | 1,933,960 B |
+| AP Flash | 1,932,736 B | 1,932,752 B |
 | AP RAM | 157,740 B | 157,740 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,441,280 B | 3,441,312 B |
-| OTA package | 2,058,688 B | 2,058,208 B |
+| Combined image | 3,440,064 B | 3,440,096 B |
+| OTA package | 2,057,808 B | 2,057,408 B |
 
-The OTA partition is 2,097,152 bytes. The Chinese package has only 38,464 bytes
+The OTA partition is 2,097,152 bytes. The Chinese package has only 39,344 bytes
 of headroom, so new assets or code need an explicit size review.
 
 ## Host Test Matrix
@@ -85,20 +85,17 @@ result.
 
 These items require code or contract changes, not only additional testing:
 
-1. **Credential logging:** the pinned SDK HTTPS debug patch logs complete request
-   and response bodies at `NOTICE`. Responses may contain device, pairing, or RTC
-   tokens. Remove or redact this logging before production.
-2. **Certificate dates:** the adapter requests certificate and hostname
+1. **Certificate dates:** the adapter requests certificate and hostname
    verification, but the active MbedTLS configuration does not enable
    `MBEDTLS_HAVE_TIME_DATE`. Certificate expiry and not-before checks must be
    restored and tested.
-3. **Credential storage:** Wi-Fi and device credentials are stored in EasyFlash
+2. **Credential storage:** Wi-Fi and device credentials are stored in EasyFlash
    without at-rest encryption. Production storage protection still needs a
    product decision.
-4. **RTSA distribution:** the repository contains the proprietary RTSA input, but
+3. **RTSA distribution:** the repository contains the proprietary RTSA input, but
    no standalone redistribution grant is recorded. Obtain written authorization
    or remove it from public artifacts.
-5. **OTA capacity:** the current OTA package has less than 2% partition headroom.
+4. **OTA capacity:** the current OTA package has less than 2% partition headroom.
    Add a size gate or revise the partition plan before enabling additional assets.
 
 ## Target Board Checks

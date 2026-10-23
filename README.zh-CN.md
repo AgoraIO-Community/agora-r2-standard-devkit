@@ -68,7 +68,7 @@ BK 平台源码只通过 `<mybot/platform/...>` 公共平台头文件访问 SDK�
 | --- | --- |
 | `bk_avdk_smp` | `584b947920c414230f9909375f008e7d6a2c6c6b` |
 | `bk_solution_ai` | `03aadb49756a5109bfede04002b9b6820f407c3f` |
-| agent-studio-device-firmware | v1.3.0，提交 `32ac74bc59cb72db70e9a68337753561b59b13d0`，并包含 BK7259 目标补丁 |
+| agent-studio-device-firmware | v1.3.0，提交 `46e265a960fac48d93ae6755bdf694aeb09ab366` |
 | AOSL 基线 | `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | Agora RTSA | v1.10.1 build `1278380` |
 
@@ -76,10 +76,6 @@ BK 平台源码只通过 `<mybot/platform/...>` 公共平台头文件访问 SDK�
 `AOSL_REVISION` 记录目标源码修改，并通过
 `components/mybot/mybot_rtsa/PACKAGE_INFO` 记录 RTSA 包。构建时在隔离副本中应用已记录
 的厂商补丁，不修改官方子模块 checkout。
-
-HTTPS 请求/响应正文日志修改记录在
-`patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch`；该修改已包含在
-内嵌 SDK 中，固件构建不会重复应用。
 
 补丁来源、摘要、升级规则和验证边界见
 [BK 官方依赖与隔离构建](docs/OFFICIAL_DEPENDENCIES.zh-CN.md)。

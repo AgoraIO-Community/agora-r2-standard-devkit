@@ -74,7 +74,7 @@ Generated directories such as `build/` and `releases/` are ignored.
 | --- | --- |
 | `bk_avdk_smp` | `584b947920c414230f9909375f008e7d6a2c6c6b` |
 | `bk_solution_ai` | `03aadb49756a5109bfede04002b9b6820f407c3f` |
-| agent-studio-device-firmware | v1.3.0 at `32ac74bc59cb72db70e9a68337753561b59b13d0`, plus the BK7259 target patch |
+| agent-studio-device-firmware | v1.3.0 at `46e265a960fac48d93ae6755bdf694aeb09ab366` |
 | AOSL base | `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | Agora RTSA | v1.10.1 build `1278380` |
 
@@ -82,10 +82,6 @@ The parent repository pins exact submodule gitlinks in `vendor.lock.json`, recor
 modifications in `SDK_REVISION` and `AOSL_REVISION`, and records the RTSA package in
 `components/mybot/mybot_rtsa/PACKAGE_INFO`. The build applies the recorded vendor patches to
 isolated copies; it does not modify the official submodule checkouts.
-
-The HTTPS request/response body logging change is recorded in
-`patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch`; it is already present
-in the vendored SDK and is not reapplied by the firmware build.
 
 See [Official dependencies and isolated builds](docs/OFFICIAL_DEPENDENCIES.md) for patch
 provenance, digests, upgrade rules, and verification boundaries.
