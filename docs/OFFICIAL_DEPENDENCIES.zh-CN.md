@@ -20,9 +20,8 @@
 - `patches/` 与 `vendor.lock.json`：厂商修改及其摘要。
 
 SDK 快照为 agent-studio-device-firmware v1.3.0，提交
-`32ac74bc59cb72db70e9a68337753561b59b13d0`，并包含 BK7259 HTTPS 正文日志目标补丁。
-源码和许可证摘要记录在 `components/mybot/mybot_sdk/SDK_REVISION`，目标补丁记录在
-`patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch`。
+`46e265a960fac48d93ae6755bdf694aeb09ab366`。源码、许可证、目录树和归档摘要记录在
+`components/mybot/mybot_sdk/SDK_REVISION`。
 AOSL 基线为 `84e086084ebcd0ae2455a0ce5721950c5fe2e656`，内容摘要和 BK7259 HAL
 修改记录在 `components/mybot/mybot_aosl/AOSL_REVISION`。
 

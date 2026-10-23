@@ -3,13 +3,10 @@
 ## agent-studio-device-firmware
 
 The sources under `include/` and `src/` are based on
-[agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/32ac74bc59cb72db70e9a68337753561b59b13d0) at commit
-`32ac74bc59cb72db70e9a68337753561b59b13d0`, with the BK7259 HTTPS debug patch
-recorded in `SDK_REVISION`. The already-applied target delta is preserved in
-[`0001-bk7259-https-debug-log.patch`](../../../patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch); it is not
-reapplied during firmware builds. Source digests identify both the release
-snapshot and the patched contents. They are provided under the Apache License
-2.0 in `LICENSE`, except where a source file states otherwise.
+[agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/46e265a960fac48d93ae6755bdf694aeb09ab366) at commit
+`46e265a960fac48d93ae6755bdf694aeb09ab366`. Source digests identify the exact
+snapshot. The sources are provided under the Apache License 2.0 in `LICENSE`,
+except where a source file states otherwise.
 
 `src/support/mybot_json.c` and `src/internal/mybot_json.h` are namespaced
 derivatives of cJSON. Their MIT license and Dave Gamble copyright notice are

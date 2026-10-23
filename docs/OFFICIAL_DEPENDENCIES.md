@@ -21,10 +21,8 @@ The parent repository owns:
 - `patches/` and `vendor.lock.json` for vendor modifications and their hashes.
 
 The SDK snapshot is agent-studio-device-firmware v1.3.0 at
-`32ac74bc59cb72db70e9a68337753561b59b13d0`, plus the BK7259 HTTPS body-logging
-target patch. Its source and license digests are recorded in
-`components/mybot/mybot_sdk/SDK_REVISION`; the target patch is recorded in
-`patches/agent-studio-device-firmware/0001-bk7259-https-debug-log.patch`.
+`46e265a960fac48d93ae6755bdf694aeb09ab366`. Its source, license, tree, and
+archive digests are recorded in `components/mybot/mybot_sdk/SDK_REVISION`.
 AOSL is based on `84e086084ebcd0ae2455a0ce5721950c5fe2e656`; its content digest
 and BK7259 HAL modifications are recorded in `components/mybot/mybot_aosl/AOSL_REVISION`.
 

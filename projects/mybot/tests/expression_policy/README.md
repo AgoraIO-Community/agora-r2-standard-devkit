@@ -24,5 +24,5 @@ and 32-bit monotonic-clock wraparound. A foreground hold starts only after the
 display owner reports successful submission.
 
 This suite does not validate LCD scanout, frame timing, RTM deduplication, or
-the SDK's emotion-to-LCD dispatch; these require their respective integration
+the SDK's workflow-indicator dispatch; these require their respective integration
 checks and device verification.
