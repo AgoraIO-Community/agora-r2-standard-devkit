@@ -4,6 +4,7 @@
  * src/expressions.js and src/reference-style.js. The renderer owns only LVGL
  * objects; the BK7259 display owner retains the panel and its fixed buffers. */
 #include "lvgl_view.h"
+#include "mybot_bk7259_platform.h"
 #include "pixel_expression_shapes.h"
 
 #include <cstdio>
@@ -40,6 +41,7 @@ enum class ButtonAction {
     Settings,
     Return,
     ResetMenu,
+    PowerOff,
     ProvisionMenu,
     Cancel,
     Confirm,
@@ -74,6 +76,7 @@ constexpr Presentation kResetScreens[] = {
 };
 constexpr const char *kPortalNotice = "请连接设备热点\nhttp://192.168.4.1";
 constexpr const char *kSettings = "设置";
+constexpr const char *kPowerOff = "关机";
 constexpr const char *kReset = "恢复出厂";
 constexpr const char *kReturn = "返回";
 constexpr const char *kConfirmTitle = "恢复出厂？";
@@ -118,6 +121,7 @@ constexpr Presentation kResetScreens[] = {
 };
 constexpr const char *kPortalNotice = "Connect to device Wi-Fi\nhttp://192.168.4.1";
 constexpr const char *kSettings = "Setup";
+constexpr const char *kPowerOff = "Power off";
 constexpr const char *kReset = "Factory reset";
 constexpr const char *kReturn = "Back";
 constexpr const char *kConfirmTitle = "Factory reset?";
@@ -644,6 +648,8 @@ bool action_available(ButtonAction action) {
     case ButtonAction::Return:
     case ButtonAction::ResetMenu:
         return s_view.settings_page == SettingsPage::Menu;
+    case ButtonAction::PowerOff:
+        return s_view.settings_page == SettingsPage::Menu;
     case ButtonAction::ProvisionMenu:
         return s_view.settings_page == SettingsPage::Menu && !provision_in_progress();
     case ButtonAction::Cancel:
@@ -672,6 +678,9 @@ void perform_button_action(ButtonAction action) {
         break;
     case ButtonAction::ResetMenu:
         show_settings(SettingsPage::Confirm);
+        break;
+    case ButtonAction::PowerOff:
+        mybot_bk7259_platform_reboot();
         break;
     case ButtonAction::ProvisionMenu:
         show_settings(SettingsPage::ConfirmProvision);
@@ -860,13 +869,14 @@ bool create_settings(int width, int height) {
     lv_obj_add_flag(s_view.settings_overlay,
                     static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
     constexpr int panel_width = 464;
-    constexpr int panel_height = 316;
+    constexpr int menu_height = 364;
+    constexpr int confirm_height = 316;
     s_view.settings_menu =
-        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - panel_height) / 2,
-                   panel_width, panel_height, 0x151b1d);
+        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - menu_height) / 2,
+                   panel_width, menu_height, 0x151b1d);
     s_view.settings_confirm =
-        make_panel(s_view.settings_overlay, (width - panel_width) / 2, (height - panel_height) / 2,
-                   panel_width, panel_height, 0x151b1d);
+        make_panel(s_view.settings_overlay, (width - panel_width) / 2,
+                   (height - confirm_height) / 2, panel_width, confirm_height, 0x151b1d);
     if (!s_view.settings_menu || !s_view.settings_confirm) {
         return false;
     }
@@ -884,9 +894,10 @@ bool create_settings(int width, int height) {
                                         ButtonAction::Confirm, true);
     if (!s_view.provision_menu_button || !s_view.confirm_title || !s_view.confirm_button ||
         !make_ui_label(s_view.settings_menu, 24, 22, 416, 36, kSettings, kNeutral) ||
-        !make_button(s_view.settings_menu, 40, 142, 384, 56, kReset, ButtonAction::ResetMenu,
+        !make_button(s_view.settings_menu, 40, 142, 384, 56, kPowerOff, ButtonAction::PowerOff) ||
+        !make_button(s_view.settings_menu, 40, 214, 384, 56, kReset, ButtonAction::ResetMenu,
                      true) ||
-        !make_button(s_view.settings_menu, 40, 218, 384, 56, kReturn, ButtonAction::Return) ||
+        !make_button(s_view.settings_menu, 40, 286, 384, 56, kReturn, ButtonAction::Return) ||
         !make_button(s_view.settings_confirm, 32, 224, 184, 56, kCancel, ButtonAction::Cancel)) {
         return false;
     }

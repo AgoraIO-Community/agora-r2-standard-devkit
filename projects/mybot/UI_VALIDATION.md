@@ -33,21 +33,21 @@ python3 scripts/build_all.py
 ```
 
 It builds both languages, both cores, the combined image, and the OTA package.
-The latest observed runtime was about 1 minute 9 seconds on the development host.
+The latest observed runtime was about 50 seconds on the development host.
 Generated endpoints and configuration were verified by the build script.
 
 Latest local build footprint:
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,932,736 B | 1,932,752 B |
+| AP Flash | 1,933,152 B | 1,933,176 B |
 | AP RAM | 157,740 B | 157,740 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,440,064 B | 3,440,096 B |
-| OTA package | 2,057,808 B | 2,057,408 B |
+| Combined image | 3,440,480 B | 3,440,512 B |
+| OTA package | 2,057,984 B | 2,057,616 B |
 
-The OTA partition is 2,097,152 bytes. The Chinese package has only 39,344 bytes
+The OTA partition is 2,097,152 bytes. The Chinese package has only 39,168 bytes
 of headroom, so new assets or code need an explicit size review.
 
 ## Host Test Matrix
@@ -72,7 +72,8 @@ Coverage includes:
 - Provisioning owner, cancellation, credential commit, and reset priority.
 - Factory-reset persistence and storage-failure injection.
 - CST7XX touch parsing, GPIO capabilities, lifecycle, and event bounds.
-- Native LVGL touch flows, both languages, disabled animations, and 23 expressions.
+- Native LVGL touch flows, both languages, disabled animations, the power action,
+  and 23 expressions.
 - Expression and voiceprint indicator policy.
 - HTTPS retry, timeout, EOF, socket-error isolation, and clock wraparound.
 - EB521 protocol, trajectories, CLI admission, and worker cleanup.

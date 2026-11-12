@@ -22,6 +22,7 @@ unsigned provision_requests;
 unsigned provision_attempts;
 unsigned cancel_requests;
 unsigned cancel_attempts;
+unsigned reboot_requests;
 bool provision_busy;
 bool accept_provision = true;
 bool accept_cancel = true;
@@ -32,6 +33,7 @@ const char *output_directory;
 
 #if CONFIG_MYBOT_LANGUAGE_ZH_CN
 constexpr const char *kSetup = "设置";
+constexpr const char *kPowerOff = "关机";
 constexpr const char *kReset = "恢复出厂";
 constexpr const char *kBack = "返回";
 constexpr const char *kConfirmTitle = "恢复出厂？";
@@ -55,6 +57,7 @@ constexpr const char *kFinishing = "正在保存Wi-Fi";
 constexpr const char *kReconnecting = "正在连接Wi-Fi";
 #else
 constexpr const char *kSetup = "Setup";
+constexpr const char *kPowerOff = "Power off";
 constexpr const char *kReset = "Factory reset";
 constexpr const char *kBack = "Back";
 constexpr const char *kConfirmTitle = "Factory reset?";
@@ -297,15 +300,26 @@ void test_availability_and_workflows() {
         lv_obj_get_coords(button(kSetup), &actual);
         assert(std::memcmp(&actual, &expected, sizeof(actual)) == 0);
         tap(kSetup);
-        assert(label(kReset));
+        assert(label(kPowerOff) && label(kReset));
         check_layout(screen());
         tap(kBack);
-        assert(!label(kReset));
-        assert(requests == 0);
+        assert(!label(kPowerOff) && !label(kReset));
+        assert(requests == 0 && reboot_requests == 0);
     }
     update(MYBOT_LCD_SCREEN_PAIR_CODE, "pairing");
     assert(label("000042"));
     snapshot("pair-code");
+}
+
+void test_power_off_action() {
+    update(MYBOT_LCD_SCREEN_READY);
+    tap(kSetup);
+    assert(label(kPowerOff));
+    const unsigned before = reboot_requests;
+    tap(kPowerOff);
+    assert(reboot_requests == before + 1);
+    assert(requests == 0);
+    tap(kBack);
 }
 
 void test_modal_cancel_and_latest_background() {
@@ -574,6 +588,7 @@ void test_confirmation_busy_and_retry() {
 } // namespace
 
 extern "C" void bk7259_factory_reset_request(void) { ++requests; }
+extern "C" void mybot_bk7259_platform_reboot(void) { ++reboot_requests; }
 
 extern "C" bool bk7259_provision_request(void) {
     ++provision_attempts;
@@ -620,6 +635,7 @@ int main(int argc, char **argv) {
     widgets_after_create = object_count(screen());
     timers_after_create = timer_count();
     test_availability_and_workflows();
+    test_power_off_action();
     test_modal_cancel_and_latest_background();
     test_no_press_through();
     test_drag_cancel_and_indev_reset();
@@ -644,6 +660,7 @@ int main(int argc, char **argv) {
     lv_display_delete(display);
     lv_deinit();
     std::puts(
-        "Touch UI: real LVGL release/cancel paths, Wi-Fi/reset gating and 23 expressions passed");
+        "Touch UI: real LVGL release/cancel paths, power/Wi-Fi/reset gating and 23 expressions "
+        "passed");
     return 0;
 }
