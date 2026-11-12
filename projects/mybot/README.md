@@ -61,7 +61,10 @@ The key is active low, scanned every 20 ms, and debounced with two matching
 samples. `KEY_SHORT_PRESS_LIMIT_MS=5000` filters prolonged presses; it does not
 define the hardware power-button timing. The CEN button remains hardware reset.
 
-Touch **Settings** to open Wi-Fi setup or factory reset.
+Touch **Settings** to open Wi-Fi setup, power off, or factory reset.
+
+Power off calls `bk_reboot()` and restarts the device without clearing Wi-Fi, device
+credentials, binding, or volume.
 
 - Wi-Fi setup requires SDK `STOPPED` and `mybot_is_running() == false`.
 - The device starts an open `mybot-xxxx` hotspot and serves the setup page at

@@ -16,6 +16,7 @@ implement a substitute UI or call private button handlers.
 Chinese, English and disabled-animation variants check:
 
 - Settings on every SDK workflow page and cancel revealing the latest page.
+- Power-off action reaches the product reboot sink exactly once.
 - Release-only actions, one touch opening only one layer, repeated confirmation
   posting once, dragging away and back, and dragging from background onto buttons.
 - `LV_EVENT_CANCEL`, input reset/wait-release, and loss of touch availability

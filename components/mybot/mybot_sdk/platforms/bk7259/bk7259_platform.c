@@ -68,6 +68,11 @@ int mybot_bk7259_platform_register(void) {
     return 0;
 }
 
+void mybot_bk7259_platform_reboot(void) {
+    MYBOT_LOGW(TAG, "reboot requested from product UI");
+    bk_reboot();
+}
+
 void mybot_bk7259_platform_shutdown(void) {
     if (!s_prepared) {
         return;
