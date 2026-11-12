@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="agora-r2-standard-devkit 中文操作手册：配网、配对、对话、屏幕状态、更换 Wi-Fi 与恢复出厂。">
+  <meta name="description" content="agora-r2-standard-devkit 中文操作手册：配网、配对、对话、屏幕状态、更换 Wi-Fi、关机与恢复出厂。">
   <title>agora-r2-standard-devkit 操作手册</title>
   <style>
     @page { size: A4; margin: 0; }
@@ -75,7 +75,7 @@
 <body>
 
 <section class="page" aria-label="封面与快速开始">
-  <header class="masthead"><b>agora-r2-standard-devkit</b><span>中文操作手册 · v1.0</span></header>
+  <header class="masthead"><b>agora-r2-standard-devkit</b><span>中文操作手册 · v1.1</span></header>
   <p class="chapter">开始使用你的 R2</p>
   <h1>开机，联网，<br>开始对话。</h1>
   <p class="subtitle">触屏设置 · 像素眼镜 · 按键会话</p>
@@ -89,7 +89,7 @@
     <div><b>03　完成配对</b><span>若显示配对码，在网页控制台输入六位数字。</span></div>
     <div><b>04　短按开聊</b><span>按下并松开会话键；再次短按结束会话。</span></div>
   </div>
-  <p class="small">适用于长按按钮可开关机、带“设置 → 配网 / 恢复出厂”入口的 R2 中文版本；
+  <p class="small">适用于长按按钮可硬件开关机、带“设置 → 配网 / 关机 / 恢复出厂”入口的 R2 中文版本；
     图中热点名、网络名及配对码均为示例，以设备实际显示为准。</p>
   <footer class="footer"><span>使用顺序：配网 02 → 配对 03 → 对话 04</span><span>01 / 07</span></footer>
 </section>
@@ -166,8 +166,9 @@
     <div><b>待机时：短按并松开</b>当 <code>state: ready</code> 时，开始会话。</div>
     <div><b>会话中：再次短按并松开</b>结束当前会话，屏幕回到待机画面。</div>
   </div>
-  <p><strong>长按同一按钮：开机或关机。</strong>开关机由当前板级电源硬件处理，长按时长以设备硬件为准。
-    日常会话操作请短按并松手；恢复出厂使用触屏设置。</p>
+  <p><strong>长按同一按钮：硬件开关机。</strong>日常会话操作请短按并松手；也可使用触屏“设置 → 关机”。</p>
+  <div class="note"><strong>触屏“关机”：</strong>轻触后设备立即重启，不清理 Wi-Fi、账号绑定或音量。
+    该入口没有二次确认，请在会话结束后使用。</div>
   <p>开启会话后，等待连接完成再说话。屏幕会短暂切换表情，随后显示服务返回的聆听、思考或回复状态。</p>
   <div class="grid3">
     <figure><img class="image" src="images/r2-user-guide/conversation-listening.png" alt="会话聆听状态，state: listening。"><figcaption>聆听 listening</figcaption></figure>
@@ -190,7 +191,7 @@
     第三行 <code>state</code> 才是实际工作状态。思考时间较长时，表情会变化，但状态仍是 thinking。</div>
   <p class="small">配网、配对及其他非会话就绪状态中，短按不会开聊。
     长按开机后，先松开按钮，再用短按开始会话。</p>
-  <footer class="footer"><span>需要更换网络或恢复出厂时，使用屏幕右上角“设置”</span><span>04 / 07</span></footer>
+  <footer class="footer"><span>更换网络、关机或恢复出厂时，使用屏幕右上角“设置”</span><span>04 / 07</span></footer>
 </section>
 
 <section class="page" aria-label="更换 Wi-Fi 与取消配网">
@@ -199,7 +200,7 @@
   <h2>保留绑定，更换 Wi-Fi</h2>
   <p class="lead">待机、会话中或网络异常时，都可从右上角“设置”进入配网。</p>
   <div class="grid2">
-    <figure><img class="image" src="images/r2-user-guide/settings.png" alt="设置菜单：配网、恢复出厂、返回。"><figcaption>① 打开设置，轻触“配网”。</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/settings.png" alt="设置菜单：配网、关机、恢复出厂、返回。"><figcaption>① 打开设置，轻触“配网”；“关机”会立即重启设备。</figcaption></figure>
     <figure><img class="image" src="images/r2-user-guide/provision-confirmation.png" alt="开始配网确认框，包含取消和开始配网按钮。"><figcaption>② 确认要更换网络后，轻触“开始配网”。</figcaption></figure>
   </div>
   <ol class="steps compact">
@@ -223,7 +224,7 @@
   </table>
   <p class="small">触屏操作请单指按下并在同一按钮内松开。拖动或多指操作不会确认，打开一层页面后，
     需要重新轻触下一层按钮。</p>
-  <footer class="footer"><span>配网入口用于换网；恢复出厂入口用于清除本机设置</span><span>05 / 07</span></footer>
+  <footer class="footer"><span>配网用于换网；关机用于重启设备；恢复出厂用于清除本机设置</span><span>05 / 07</span></footer>
 </section>
 
 <section class="page" aria-label="恢复出厂设置">
@@ -235,7 +236,7 @@
     <figure><img class="image" src="images/r2-user-guide/factory-confirmation.png" alt="恢复出厂确认框，说明清除 Wi-Fi、设备凭据和音量，提供取消及确认恢复。"><figcaption>确认前可以“取消”，不会清除任何配置。</figcaption></figure>
     <figure><img class="image" src="images/r2-user-guide/restoring.png" alt="正在恢复出厂设置，请勿断电。"><figcaption>确认后结束服务并清理配置，恢复过程中不能取消。</figcaption></figure>
   </div>
-  <div class="note attention"><strong>恢复和重启期间，请保持供电，不要长按关机。</strong>看到“恢复完成，正在重启”后，
+  <div class="note attention"><strong>恢复和重启期间，请保持供电，不要关机或断电。</strong>看到“恢复完成，正在重启”后，
     等待设备自动重启，再重新配网。</div>
   <table>
     <thead><tr><th>项目</th><th>恢复出厂后的结果</th></tr></thead>
@@ -252,7 +253,7 @@
     若恢复过程因断电中断，重新上电后可能继续尚未完成的恢复。</p>
   <div class="note"><strong>恢复出厂不等于解除绑定。</strong>如需更换所属账号或智能体，
     请在网页控制台处理服务器侧绑定关系。</div>
-  <footer class="footer"><span>长按按钮用于开关机；恢复出厂请在触屏确认</span><span>06 / 07</span></footer>
+  <footer class="footer"><span>长按按钮用于硬件开关机；触屏“关机”会重启；恢复出厂需在触屏确认</span><span>06 / 07</span></footer>
 </section>
 
 <section class="page" aria-label="常见问题与处理">
@@ -283,7 +284,7 @@
         再短按开始，不会自动续接原会话。</td></tr>
     </tbody>
   </table>
-  <p class="small">本手册对应 R2 触屏配网版，版本 1.0 / 2026-10-20。界面图由与固件相同的 UI 渲染代码生成，
+  <p class="small">本手册对应 R2 触屏配网版，版本 1.1 / 2026-11-12。界面图由与固件相同的 UI 渲染代码生成，
     不是实机照片；动画以静帧展示。图中示例不代表设备的实际网络、身份或配对码。</p>
   <footer class="footer"><span>agora-r2-standard-devkit · 操作手册</span><span>07 / 07</span></footer>
 </section>

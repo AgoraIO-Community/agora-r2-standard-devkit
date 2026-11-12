@@ -9,7 +9,7 @@
 | `conversation-listening.png` | 会话倾听 |
 | `conversation-thinking.png` | 会话思考 |
 | `conversation-speaking.png` | 会话播报 |
-| `settings.png` | 设置入口 |
+| `settings.png` | 设置入口，包含配网、关机、恢复出厂和返回 |
 | `provision-confirmation.png` | 配网确认 |
 | `provision-active.png` | 配网热点和网页地址 |
 | `provision-failed.png` | 配网失败 |
