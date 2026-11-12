@@ -54,7 +54,9 @@ SDK；SDK 服务运行时不能启动配网门户。
 按键低电平有效，每 20 ms 扫描，并连续两次采样消抖。`KEY_SHORT_PRESS_LIMIT_MS=5000`
 只过滤长按松手后的会话事件，不定义硬件开关机时间。CEN 按键仍仅执行硬件复位。
 
-点击界面中的 **Settings** 可进入 Wi-Fi 设置或恢复出厂。
+点击界面中的 **Settings** 可进入 Wi-Fi 设置、关机或恢复出厂。
+
+“关机”会调用 `bk_reboot()` 重启设备，不清理 Wi-Fi、设备凭据、绑定或音量。
 
 - 配网要求 SDK 为 `STOPPED` 且 `mybot_is_running() == false`。
 - 设备启动开放热点 `mybot-xxxx`，在 `http://192.168.4.1/` 提供设置页面。

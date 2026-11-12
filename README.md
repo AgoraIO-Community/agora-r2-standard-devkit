@@ -24,7 +24,7 @@ deployment.
 - Three-input analog capture with an appended playback reference for AEC.
 - 16 kHz mono signed 16-bit audio playback and persistent volume control.
 - Optional MIPI CSI camera capture, hardware H.264 encoding, and Agora RTC video uplink.
-- GC9503CV MIPI display, CST7XX touch, local status UI, Wi-Fi setup, and factory reset.
+- GC9503CV MIPI display, CST7XX touch, local status UI, Wi-Fi setup, power off, and factory reset.
 - One GPIO conversation key, EasyFlash key-value storage, HTTPS transport, and derived
   device identity.
 - Embedded Chinese and English prompt assets, with no SD card or separate asset partition.
@@ -190,10 +190,11 @@ Typical R2 flow:
 4. An unclaimed device displays and announces a pairing code. Enter the complete code,
    including leading zeros, in the device-service console.
 5. In `READY`, short press and release `GPIO47` to start a conversation; repeat to stop it.
-6. Touch **Settings** to change Wi-Fi or confirm a factory reset.
+6. Touch **Settings** to change Wi-Fi, power off, or confirm a factory reset.
 
 The current R2 hardware handles long-press power on/off outside the firmware conversation
-key path. GPIO and peripheral assignments are defined in
+key path. The touchscreen power-off action calls `bk_reboot()` without clearing saved
+configuration. GPIO and peripheral assignments are defined in
 [usr_gpio_cfg.h](projects/mybot/ap/config/bk7259_ap/usr_gpio_cfg.h).
 
 ## Configuration
