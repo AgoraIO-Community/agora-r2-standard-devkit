@@ -28,6 +28,7 @@
 #define MYBOT_AUDIO_BLOCK_BYTES 640U
 #define MYBOT_AUDIO_POOL_BYTES (MYBOT_AUDIO_BLOCK_BYTES * 6U)
 #define MYBOT_AUDIO_IO_TIMEOUT_MS 25
+#define MYBOT_AUDIO_ELEMENT_STOP_MS 2000
 #define MYBOT_CAPTURE_DEVICE_BLOCKS 2
 #define MYBOT_PLAYBACK_RAW_BLOCKS 8
 #define TAG "mybot_audio"
@@ -38,6 +39,7 @@ typedef struct {
     unsigned int in_flight;
     bool started;
     bool stopping;
+    bool stop_pending;
 } io_state_t;
 
 typedef struct {
@@ -245,10 +247,11 @@ static bool io_begin_stop(io_state_t *state) {
     while (state->stopping) {
         aosl_cond_wait(state->idle, state->lock);
     }
-    if (!state->started) {
+    if (!state->started && !state->stop_pending) {
         aosl_lock_unlock(state->lock);
         return false;
     }
+    state->started = false;
     state->stopping = true;
     aosl_lock_unlock(state->lock);
     return true;
@@ -262,10 +265,10 @@ static void io_wait_idle(io_state_t *state) {
     aosl_lock_unlock(state->lock);
 }
 
-static void io_finish_stop(audio_context_t *ctx, bool failed) {
+static void io_finish_stop(audio_context_t *ctx, bool stopped, bool failed) {
     aosl_lock_lock(ctx->io.lock);
     ctx->failed = ctx->failed || failed;
-    ctx->io.started = false;
+    ctx->io.stop_pending = !stopped;
     ctx->io.stopping = false;
     aosl_cond_broadcast(ctx->io.idle);
     aosl_lock_unlock(ctx->io.lock);
@@ -413,6 +416,29 @@ static int audio_context_abort_io(audio_context_t *ctx) {
     return ctx->raw_port && audio_port_abort(ctx->raw_port) == BK_OK ? 0 : -1;
 }
 
+static bool audio_context_stop_pipeline(audio_context_t *ctx) {
+    if (audio_pipeline_stop(ctx->pipeline) != BK_OK) {
+        MYBOT_LOGE(TAG, "audio pipeline stop failed");
+        return false;
+    }
+
+    // The pipeline wait resets vendor state to INIT. Keep stop retryable in
+    // RUNNING until each linked element has acknowledged the stop request.
+    const audio_element_handle_t elements[] = {ctx->raw, ctx->device, ctx->aec};
+    const TickType_t timeout = BK_MS_TO_TICKS(MYBOT_AUDIO_ELEMENT_STOP_MS);
+    for (size_t i = 0; i < sizeof(elements) / sizeof(elements[0]); ++i) {
+        if (elements[i] && audio_element_wait_for_stop_ms(elements[i], timeout) != BK_OK) {
+            MYBOT_LOGE(TAG, "audio element stop incomplete: %s", audio_element_get_tag(elements[i]));
+            return false;
+        }
+    }
+    if (audio_pipeline_wait_for_stop(ctx->pipeline) != BK_OK) {
+        MYBOT_LOGE(TAG, "audio pipeline wait-for-stop failed");
+        return false;
+    }
+    return true;
+}
+
 static int audio_context_stop(audio_context_t *ctx) {
     if (!ctx || !ctx->pipeline || !ctx->raw) {
         MYBOT_LOGE(TAG, "audio pipeline stop: invalid context");
@@ -422,26 +448,17 @@ static int audio_context_stop(audio_context_t *ctx) {
         return 0;
     }
 
-    int result = audio_context_abort_io(ctx);
-    if (result < 0) {
+    bool raw_aborted = audio_context_abort_io(ctx) == 0;
+    if (!raw_aborted) {
         MYBOT_LOGE(TAG, "audio raw I/O abort failed");
     }
     io_wait_idle(&ctx->io);
-    if (audio_pipeline_stop(ctx->pipeline) != BK_OK) {
-        MYBOT_LOGE(TAG, "audio pipeline stop failed");
-        result = -1;
-    }
-    if (audio_pipeline_wait_for_stop(ctx->pipeline) != BK_OK) {
-        MYBOT_LOGE(TAG, "audio pipeline wait-for-stop failed");
-        result = -1;
-    }
-    io_finish_stop(ctx, result < 0);
-    if (result == 0) {
+    bool stopped = audio_context_stop_pipeline(ctx);
+    io_finish_stop(ctx, stopped, !raw_aborted || !stopped);
+    if (stopped) {
         MYBOT_LOGI(TAG, "audio pipeline stopped");
-    } else {
-        MYBOT_LOGE(TAG, "audio pipeline stopped with errors");
     }
-    return result;
+    return stopped ? 0 : -1;
 }
 
 static int capture_init(void **out_ctx, int rate, int channels, int bits) {
@@ -635,7 +652,10 @@ static void capture_destroy(void *opaque) {
         return;
     }
     MYBOT_LOGI(TAG, "capture destroy requested");
-    (void)audio_context_stop(ctx);
+    if (audio_context_stop(ctx) < 0) {
+        MYBOT_LOGE(TAG, "capture stop incomplete; retaining its pipeline");
+        return;
+    }
     audio_context_release(ctx);
 }
 
@@ -805,7 +825,10 @@ static void playback_destroy(void *opaque) {
     }
     MYBOT_LOGI(TAG, "playback destroy requested");
     bk7259_audio_playback_gain_unpublish(ctx);
-    (void)audio_context_stop(ctx);
+    if (audio_context_stop(ctx) < 0) {
+        MYBOT_LOGE(TAG, "playback stop incomplete; retaining its pipeline");
+        return;
+    }
     audio_context_release(ctx);
 }
 

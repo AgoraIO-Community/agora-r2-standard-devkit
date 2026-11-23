@@ -19,7 +19,7 @@ The parent repository owns:
 - `components/mybot/mybot_rtsa/` for the target Agora RTSA input.
 - `patches/` and `vendor.lock.json` for vendor modifications and their hashes.
 
-The MyBot snapshot is `baf41bac3b6ca25bad9820f9fc857c94698607d8`, version 1.3.0.
+The MyBot snapshot is `8bae576ce12bd18c77b1aeea560ce2f9f9b7f836`, version 1.3.0.
 Its source and license digests are recorded in `components/mybot/mybot_sdk/SDK_REVISION`.
 AOSL is based on `84e086084ebcd0ae2455a0ce5721950c5fe2e656`; its content digest
 and BK7259 HAL modifications are recorded in `components/mybot/mybot_aosl/AOSL_REVISION`.

@@ -67,7 +67,7 @@ BK 平台源码只通过 `<mybot/platform/...>` 公共平台头文件访问 MyBo
 | --- | --- |
 | `bk_avdk_smp` | `584b947920c414230f9909375f008e7d6a2c6c6b` |
 | `bk_solution_ai` | `03aadb49756a5109bfede04002b9b6820f407c3f` |
-| MyBot SDK 快照 | `baf41bac3b6ca25bad9820f9fc857c94698607d8`，版本 1.3.0 |
+| MyBot SDK 快照 | `8bae576ce12bd18c77b1aeea560ce2f9f9b7f836`，版本 1.3.0 |
 | AOSL 基线 | `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | Agora RTSA | v1.10.1 build `1278380` |
 

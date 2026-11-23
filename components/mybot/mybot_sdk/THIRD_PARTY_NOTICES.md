@@ -4,7 +4,7 @@
 
 The sources under `include/` and `src/` are based on a snapshot of
 https://github.com/junlon2006/mybot at commit
-`baf41bac3b6ca25bad9820f9fc857c94698607d8` (version `1.3.0`). Its source
+`8bae576ce12bd18c77b1aeea560ce2f9f9b7f836` (version `1.3.0`). Its source
 digests identify the upstream snapshot. They are provided under the Apache
 License 2.0 in `LICENSE`,
 except where a source file states otherwise.
