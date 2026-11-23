@@ -3,8 +3,8 @@
 ## agent-studio-device-firmware
 
 The sources under `include/` and `src/` are based on
-[agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/46e265a960fac48d93ae6755bdf694aeb09ab366) at commit
-`46e265a960fac48d93ae6755bdf694aeb09ab366`. Source digests identify the exact
+[agent-studio-device-firmware v1.3.0](https://github.com/AgoraIO-Community/agent-studio-device-firmware/tree/1cd46b003e941551a30719b029157085fd8214e5) at commit
+`1cd46b003e941551a30719b029157085fd8214e5`. Source digests identify the exact
 snapshot. The sources are provided under the Apache License 2.0 in `LICENSE`,
 except where a source file states otherwise.
 

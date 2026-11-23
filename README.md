@@ -74,7 +74,7 @@ Generated directories such as `build/` and `releases/` are ignored.
 | --- | --- |
 | `bk_avdk_smp` | `584b947920c414230f9909375f008e7d6a2c6c6b` |
 | `bk_solution_ai` | `03aadb49756a5109bfede04002b9b6820f407c3f` |
-| agent-studio-device-firmware | v1.3.0 at `46e265a960fac48d93ae6755bdf694aeb09ab366` |
+| agent-studio-device-firmware | v1.3.0 at `1cd46b003e941551a30719b029157085fd8214e5` |
 | AOSL base | `84e086084ebcd0ae2455a0ce5721950c5fe2e656` |
 | Agora RTSA | v1.10.1 build `1278380` |
 
