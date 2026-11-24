@@ -30,6 +30,7 @@ static void cancel_request(void) { assert(bk7259_provision_cancel()); }
 static void explicit_request(void) { assert(bk7259_provision_request()); }
 static void disconnect_and_finish(void) {
   test_env.reset = false;
+  (void)mybot_bk7259_platform_take_reboot_request();
   test_env.sta_stop_result = test_env.scan_stop_result =
       test_env.ap_stop_result = 0;
   if (s_softap_started)
@@ -320,6 +321,32 @@ static void test_portal_success_commits_once(void) {
   assert(test_env.listener_timeout_ms == 200 && test_env.socket_closes == 2);
   assert_saved("new");
 }
+static void test_reboot_interrupts_network_waits_before_commit(void) {
+  fixture();
+  test_env.on_sta_start = NULL;
+  test_env.on_wait = mybot_bk7259_platform_reboot;
+  assert(mybot_bk7259_ensure_network("device") == BK7259_PROVISION_CANCELLED);
+  assert(test_env.sta_starts == 1 && test_env.sta_stops == 1);
+  assert(!test_env.ap_starts && !test_env.saves && !s_wifi.sta_started);
+  assert_saved("old");
+
+  fixture();
+  assert(bk7259_provision_request() && bk7259_provision_take_request());
+  test_env.on_select = mybot_bk7259_platform_reboot;
+  assert(mybot_bk7259_provision_wifi("device") == BK7259_PROVISION_CANCELLED);
+  assert(test_env.ap_starts == 1 && test_env.ap_stops == 1);
+  assert(!test_env.saves && !s_softap_started && !s_wifi.sta_started);
+  assert_saved("old");
+
+  fixture();
+  assert(bk7259_provision_begin() == 1);
+  connect_candidate();
+  test_env.on_save = mybot_bk7259_platform_reboot;
+  assert(bk7259_wifi_manager_save_credentials("new", "secret-password") == 0);
+  assert(test_env.saves == 1 && bk7259_provision_abort_reason() == 0);
+  assert_saved("new");
+  assert(mybot_bk7259_platform_take_reboot_request());
+}
 static void test_rollback_fault_ends_portal(void) {
   fixture();
   assert(bk7259_provision_request() && bk7259_provision_take_request());
@@ -400,11 +427,12 @@ int main(void) {
   test_saved_only_restore_has_no_portal_fallback();
   test_auto_and_explicit_portal_cancel_preserve_old_record();
   test_portal_success_commits_once();
+  test_reboot_interrupts_network_waits_before_commit();
   test_rollback_fault_ends_portal();
   test_stop_failures_retain_ownership_and_beat_cancel();
   test_partial_start_failures_and_factory_precedence();
   disconnect_and_finish();
-  puts("Provision network: 12 groups, CAS race, credentials, cancellation and "
+  puts("Provision network: 13 groups, CAS race, credentials, cancellation and "
        "cleanup passed");
   return 0;
 }

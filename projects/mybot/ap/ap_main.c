@@ -27,6 +27,7 @@
 #define MYBOT_POLL_INTERVAL_MS 100
 #define MYBOT_APP_TASK_STACK_SIZE (16 * 1024)
 #define DEVICE_ID_DIGEST_BYTES 12
+#define GIMBAL_CHARGE_STOP_TIMEOUT_MS 1000U
 
 /* Use a compact HMAC identity with a BK7259-specific derivation domain. The
  * visible prefix separates this platform namespace from other device IDs. */
@@ -166,6 +167,18 @@ static void show_factory_reset(bk7259_factory_reset_screen_t screen)
     }
 }
 
+static void mybot_reboot(void)
+{
+    if (bk7259_gimbal_stop_charging_wait(GIMBAL_CHARGE_STOP_TIMEOUT_MS) < 0) {
+        BK_LOGW(TAG, "gimbal charge stop unconfirmed. EB521 timeout will stop charging\r\n");
+    }
+    bk_reboot();
+    /* The reboot API may return before the watchdog resets both cores. */
+    for (;;) {
+        (void)rtos_delay_milliseconds(1000);
+    }
+}
+
 /* The product task owns this operation. A failed reset stays stopped and waits
  * for a fresh touch confirmation; its durable intent is also retried after power loss. */
 static void mybot_factory_reset_loop(bool requested)
@@ -216,11 +229,7 @@ static void mybot_factory_reset_loop(bool requested)
         show_factory_reset(BK7259_FACTORY_RESET_REBOOTING);
         BK_LOGW(TAG, "factory reset complete: restarting for provisioning\r\n");
         (void)rtos_delay_milliseconds(250);
-        bk_reboot();
-        /* The reboot API may return before the watchdog resets both cores. */
-        for (;;) {
-            (void)rtos_delay_milliseconds(1000);
-        }
+        mybot_reboot();
     }
 }
 
@@ -238,10 +247,15 @@ static void mybot_poll_conversation_key(void)
     }
 }
 
-static void mybot_check_factory_reset(void)
+static void mybot_check_product_requests(void)
 {
+    bool reboot_requested = mybot_bk7259_platform_take_reboot_request();
     if (bk7259_factory_reset_take_request()) {
         mybot_factory_reset_loop(true);
+    }
+    if (reboot_requested) {
+        BK_LOGW(TAG, "reboot requested from product UI\r\n");
+        mybot_reboot();
     }
 }
 
@@ -285,7 +299,7 @@ static bool mybot_network_ready_to_start(void)
  * ownership is released before clearing cancellation and reconnecting saved Wi-Fi. */
 static bool mybot_finish_network_setup(int result)
 {
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     (void)bk7259_key_take_conversation_request();
     if (result >= 0) {
         bk7259_provision_finish();
@@ -298,7 +312,7 @@ static bool mybot_finish_network_setup(int result)
         (void)show_provision(BK7259_PROVISION_FAILED);
         return false;
     }
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     bk7259_provision_finish();
     /* A new explicit request remains pending across finish(). Claim it in the
      * outer loop instead of delaying it with an obsolete reconnection attempt. */
@@ -307,7 +321,7 @@ static bool mybot_finish_network_setup(int result)
     }
     (void)show_provision(BK7259_PROVISION_RECONNECTING);
     int restored = bk7259_wifi_restore_saved(s_config.device_id);
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     (void)bk7259_key_take_conversation_request();
     if (restored == 0) {
         return mybot_network_ready_to_start();
@@ -315,7 +329,7 @@ static bool mybot_finish_network_setup(int result)
     if (bk7259_factory_reset_disconnect_network() < 0) {
         BK_LOGE(TAG, "saved network cleanup incomplete; retaining recovery controls\r\n");
     }
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     BK_LOGW(TAG, "saved network unavailable; waiting for setup or factory reset\r\n");
     (void)show_provision(BK7259_PROVISION_FAILED);
     return false;
@@ -325,7 +339,7 @@ static void mybot_handle_provision_request(bool *sdk_started, bool *start_pendin
 {
     (void)show_provision(BK7259_PROVISION_PREPARING);
     (void)bk7259_key_take_conversation_request();
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     if (bk7259_provision_abort_reason() == BK7259_PROVISION_CANCELLED) {
         /* A quick cancel before SDK stop leaves a live conversation and its
          * current network intact. A stopped product can reconnect saved Wi-Fi. */
@@ -343,7 +357,7 @@ static void mybot_handle_provision_request(bool *sdk_started, bool *start_pendin
     *start_pending = false;
     BK_LOGI(TAG, "stopping SDK for requested Wi-Fi setup\r\n");
     bool stopped = mybot_stop_for_network();
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     if (!stopped) {
         bk7259_provision_finish();
         (void)show_provision(BK7259_PROVISION_FAILED);
@@ -400,10 +414,10 @@ static int mybot_run(void)
         }
         mybot_factory_reset_loop(reset_pending > 0);
     }
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
 
     bool platform_registered = mybot_bk7259_platform_register() == 0;
-    mybot_check_factory_reset();
+    mybot_check_product_requests();
     if (!platform_registered) {
         BK_LOGE(TAG, "platform registration failed\r\n");
         (void)show_provision(BK7259_PROVISION_FAILED);
@@ -419,13 +433,13 @@ static int mybot_run(void)
     /* This owner persists through SDK/network failures. Settings and factory
      * reset keep working; only a fresh explicit setup request opens a portal. */
     for (;;) {
-        mybot_check_factory_reset();
+        mybot_check_product_requests();
         if (bk7259_provision_take_request()) {
             mybot_handle_provision_request(&sdk_started, &start_pending);
             continue;
         }
         if (start_pending) {
-            mybot_check_factory_reset();
+            mybot_check_product_requests();
             if (bk7259_provision_abort_reason() != 0) {
                 continue;
             }
@@ -437,14 +451,14 @@ static int mybot_run(void)
             if (platform_registered && mybot_network_ready_to_start()) {
                 BK_LOGI(TAG, "starting SDK\r\n");
                 int start_result = mybot_start(&s_config);
-                mybot_check_factory_reset();
+                mybot_check_product_requests();
                 if (start_result == 0) {
                     sdk_started = true;
                     BK_LOGI(TAG, "SDK started\r\n");
                 } else {
                     BK_LOGE(TAG, "SDK startup failed\r\n");
                     (void)mybot_stop_for_network();
-                    mybot_check_factory_reset();
+                    mybot_check_product_requests();
                     (void)show_provision(BK7259_PROVISION_FAILED);
                 }
             } else {
@@ -457,7 +471,7 @@ static int mybot_run(void)
                 BK_LOGW(TAG, "SDK exited; retaining setup and reset controls\r\n");
                 sdk_started = false;
                 (void)mybot_stop_for_network();
-                mybot_check_factory_reset();
+                mybot_check_product_requests();
                 (void)show_provision(BK7259_PROVISION_FAILED);
             } else {
                 mybot_poll_conversation_key();

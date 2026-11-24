@@ -8,8 +8,9 @@ This page records the current reproducible checks and remaining release blockers
 It replaces the former chronological development log. Older intermediate
 diagnostics remain available in Git history and are not current instructions.
 
-The status below was reviewed on 2026-10-22. No target-board test was performed
-during this documentation update.
+On 2026-11-24, the Chinese and English video builds passed with EB521 V1.2
+enabled. On an earlier hardware test image, two consecutive `happy` runs completed
+and returned to center. The current builds still require board validation.
 
 ## Current Host and Build Checks
 
@@ -33,22 +34,17 @@ python3 scripts/build_all.py
 ```
 
 It builds both languages, both cores, the combined image, and the OTA package.
-The latest observed runtime was about 1 minute 7 seconds on the development host.
-Generated endpoints and configuration were verified by the build script.
-
-Latest local build footprint:
+The build script verified the generated configuration and service endpoint for each language.
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,933,296 B | 1,933,312 B |
-| AP RAM | 157,740 B | 157,740 B |
+| AP Flash | 1,947,504 B | 1,947,520 B |
+| AP RAM | 157,804 B | 157,804 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,440,640 B | 3,440,640 B |
-| OTA package | 2,058,032 B | 2,057,680 B |
-
-The OTA partition is 2,097,152 bytes. The Chinese package has only 39,120 bytes
-of headroom, so new assets or code need an explicit size review.
+| Combined image | 3,454,848 B | 3,454,848 B |
+| OTA package | 2,069,232 B | 2,068,976 B |
+| OTA headroom | 27,920 B | 28,176 B |
 
 ## Host Test Matrix
 
@@ -76,11 +72,10 @@ Coverage includes:
   and 23 expressions.
 - Expression and voiceprint indicator policy.
 - HTTPS retry, timeout, EOF, socket-error isolation, and clock wraparound.
-- EB521 protocol, trajectories, CLI admission, and worker cleanup.
+- EB521 V1.2 probing, four motion scenes, noise and timeout handling, charging
+  heartbeats during motion, charge-stop fencing, and worker cleanup.
 
-The host suites and available ASan/UBSan variants pass. LeakSanitizer is disabled
-in the current ptrace environment, so leak detection is not included in that
-result.
+All nine product host suites and 20 build-tool tests passed.
 
 ## Release Blockers
 

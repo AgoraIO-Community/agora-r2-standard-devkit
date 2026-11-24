@@ -13,6 +13,11 @@
 #include "bk7259_key.c"
 #undef TAG
 #include "bk7259_provision.c"
+#include "bk7259_gimbal.h"
+static int host_gimbal_stop_charging_wait(uint32_t timeout_ms);
+static bool host_take_reboot_request(void);
+#define bk7259_gimbal_stop_charging_wait host_gimbal_stop_charging_wait
+#define mybot_bk7259_platform_take_reboot_request host_take_reboot_request
 #define mybot_start host_sdk_start
 #define mybot_stop host_sdk_stop
 #define mybot_is_running host_sdk_running
@@ -24,6 +29,8 @@
 #undef mybot_stop
 #undef mybot_is_running
 #undef mybot_get_state
+#undef mybot_bk7259_platform_take_reboot_request
+#undef bk7259_gimbal_stop_charging_wait
 
 enum { EXIT_REBOOT = 1, EXIT_IDLE };
 enum { INTENT, AUTH, WIFI, VOLUME, UNRELATED, RECORDS };
@@ -48,6 +55,8 @@ static unsigned idle_polls, touch_at_poll, stop_calls, start_calls,
     network_calls;
 static unsigned writes, deletes, reboot_calls, failures, conversation_events;
 static bool fail_start, fail_network;
+static bool fail_charge_stop;
+static bool factory_on_reboot_claim;
 /* Optional fault/scheduling hooks used by the provisioning-owner regression.
  * Normal reset cases below leave these unset and retain their original flow. */
 static void (*owner_poll_hook)(void);
@@ -92,6 +101,7 @@ static void fixture(void) {
   if (s_key.prepared)
     bk7259_key_shutdown();
   (void)bk7259_factory_reset_take_request();
+  (void)mybot_bk7259_platform_take_reboot_request();
   (void)bk7259_provision_take_request();
   bk7259_provision_finish();
   memset(records, 0, sizeof(records));
@@ -107,6 +117,8 @@ static void fixture(void) {
   idle_polls = touch_at_poll = stop_calls = start_calls = network_calls = 0;
   writes = deletes = reboot_calls = failures = conversation_events = 0;
   fail_start = fail_network = false;
+  fail_charge_stop = false;
+  factory_on_reboot_claim = false;
   owner_poll_hook = owner_stop_hook = owner_start_hook = NULL;
   owner_workflow_hook = NULL;
   owner_ensure_hook = owner_provision_hook = owner_restore_hook = NULL;
@@ -330,6 +342,17 @@ int bk7259_lcd_set_runtime_status(const char *state, bool active) {
   return 0;
 }
 int bk7259_gimbal_cli_init(void) { return 0; }
+static int host_gimbal_stop_charging_wait(uint32_t timeout_ms) {
+  assert(timeout_ms == 1000);
+  record('C');
+  return fail_charge_stop ? -1 : 0;
+}
+static bool host_take_reboot_request(void) {
+  bool requested = mybot_bk7259_platform_take_reboot_request();
+  if (requested && factory_on_reboot_claim)
+    bk7259_factory_reset_request();
+  return requested;
+}
 int mybot_bk7259_platform_prepare(void) {
   record('L');
   return bk7259_key_prepare();
@@ -503,7 +526,7 @@ static void test_live_reset_order_and_deduplication(void) {
   bk7259_factory_reset_request();
   bk7259_factory_reset_request();
   assert(run_owner(false) == EXIT_REBOOT);
-  assert(!strcmp(events, "BSPDawvxR") && writes == 1 && stop_calls == 1);
+  assert(!strcmp(events, "BSPDawvxCR") && writes == 1 && stop_calls == 1);
   assert(reboot_calls == 1 && !failures);
   assert_erased();
 }
@@ -540,7 +563,7 @@ static void test_boot_resume_and_invalid_marker(void) {
   event_length = 0;
   events[0] = '\0';
   assert(run_owner(true) == EXIT_REBOOT);
-  assert(!network_calls && !start_calls && !strcmp(events, "LSPDawvxR"));
+  assert(!network_calls && !start_calls && !strcmp(events, "LSPDawvxCR"));
   assert_erased();
 
   fixture();
@@ -571,6 +594,47 @@ static void test_startup_failure_and_cancel_keep_touch_entry(void) {
   assert_erased();
 }
 
+static void test_reboot_attempts_charge_stop_and_preserves_settings(void) {
+  for (unsigned fault = 0; fault < 2; ++fault) {
+    fixture();
+    fail_charge_stop = fault != 0;
+    mybot_bk7259_platform_reboot();
+    mybot_bk7259_platform_reboot();
+    assert(!reboot_calls && !event_length);
+    assert(run_owner(true) == EXIT_REBOOT);
+    assert(!strcmp(events, "LCR") && !network_calls && !start_calls);
+    assert(!writes && !deletes && reboot_calls == 1 && !records[INTENT].present);
+    for (int i = AUTH; i < RECORDS; ++i)
+      assert(records[i].present && records[i].bytes[0] == 1);
+    assert(!mybot_bk7259_platform_take_reboot_request());
+  }
+
+  for (unsigned during_claim = 0; during_claim < 2; ++during_claim) {
+    fixture();
+    mybot_bk7259_platform_reboot();
+    factory_on_reboot_claim = during_claim != 0;
+    if (!factory_on_reboot_claim)
+      bk7259_factory_reset_request();
+    assert(run_owner(true) == EXIT_REBOOT);
+    assert(!strcmp(events, "LBSPDawvxCR") && reboot_calls == 1);
+    assert_erased();
+  }
+}
+
+static void request_reboot_while_running(void) {
+  assert(sdk_running && sdk_state == MYBOT_STATE_READY);
+  mybot_bk7259_platform_reboot();
+  assert(!reboot_calls);
+}
+
+static void test_runtime_reboot_runs_on_product_task(void) {
+  fixture();
+  owner_poll_hook = request_reboot_while_running;
+  assert(run_owner(true) == EXIT_REBOOT);
+  assert(!strcmp(events, "LGNACR") && idle_polls == 1);
+  assert(!writes && !deletes && reboot_calls == 1);
+}
+
 #ifndef TOUCH_RESET_TEST_MAIN
 #define TOUCH_RESET_TEST_MAIN main
 #endif
@@ -582,6 +646,8 @@ int TOUCH_RESET_TEST_MAIN(void) {
   test_failures_wait_for_fresh_touch();
   test_boot_resume_and_invalid_marker();
   test_startup_failure_and_cancel_keep_touch_entry();
+  test_reboot_attempts_charge_stop_and_preserves_settings();
+  test_runtime_reboot_runs_on_product_task();
   fixture();
   puts("Touch reset: request mailbox, GPIO gestures, durable owner and failure "
        "recovery passed");

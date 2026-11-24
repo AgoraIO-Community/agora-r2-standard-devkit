@@ -48,19 +48,20 @@ The four rows use source position `x=104` and
 the actual fixed-width font advance.
 
 `READY` selects NEUTRAL. Entering `IN_CONVERSATION` shows SURPRISED for 300 ms
-after its entering transition, then selects LISTENING or THINKING for those
-server phases, PROCESSING after three continuous seconds of THINKING, and
-NEUTRAL during SPEAKING or when no phase is active.
+after its entering transition. Until the first server phase arrives, the face is
+LISTENING. After that, the face follows the server phase: LISTENING, THINKING,
+PROCESSING after three continuous seconds of THINKING, or NEUTRAL during
+SPEAKING or when no phase is active.
 The independent `include/bk7259_expression.h` module provides the full 23-entry
 expression enum, name conversion, and copied local set/clear requests to the
 existing display owner. Overrides are limited to READY/conversation face pages
 and are cleared by workflow screen changes. Phase updates select the latest
-automatic face while preserving local overrides; repeated unchanged updates do
-not restart its transition. Voiceprint and listening/thinking/speaking
-indicators update the third terminal row rather than showing an overlay. Chinese and English
-provisioning, web-console pairing, error, and factory-reset guidance remain
-available. Expressions are not automatically cycled and have
-no MCP/RTM command mapping or UART/motor integration.
+automatic face while preserving local overrides. Repeated unchanged updates do
+not restart its transition. Voiceprint and listening/thinking/speaking indicators
+update the third terminal row. Chinese and English provisioning, web-console
+pairing, error, and factory-reset guidance remain available. Dialogue phase
+changes reach the EB521 worker independently of the display face. Local
+expression overrides affect only the screen.
 
 ## Expression mappings
 
