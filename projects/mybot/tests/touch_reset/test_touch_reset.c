@@ -54,6 +54,7 @@ static int delete_failure;
 static unsigned idle_polls, touch_at_poll, stop_calls, start_calls,
     network_calls;
 static unsigned writes, deletes, reboot_calls, failures, conversation_events;
+static mybot_key_event_t last_conversation_event;
 static bool fail_start, fail_network;
 static bool fail_charge_stop;
 static bool factory_on_reboot_claim;
@@ -104,6 +105,7 @@ static void fixture(void) {
   (void)mybot_bk7259_platform_take_reboot_request();
   (void)bk7259_provision_take_request();
   bk7259_provision_finish();
+  discard_conversation_input();
   memset(records, 0, sizeof(records));
   const unsigned char data[] = {1, 2, 3, 4};
   for (int i = AUTH; i < RECORDS; ++i)
@@ -424,6 +426,7 @@ static void key_event(mybot_key_event_t event, void *user) {
   assert(user == &conversation_events);
   assert(event == MYBOT_KEY_EVENT_CONVERSATION_START ||
          event == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+  last_conversation_event = event;
   ++conversation_events;
 }
 static void attach_key(void) {
@@ -518,6 +521,85 @@ static void test_key_boot_hold_and_wraparound(void) {
   g_mybot_bk7259_key_ops.destroy(&s_key);
   press_and_release(200, 100);
   assert(!bk7259_key_take_conversation_request());
+}
+
+static void test_touch_conversation_intent_and_pending_window(void) {
+  fixture();
+  attach_key();
+  sdk_state = MYBOT_STATE_READY;
+  mybot_poll_conversation_key();
+  assert(!bk7259_key_request_touch_conversation(false));
+  assert(bk7259_key_request_touch_conversation(true));
+  assert(bk7259_key_request_touch_conversation(true));
+  press_and_release(200, 100);
+  mybot_poll_conversation_key();
+  assert(conversation_events == 1 && last_conversation_event == MYBOT_KEY_EVENT_CONVERSATION_START);
+  assert(!bk7259_key_request_touch_conversation(true));
+
+  clock_ms += CONVERSATION_INPUT_WAIT_MS - 1;
+  mybot_poll_conversation_key();
+  assert(!bk7259_key_request_touch_conversation(true));
+  ++clock_ms;
+  mybot_poll_conversation_key();
+  assert(bk7259_key_request_touch_conversation(true));
+
+  /* READY expired before dispatch. It must never turn the tap into STOP. */
+  sdk_state = MYBOT_STATE_IN_CONVERSATION;
+  mybot_poll_conversation_key();
+  assert(conversation_events == 1);
+  assert(!bk7259_key_request_touch_conversation(true));
+  assert(bk7259_key_request_touch_conversation(false));
+  mybot_poll_conversation_key();
+  assert(conversation_events == 2 && last_conversation_event == MYBOT_KEY_EVENT_CONVERSATION_STOP);
+  assert(!bk7259_key_request_touch_conversation(false));
+
+  sdk_state = MYBOT_STATE_WIFI_DISCONNECTED;
+  mybot_poll_conversation_key();
+  assert(!bk7259_key_request_touch_conversation(false));
+  sdk_state = MYBOT_STATE_READY;
+  mybot_poll_conversation_key();
+  assert(bk7259_key_request_touch_conversation(true));
+  mybot_poll_conversation_key();
+  assert(conversation_events == 3 && last_conversation_event == MYBOT_KEY_EVENT_CONVERSATION_START);
+}
+
+static void test_touch_conversation_lifecycle_gates(void) {
+  fixture();
+  assert(!bk7259_key_request_touch_conversation(true));
+  attach_key();
+  sdk_state = MYBOT_STATE_READY;
+  mybot_poll_conversation_key();
+  assert(bk7259_key_request_touch_conversation(true));
+  assert(bk7259_provision_request());
+  assert(!bk7259_key_request_touch_conversation(true));
+  mybot_poll_conversation_key();
+  assert(bk7259_provision_take_request());
+  bk7259_provision_finish();
+  mybot_poll_conversation_key();
+  assert(!conversation_events);
+
+  assert(bk7259_key_request_touch_conversation(true));
+  mybot_bk7259_platform_reboot();
+  assert(!bk7259_key_request_touch_conversation(true));
+  mybot_poll_conversation_key();
+  assert(mybot_bk7259_platform_take_reboot_request());
+  mybot_poll_conversation_key();
+  assert(!conversation_events);
+
+  assert(bk7259_key_request_touch_conversation(true));
+  bk7259_factory_reset_request();
+  assert(!bk7259_key_request_touch_conversation(true));
+  mybot_poll_conversation_key();
+  assert(bk7259_factory_reset_take_request());
+  mybot_poll_conversation_key();
+  assert(!conversation_events);
+
+  assert(bk7259_key_request_touch_conversation(true));
+  g_mybot_bk7259_key_ops.destroy(&s_key);
+  assert(!bk7259_key_request_touch_conversation(true));
+  attach_key();
+  mybot_poll_conversation_key();
+  assert(!conversation_events);
 }
 static void test_live_reset_order_and_deduplication(void) {
   fixture();
@@ -642,6 +724,8 @@ int TOUCH_RESET_TEST_MAIN(void) {
   test_request_is_nonblocking_and_independent();
   test_key_gestures_and_reset_priority();
   test_key_boot_hold_and_wraparound();
+  test_touch_conversation_intent_and_pending_window();
+  test_touch_conversation_lifecycle_gates();
   test_live_reset_order_and_deduplication();
   test_failures_wait_for_fresh_touch();
   test_boot_resume_and_invalid_marker();

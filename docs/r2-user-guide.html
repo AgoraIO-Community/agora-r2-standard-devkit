@@ -62,6 +62,7 @@
     .portal img { display: block; width: 100%; height: auto; border-radius: 2mm; }
     .section-gap { margin-top: 5mm; }
     .status-table th:first-child, .status-table td:first-child { width: 37mm; }
+    .status-table th, .status-table td { padding-block: 1.7mm; }
     .faq th:first-child, .faq td:first-child { width: 39mm; }
     .faq td { padding-top: 2.4mm; padding-bottom: 2.4mm; }
     .two-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin: 4mm 0; }
@@ -75,19 +76,19 @@
 <body>
 
 <section class="page" aria-label="封面与快速开始">
-  <header class="masthead"><b>MYBOT / R2</b><span>中文操作手册 · v1.1</span></header>
+  <header class="masthead"><b>MYBOT / R2</b><span>中文操作手册 · v1.2</span></header>
   <p class="chapter">开始使用你的 R2</p>
   <h1>开机，联网，<br>开始对话。</h1>
-  <p class="subtitle">触屏设置 · 像素眼镜 · 按键会话</p>
+  <p class="subtitle">触屏设置 · 像素眼镜 · 轻触或按键会话</p>
   <figure class="hero">
     <img class="image" src="images/r2-user-guide/ready.png" alt="待机界面：像素眼镜，第三行显示 state: ready，右上角是设置。">
-    <figcaption>看到 <code>state: ready</code>，表示设备已就绪，可以按会话键开始对话。</figcaption>
+    <figcaption>看到 <code>state: ready</code> 后，轻触表情主页或短按会话键即可开聊。</figcaption>
   </figure>
   <div class="quick">
     <div><b>01　长按开机</b><span>准备好供电，长按按钮开机。</span></div>
     <div><b>02　连接 Wi-Fi</b><span>首次使用时，连接设备热点完成配网。</span></div>
     <div><b>03　完成配对</b><span>若显示配对码，在网页控制台输入六位数字。</span></div>
-    <div><b>04　短按开聊</b><span>按下并松开会话键；再次短按结束会话。</span></div>
+    <div><b>04　轻触开聊</b><span>轻触表情主页开聊，再次轻触挂断。也可短按会话键完成任一操作。</span></div>
   </div>
   <p class="small">适用于长按按钮可硬件开关机、带“设置 → 配网 / 关机 / 恢复出厂”入口的 R2 中文版本；
     图中热点名、网络名及配对码均为示例，以设备实际显示为准。</p>
@@ -155,18 +156,18 @@
   <p class="small section-gap">没有控制台地址或账号时，请先向设备提供方索取，并确认与设备使用的服务版本一致。
     网页控制台的具体菜单位置以当前服务页面为准；
     不要在 <code>192.168.4.1</code> 配网页输入账号配对码。</p>
-  <footer class="footer"><span>配对完成后，短按会话键即可开聊</span><span>03 / 07</span></footer>
+  <footer class="footer"><span>配对完成后，轻触表情主页即可开聊</span><span>03 / 07</span></footer>
 </section>
 
 <section class="page" aria-label="日常对话与状态">
   <header class="masthead"><b>MYBOT / R2</b><span>日常使用</span></header>
   <p class="chapter">03 / 按键与屏幕</p>
-  <h2>短按对话，长按开关机</h2>
+  <h2>轻触对话，长按键开关机</h2>
   <div class="two-actions">
-    <div><b>待机时：短按并松开</b>当 <code>state: ready</code> 时，开始会话。</div>
-    <div><b>会话中：再次短按并松开</b>结束当前会话，屏幕回到待机画面。</div>
+    <div><b>待机时轻触表情主页</b>当 <code>state: ready</code> 时，单指轻触并松手即可开聊。</div>
+    <div><b>会话中再次轻触</b>结束当前会话。短按实体会话键也能开聊和挂断。</div>
   </div>
-  <p><strong>长按同一按钮：硬件开关机。</strong>日常会话操作请短按并松手；也可使用触屏“设置 → 关机”。</p>
+  <p>用一根手指在表情主页点一下，保持手指位置，在 0.4 秒内松开。触屏和会话键可以交替使用，例如轻触开聊、短按键挂断。</p>
   <div class="note"><strong>触屏“关机”：</strong>轻触后设备立即重启，不清理 Wi-Fi、账号绑定或音量。
     该入口没有二次确认，请在会话结束后使用。</div>
   <p>开启会话后，等待连接完成再说话。屏幕会短暂切换表情，随后显示服务返回的聆听、思考或回复状态。</p>
@@ -178,7 +179,7 @@
   <table class="status-table">
     <thead><tr><th>第三行状态</th><th>含义与操作</th></tr></thead>
     <tbody>
-      <tr><td><code>ready</code></td><td>已经就绪，可以短按开始会话。</td></tr>
+      <tr><td><code>ready</code></td><td>已经就绪，轻触表情主页或短按会话键即可开始。</td></tr>
       <tr><td><code>listening</code></td><td>正在聆听，可以向设备说话。</td></tr>
       <tr><td><code>thinking</code></td><td>智能体正在思考，等待回复。</td></tr>
       <tr><td><code>speaking</code></td><td>智能体正在回复。</td></tr>
@@ -189,8 +190,8 @@
   </table>
   <div class="note"><strong>看状态，不只看表情。</strong>第二行 <code>mood</code> 是当前表情名称，
     第三行 <code>state</code> 才是实际工作状态。思考时间较长时，表情会变化，但状态仍是 thinking。</div>
-  <p class="small">配网、配对及其他非会话就绪状态中，短按不会开聊。
-    长按开机后，先松开按钮，再用短按开始会话。</p>
+  <p class="small">右上角的“设置”用于打开菜单。配网、配对和恢复出厂时请按页面提示操作。
+    长按实体会话键可开关机，开机后先松开按钮。</p>
   <footer class="footer"><span>更换网络、关机或恢复出厂时，使用屏幕右上角“设置”</span><span>04 / 07</span></footer>
 </section>
 
@@ -274,17 +275,15 @@
       <tr><td>扫描不到目标 Wi-Fi</td><td>在 SSID 手动输入准确名称，确认使用 2.4 GHz 网络。密码区分大小写。</td></tr>
       <tr><td>网页提示连接失败</td><td>检查 Wi-Fi 名称、密码及路由器网络，修改后重新点击 Connect。
         设备进入失败页时可轻触“重新配网”。</td></tr>
-      <tr><td>短按按键没有开聊</td><td>先确认已经完成配对，且屏幕显示 <code>ready</code>。
-        按下后及时松手，避免长按触发关机。</td></tr>
-      <tr><td>显示“触控不可用”</td><td>重启设备后再试；仍提示时，请联系维护人员检查固件与触摸功能。
-        此时触屏设置不可使用。</td></tr>
+      <tr><td>轻触后没有开聊</td><td>退出设置，等表情主页显示 <code>ready</code>。用单指轻点一次并松开，等屏幕切换到会话状态。也可短按会话键。</td></tr>
+      <tr><td>显示“触控不可用”</td><td>就绪后可短按会话键开聊，会话中再短按挂断。如需使用触屏，请重启后再试。仍有提示时请联系维护人员。</td></tr>
       <tr><td>一直连接服务或启动失败</td><td>先检查 Wi-Fi 是否可上网，再从设置重新配网。
         仍无法恢复时，记录屏幕提示并联系维护人员。</td></tr>
       <tr><td>会话期间网络中断</td><td>本次会话会结束。等待网络恢复且出现 <code>ready</code> 后，
-        再短按开始，不会自动续接原会话。</td></tr>
+        轻触表情主页或短按会话键重新开聊。</td></tr>
     </tbody>
   </table>
-  <p class="small">本手册对应 R2 触屏配网版，版本 1.1 / 2026-11-12。界面图由与固件相同的 UI 渲染代码生成，
+  <p class="small">本手册对应 R2 触屏会话版，版本 1.2 / 2026-11-24。界面图由与固件相同的 UI 渲染代码生成，
     不是实机照片；动画以静帧展示。图中示例不代表设备的实际网络、身份或配对码。</p>
   <footer class="footer"><span>MyBot R2 · 操作手册</span><span>07 / 07</span></footer>
 </section>
