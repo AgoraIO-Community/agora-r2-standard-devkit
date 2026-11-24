@@ -54,17 +54,17 @@ The four rows use source position `x=104` and
 `(795,112)` remains left-aligned. The 500 ms cursor follows the last row using
 the actual fixed-width font advance.
 
-`READY` selects NEUTRAL and `IN_CONVERSATION` selects GREETING by default.
+`READY` selects NEUTRAL. A conversation opens with SURPRISED, then shows
+LISTENING until the first server phase arrives. Speaking uses the smiling NEUTRAL face.
 The independent `include/bk7259_expression.h` module provides the full 23-entry
 simulator enum, name conversion, and copied local set/clear requests to the
 existing display owner. Overrides are limited to READY/conversation face pages
-and are cleared by workflow screen changes. Indicator-only updates retain the
-selected face and do not restart its transition. Voiceprint and
-listening/thinking/speaking indicators update the third terminal row rather
-than showing an overlay. Chinese and English
+and are cleared by workflow screen changes. The server phase selects LISTENING,
+THINKING, PROCESSING or NEUTRAL when no override is active. Voiceprint and
+phase indicators also update the third terminal row. Chinese and English
 provisioning, web-console pairing, error, and factory-reset guidance remain
-available. The additional 21 expressions are not automatically cycled and have
-no MCP/RTM command mapping or UART/motor integration in this change.
+available. The product sends dialogue phase changes to the EB521 worker independently
+of the face selected for display.
 
 ## Expression mappings
 

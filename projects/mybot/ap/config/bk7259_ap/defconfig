@@ -27,8 +27,8 @@ CONFIG_CJSON_USE=y
 CONFIG_MYBOT_KEY_GPIO=47
 CONFIG_MYBOT_KEY_ACTIVE_LEVEL=0
 
-# Disable EB521 UART control while comparing audio capture.
-# CONFIG_MYBOT_GIMBAL is not set
+# EB521 V1.2 on the R2 board's CN1 connector (UART2).
+CONFIG_MYBOT_GIMBAL=y
 
 # Robot R2 GC9503CV MIPI display; LVGL renders RGB565 strips with a 90-degree
 # logical rotation on the 480x640 panel.

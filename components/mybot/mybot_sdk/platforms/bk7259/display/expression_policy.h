@@ -21,6 +21,7 @@ typedef struct {
     mybot_lcd_screen_t screen;
     uint32_t phase;
     uint32_t phase_since;
+    bool awaiting_first_phase;
     bk7259_expression_source_t source;
     bk7259_expression_t foreground;
     uint32_t foreground_since;
@@ -49,6 +50,7 @@ static inline void bk7259_expression_policy_cancel(bk7259_expression_policy_t *p
     (void)bk7259_expression_policy_clear(policy);
     policy->phase = 0;
     policy->phase_since = 0;
+    policy->awaiting_first_phase = false;
 }
 
 static inline void bk7259_expression_policy_update(bk7259_expression_policy_t *policy,
@@ -58,6 +60,7 @@ static inline void bk7259_expression_policy_update(bk7259_expression_policy_t *p
     bool conversation = content->screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
     if (policy->screen != content->screen) {
         (void)bk7259_expression_policy_clear(policy);
+        policy->awaiting_first_phase = conversation;
         if (conversation) {
             policy->source = BK7259_EXPRESSION_SOURCE_OPENING;
             policy->foreground = BK7259_EXPRESSION_SURPRISED;
@@ -79,6 +82,8 @@ static inline void bk7259_expression_policy_update(bk7259_expression_policy_t *p
         policy->phase = phase;
         policy->phase_since = now;
     }
+    if (phase)
+        policy->awaiting_first_phase = false;
 }
 
 static inline uint32_t bk7259_expression_mcp_hold_ms(bk7259_expression_t expression)
@@ -138,7 +143,7 @@ static inline bool bk7259_expression_policy_select(bk7259_expression_policy_t *p
     if (policy->source != BK7259_EXPRESSION_SOURCE_STATE) {
         *expression = policy->foreground;
         *replay = policy->foreground_pending;
-    } else if (policy->phase == MYBOT_LCD_INDICATOR_LISTENING) {
+    } else if (policy->phase == MYBOT_LCD_INDICATOR_LISTENING || policy->awaiting_first_phase) {
         *expression = BK7259_EXPRESSION_LISTENING;
     } else if (policy->phase == MYBOT_LCD_INDICATOR_THINKING) {
         *expression = (uint32_t)(now - policy->phase_since) >= 3000U

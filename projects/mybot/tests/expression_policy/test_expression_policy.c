@@ -104,6 +104,19 @@ static void test_phases_and_thinking_duration(void)
     ++groups;
 }
 
+static void test_opener_before_first_server_phase(void)
+{
+    bk7259_expression_policy_t policy;
+    uint32_t after_opener = conversation(&policy, 0, 100, 250);
+    publish(&policy, MYBOT_LCD_SCREEN_IN_CONVERSATION, MYBOT_LCD_INDICATOR_VP_REGISTERED, 200);
+    face(&policy, after_opener, 250, BK7259_EXPRESSION_LISTENING, false);
+    publish(&policy, MYBOT_LCD_SCREEN_IN_CONVERSATION, MYBOT_LCD_INDICATOR_SPEAKING, 1000);
+    face(&policy, 1000, 250, BK7259_EXPRESSION_NEUTRAL, false);
+    publish(&policy, MYBOT_LCD_SCREEN_IN_CONVERSATION, 0, 1100);
+    face(&policy, 1100, 250, BK7259_EXPRESSION_NEUTRAL, false);
+    ++groups;
+}
+
 static void test_frequent_ordinary_refreshes(void)
 {
     bk7259_expression_policy_t policy;
@@ -165,7 +178,7 @@ static void test_mcp_holds_and_invalid_requests(void)
     (void)conversation(&policy, 0, 100, 250);
     CHECK(!bk7259_expression_policy_mcp(&policy, BK7259_EXPRESSION_GREETING));
     CHECK(!bk7259_expression_policy_mcp(&policy, BK7259_EXPRESSION_COUNT));
-    face(&policy, 650, 250, BK7259_EXPRESSION_NEUTRAL, false);
+    face(&policy, 650, 250, BK7259_EXPRESSION_LISTENING, false);
     ++groups;
 }
 
@@ -334,6 +347,7 @@ static void test_monotonic_clock_wrap(void)
 int main(void)
 {
     test_workflow_and_opener();
+    test_opener_before_first_server_phase();
     test_phases_and_thinking_duration();
     test_frequent_ordinary_refreshes();
     test_unrendered_phase_edges();

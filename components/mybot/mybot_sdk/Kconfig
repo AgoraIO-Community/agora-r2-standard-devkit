@@ -25,10 +25,10 @@ menu "MyBot BK7259 platform"
         depends on UART && USR_GPIO_CFG_EN
         select UART2
         help
-            Enable EB521 control and manual gimbal_cmd/gimbal_scene commands
-            using the R2 board's UART2 connection (GPIO2 TX, GPIO3 RX, 115200
-            baud, 8N1). Motion commands are serialized and manual scenes return
-            to center when complete. Local LCD expressions do not move the gimbal.
+            Control an EB521 V1.2 board on UART2 (GPIO2 TX, GPIO3 RX, 115200
+            baud, 8N1). The firmware requests charging and confirms the center
+            position on startup. Voice and AP CLI events use the same motion
+            controller.
 
     config MYBOT_VIDEO
         bool "Enable MyBot encoded video uplink"
