@@ -25,6 +25,7 @@ deployment.
 - 16 kHz mono signed 16-bit audio playback and persistent volume control.
 - Optional MIPI CSI camera capture, hardware H.264 encoding, and Agora RTC video uplink.
 - GC9503CV MIPI display, CST7XX touch, local status UI, Wi-Fi setup, power off, and factory reset.
+- EB521 V1.2 gimbal control over UART2, with automatic centering, four motion scenes and a charging heartbeat enabled at boot.
 - One GPIO conversation key, EasyFlash key-value storage, HTTPS transport, and derived
   device identity.
 - Embedded Chinese and English prompt assets, with no SD card or separate asset partition.
@@ -266,8 +267,7 @@ Current limitations:
   before claiming end-to-end RTM interoperability.
 - The current three-input AEC configuration and complete video path still require target
   hardware validation.
-- Wake words are not enabled, and the EB521 gimbal is disabled in the default AP
-  configuration.
+- Wake words are not enabled.
 - Third-party redistribution terms must be resolved before publishing firmware.
 
 Detailed board behavior and implementation notes are in the

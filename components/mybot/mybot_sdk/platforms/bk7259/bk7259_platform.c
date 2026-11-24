@@ -4,7 +4,6 @@
 #include "bk7259_gimbal.h"
 
 #include "bk7259_platform_log.h"
-#include <components/system.h>
 #include <mybot/platform/mybot_platform.h>
 #include <os/os.h>
 
@@ -66,11 +65,6 @@ int mybot_bk7259_platform_register(void) {
     }
     MYBOT_LOGI(TAG, "platform descriptor registered");
     return 0;
-}
-
-void mybot_bk7259_platform_reboot(void) {
-    MYBOT_LOGW(TAG, "reboot requested from product UI");
-    bk_reboot();
 }
 
 void mybot_bk7259_platform_shutdown(void) {

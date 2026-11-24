@@ -131,7 +131,8 @@ The LVGL 9.5.0 UI follows the product's process-gray pixel-glasses design. It
 shows provisioning, pairing, ready, conversation phase, error, and factory-reset
 pages with Chinese or English guidance. During a conversation it displays
 listening, thinking, or speaking state and voiceprint status from SDK indicators.
-All 23 local expressions are available without driving the optional gimbal.
+Dialogue phases also drive the gimbal, with speaking amplitude derived from
+accepted playback PCM. Manually selected local expressions update the display only.
 
 The display owner applies copied snapshots on one UI task and submits completed
 RGB565 frames through the DSI panel/DPU path. SDK LCD init/destroy only attach and
@@ -171,6 +172,6 @@ Configuration and source are in
 - [Validation status](./UI_VALIDATION.md)
 - [UI screenshots](../../docs/images/r2-user-guide/README.md)
 
-The EB521 gimbal is disabled in the default AP configuration. Host tests still
-exercise the retained implementation. Device audio, video, touch, power-loss, and
+The default R2 AP configuration enables EB521 V1.2 on CN1. At boot the firmware
+requests charging and commands both axes to center at 1000 pps. Device audio, video, touch, power-loss, and
 long-duration behavior are not implied by a successful host build.

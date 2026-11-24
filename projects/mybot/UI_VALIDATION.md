@@ -8,8 +8,9 @@ This page records the current reproducible checks and remaining release blockers
 It replaces the former chronological development log. Older intermediate
 diagnostics remain available in Git history and are not current instructions.
 
-The status below was reviewed on 2026-10-22. No target-board test was performed
-during this documentation update.
+The original board checklist was reviewed on 2026-10-22. On 2026-11-24 the
+Chinese R2 build was verified with EB521 V1.2 enabled. On the preceding test
+image, two consecutive `happy` runs completed and returned to center on hardware.
 
 ## Current Host and Build Checks
 
@@ -36,18 +37,18 @@ It builds both languages, both cores, the combined image, and the OTA package.
 The latest observed runtime was about 50 seconds on the development host.
 Generated endpoints and configuration were verified by the build script.
 
-Latest local build footprint:
+Local build footprint (Chinese with EB521, English from the earlier build):
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,933,152 B | 1,933,176 B |
-| AP RAM | 157,740 B | 157,740 B |
+| AP Flash | 1,947,752 B | 1,933,176 B |
+| AP RAM | 157,804 B | 157,740 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,440,480 B | 3,440,512 B |
-| OTA package | 2,057,984 B | 2,057,616 B |
+| Combined image | 3,455,104 B | 3,440,512 B |
+| OTA package | 2,069,248 B | 2,057,616 B |
 
-The OTA partition is 2,097,152 bytes. The Chinese package has only 39,168 bytes
+The OTA partition is 2,097,152 bytes. The Chinese package has 27,904 bytes
 of headroom, so new assets or code need an explicit size review.
 
 ## Host Test Matrix
@@ -76,7 +77,8 @@ Coverage includes:
   and 23 expressions.
 - Expression and voiceprint indicator policy.
 - HTTPS retry, timeout, EOF, socket-error isolation, and clock wraparound.
-- EB521 protocol, trajectories, CLI admission, and worker cleanup.
+- EB521 V1.2 probing, four motion scenes, noise and timeout handling, charging
+  heartbeats during motion, charge-stop fencing, and worker cleanup.
 
 The host suites and available ASan/UBSan variants pass. LeakSanitizer is disabled
 in the current ptrace environment, so leak detection is not included in that

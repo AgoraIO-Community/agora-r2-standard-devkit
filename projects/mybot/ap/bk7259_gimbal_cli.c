@@ -26,6 +26,16 @@ static void command_reply(char *buffer, int length, const char *message)
         BK_LOGI(TAG, "%s\r\n", message);
 }
 
+static void motion_reply(char *buffer, int length, int result)
+{
+    if (result == 0)
+        command_reply(buffer, length, "gimbal motion queued");
+    else if (result == BK7259_GIMBAL_NOT_READY)
+        command_reply(buffer, length, "gimbal not ready: waiting for center confirmation");
+    else
+        command_reply(buffer, length, "gimbal unavailable");
+}
+
 static void gimbal_command(char *buffer, int length, int argc, char **argv)
 {
     (void)argv;
@@ -33,14 +43,7 @@ static void gimbal_command(char *buffer, int length, int argc, char **argv)
         command_reply(buffer, length, "Usage: gimbal_cmd (send the next one of four commands)");
         return;
     }
-    /* The UART owner sends and receives asynchronously; the CLI never does I/O. */
-    int result = bk7259_gimbal_send_next_command();
-    if (result == 0)
-        command_reply(buffer, length, "gimbal_cmd queued; TX/RX follow in bk7259_gimbal logs");
-    else if (result == -2)
-        command_reply(buffer, length, "gimbal_cmd busy; retry after the current command or conversation");
-    else
-        command_reply(buffer, length, "gimbal_cmd unavailable; UART worker is not running");
+    motion_reply(buffer, length, bk7259_gimbal_send_next_command());
 }
 
 static void gimbal_scene_command(char *buffer, int length, int argc, char **argv)
@@ -61,20 +64,74 @@ static void gimbal_scene_command(char *buffer, int length, int argc, char **argv
         return;
     }
 
-    int result = bk7259_gimbal_request_cli_scene(scene);
-    if (result == 0) {
+    int result = bk7259_gimbal_request(scene);
+    if (result == 0)
         s_next_scene = (bk7259_gimbal_scene_t)(((unsigned)scene + 1U) % BK7259_GIMBAL_SCENE_COUNT);
-        command_reply(buffer, length, "gimbal_scene queued; one full scene and return to center; results follow in bk7259_gimbal logs");
-    } else if (result == -2) {
-        command_reply(buffer, length, "gimbal_scene busy; retry after the current command, scene or conversation");
-    } else {
-        command_reply(buffer, length, "gimbal_scene unavailable; UART worker is not running");
+    motion_reply(buffer, length, result);
+}
+
+static void gimbal_dialogue_command(char *buffer, int length, int argc, char **argv)
+{
+    static const struct {
+        const char *name;
+        bool active;
+        bk7259_gimbal_phase_t phase;
+    } events[] = {
+        {"start", true, BK7259_GIMBAL_PHASE_NEUTRAL},
+        {"listening", true, BK7259_GIMBAL_PHASE_LISTENING},
+        {"thinking", true, BK7259_GIMBAL_PHASE_THINKING},
+        {"speaking", true, BK7259_GIMBAL_PHASE_SPEAKING},
+        {"neutral", true, BK7259_GIMBAL_PHASE_NEUTRAL},
+        {"end", false, BK7259_GIMBAL_PHASE_NEUTRAL},
+    };
+    if (argc == 2) {
+        for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); ++i) {
+            if (strcmp(argv[1], events[i].name) == 0) {
+                motion_reply(buffer, length,
+                             bk7259_gimbal_update_dialogue(events[i].active, events[i].phase));
+                return;
+            }
+        }
     }
+    command_reply(buffer, length, "Usage: gimbal_dialogue start|listening|thinking|speaking|neutral|end");
+}
+
+static void gimbal_probe_command(char *buffer, int length, int argc, char **argv)
+{
+    (void)argv;
+    if (argc != 1) {
+        command_reply(buffer, length, "Usage: gimbal_probe");
+        return;
+    }
+    int result = bk7259_gimbal_request_probe();
+    if (result == 0)
+        command_reply(buffer, length, "gimbal_probe queued; check the UART result in bk7259_gimbal logs");
+    else if (result == -2)
+        command_reply(buffer, length, "gimbal_probe busy");
+    else
+        command_reply(buffer, length, "gimbal_probe unavailable; UART worker is not running or is shutting down");
+}
+
+static void gimbal_charge_command(char *buffer, int length, int argc, char **argv)
+{
+    if (argc != 2 || (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0)) {
+        command_reply(buffer, length, "Usage: gimbal_charge on|off");
+        return;
+    }
+
+    bool enabled = strcmp(argv[1], "on") == 0;
+    if (bk7259_gimbal_set_charging(enabled) == 0)
+        command_reply(buffer, length, enabled ? "gimbal_charge on queued" : "gimbal_charge off queued");
+    else
+        command_reply(buffer, length, "gimbal_charge unavailable; check UART readiness and pending operations");
 }
 
 static const struct cli_command k_commands[] = {
     {"gimbal_cmd", "gimbal_cmd: send one command, cycling through four motions", gimbal_command},
     {"gimbal_scene", "gimbal_scene [happy|sad|angry|surprised]: play one full scene, then center", gimbal_scene_command},
+    {"gimbal_dialogue", "gimbal_dialogue start|listening|thinking|speaking|neutral|end", gimbal_dialogue_command},
+    {"gimbal_charge", "gimbal_charge on|off: control EB521 charging heartbeat", gimbal_charge_command},
+    {"gimbal_probe", "gimbal_probe: check the EB521 UART link", gimbal_probe_command},
 };
 
 int bk7259_gimbal_cli_init(void)
@@ -85,8 +142,7 @@ int bk7259_gimbal_cli_init(void)
     int result = cli_register_commands(k_commands, sizeof(k_commands) / sizeof(k_commands[0]));
     if (result == 0) {
         s_registered = true;
-        BK_LOGI(TAG, "ready: ap_cmd gimbal_cmd sends one command per call\r\n");
-        BK_LOGI(TAG, "ready: ap_cmd gimbal_scene [happy|sad|angry|surprised] plays one full scene per call\r\n");
+        BK_LOGI(TAG, "EB521 V1.2 commands: gimbal_dialogue, gimbal_scene, gimbal_cmd, gimbal_probe, gimbal_charge\r\n");
     }
     return result;
 }

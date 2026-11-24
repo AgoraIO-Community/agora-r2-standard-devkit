@@ -35,8 +35,10 @@ int mybot_bk7259_platform_register(void);
  * negative error/reset/provisioning result (see bk7259_provision.h). */
 int mybot_bk7259_ensure_network(const char *device_id);
 int mybot_bk7259_provision_wifi(const char *device_id);
-/* Product-owned power action. Calls the vendor reboot path and does not return. */
+/* Post a reboot request for the AP product task. Safe from UI callbacks. */
 void mybot_bk7259_platform_reboot(void);
+/* Only the AP product task consumes reboot requests. */
+bool mybot_bk7259_platform_take_reboot_request(void);
 void mybot_bk7259_platform_shutdown(void);
 
 #ifdef __cplusplus

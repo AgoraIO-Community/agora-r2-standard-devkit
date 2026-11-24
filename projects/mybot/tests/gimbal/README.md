@@ -1,7 +1,7 @@
-# EB521 Motion Tests
+# EB521 V1.2 Tests
 
-The default R2 firmware disables `CONFIG_MYBOT_GIMBAL`. These tests exercise the
-retained implementation without enabling UART ownership on the device.
+The default R2 AP firmware enables `CONFIG_MYBOT_GIMBAL`. These tests run the
+same V1.2 driver with a simulated UART controller.
 
 ## Run
 
@@ -19,15 +19,12 @@ Set `GIMBAL_TEST_LOGS=1` to print production logs.
 
 The tests compile the actual `bk7259_gimbal.c` and AP CLI registration. Small
 UART/GPIO/RTOS headers replace hardware dependencies, while pthreads run the
-production worker and external callback path.
+production UART worker.
 
-The controller model:
-
-- Quantizes positions to the EB521 0.315-degree step.
-- Uses UART2 with GPIO2 TX and GPIO3 RX.
-- Separates command acceptance from physical completion.
-- Can delay replies, drop frames, report busy status, or reject commands.
-- Asserts that a new motion is not written before the previous one completes.
+The controller model uses UART2 with GPIO2 TX and GPIO3 RX. It separates the
+`E1` motion acceptance and completion replies, accepts `0x66` during motion,
+and can delay or drop replies, reject commands, or report an already-reached
+target.
 
 Host time runs ten times faster than device time.
 
@@ -36,10 +33,11 @@ Host time runs ten times faster than device time.
 The suite covers:
 
 - CRC vectors, fragmented frames, glued frames, invalid lengths, and bad CRCs.
-- Status-query completion and rejection of stale or mismatched replies.
-- All four scenes, final centering, repeated scenes, and segment cancellation.
-- Bounded timeout without automatic motion retransmission.
-- Busy/admission rules, CLI registration, argument validation, and scene order.
+- Boot with a missing or uninitialized board, hot unplug and reconnection,
+  and confirmed homing at 1000 pps.
+- Tracking the latest absolute target when intermediate replies are lost.
+- Default charging, heartbeats during motion, stop acknowledgement and timeout.
+- Shared voice and CLI motion admission, dialogue phases, and CLI argument validation.
 - Worker start/stop, AOSL references, retained resources, and cleanup retry.
 
 The runner has a 60-second timeout so a lock regression cannot wait indefinitely.
@@ -52,6 +50,5 @@ CLI commands, wiring, and protocol behavior are documented in
 [the EB521 guide](../../../../docs/eb521-gimbal-plan.zh-CN.md). Keep test coverage in
 this file and user-facing behavior in that guide.
 
-These tests validate protocol and software lifetime only. UART wiring, electrical
-levels, homing, physical direction, travel limits, and long-duration motion still
-require the target board.
+On-target checks cover UART wiring and electrical levels, physical direction,
+travel limits, charging current, and the bottom board's 3000 ms charging timeout.

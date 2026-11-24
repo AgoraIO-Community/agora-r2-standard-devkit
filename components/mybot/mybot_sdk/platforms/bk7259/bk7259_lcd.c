@@ -98,6 +98,8 @@ typedef struct {
     /* State edges and one-shot requests are recorded before snapshots coalesce.
      * Only the UI owner submits faces and starts their display clocks. */
     bk7259_expression_policy_t expression_policy;
+    bool dialogue_active;
+    bk7259_gimbal_phase_t dialogue_phase;
     bool expression_displayed;
     bk7259_expression_t displayed_expression;
     bk7259_expression_source_t displayed_source;
@@ -780,6 +782,30 @@ failed:
     return -1;
 }
 
+/* Only new SDK phase events replace a command submitted to the shared
+ * motion mailbox. Product teardown always cancels outstanding dialogue. */
+static void sync_dialogue(bool force)
+{
+    bool active = s_lcd.sdk_attached && !s_lcd.factory_reset_active &&
+                  s_lcd.provision_screen == BK7259_PROVISION_NONE &&
+                  s_lcd.latest.screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
+    bk7259_gimbal_phase_t phase = BK7259_GIMBAL_PHASE_NEUTRAL;
+    if (active) {
+        switch (s_lcd.expression_policy.phase) {
+        case MYBOT_LCD_INDICATOR_LISTENING: phase = BK7259_GIMBAL_PHASE_LISTENING; break;
+        case MYBOT_LCD_INDICATOR_THINKING:  phase = BK7259_GIMBAL_PHASE_THINKING; break;
+        case MYBOT_LCD_INDICATOR_SPEAKING:  phase = BK7259_GIMBAL_PHASE_SPEAKING; break;
+        }
+    }
+    if (!force && active == s_lcd.dialogue_active && phase == s_lcd.dialogue_phase)
+        return;
+    s_lcd.dialogue_active = active;
+    s_lcd.dialogue_phase = phase;
+    int result = bk7259_gimbal_update_dialogue(active, phase);
+    if (result < 0 && result != BK7259_GIMBAL_NOT_READY)
+        MYBOT_LOGW(TAG, "dialogue motion unavailable: active=%d phase=%d", (int)active, (int)phase);
+}
+
 void bk7259_lcd_shutdown(void)
 {
     if (!s_lifecycle_lock || rtos_lock_mutex(&s_lifecycle_lock) != BK_OK) {
@@ -794,9 +820,7 @@ void bk7259_lcd_shutdown(void)
     s_lcd.prepared = false;
     s_lcd.pending = false;
     bk7259_expression_policy_cancel(&s_lcd.expression_policy);
-    if (bk7259_gimbal_set_conversation(false) < 0) {
-        MYBOT_LOGW(TAG, "gimbal shutdown cancellation rejected");
-    }
+    sync_dialogue(true);
     unlock(&s_snapshot_lock);
     if (resources_owned()) {
         MYBOT_LOGI(TAG, "LVGL UI stopping");
@@ -817,15 +841,6 @@ static bool valid_content(const mybot_lcd_content_t *content)
            memchr(content->pair_code, '\0', sizeof(content->pair_code)) != NULL;
 }
 
-/* Calls only copy to the gimbal owner's mailbox. That owner never calls LCD
- * while holding its request lock, so snapshot -> gimbal lock ordering is fixed. */
-static void set_gimbal_conversation(bool active)
-{
-    if (bk7259_gimbal_set_conversation(active) < 0) {
-        MYBOT_LOGW(TAG, "gimbal conversation request rejected: active=%d", (int)active);
-    }
-}
-
 /* Caller holds snapshot lock. No borrowed SDK pointer crosses this boundary. */
 static int publish_content(const mybot_lcd_content_t *content)
 {
@@ -837,14 +852,11 @@ static int publish_content(const mybot_lcd_content_t *content)
     if (s_lcd.factory_reset_active) {
         return 0;
     }
-    const bool in_conversation = content->screen == MYBOT_LCD_SCREEN_IN_CONVERSATION;
-    if ((s_lcd.latest.screen == MYBOT_LCD_SCREEN_IN_CONVERSATION) != in_conversation) {
-        set_gimbal_conversation(in_conversation);
-    }
     bk7259_expression_policy_update(&s_lcd.expression_policy, content, rtos_get_time());
     s_lcd.latest = *content;
     s_lcd.latest.indicators &=
         MYBOT_LCD_INDICATOR_VP_REGISTERED | MYBOT_LCD_INDICATOR_SERVER_STATE_MASK;
+    sync_dialogue(false);
     s_lcd.pending = true;
     notify(&s_lcd.wake);
     return 0;
@@ -861,7 +873,7 @@ int bk7259_lcd_show_factory_reset(bk7259_factory_reset_screen_t screen)
         s_lcd.factory_reset_active = true;
         s_lcd.provision_update = false;
         bk7259_expression_policy_cancel(&s_lcd.expression_policy);
-        set_gimbal_conversation(false);
+        sync_dialogue(true);
         s_lcd.factory_reset_screen = screen;
         s_lcd.pending = true;
         notify(&s_lcd.wake);
@@ -881,12 +893,15 @@ int bk7259_lcd_show_provision(bk7259_provision_screen_t screen)
     if (s_lcd.prepared && s_lcd.accepting && !aosl_atomic_read(&s_lcd.stopping)) {
         ret = 0;
         if (!s_lcd.factory_reset_active) {
+            bool was_provisioning = s_lcd.provision_screen != BK7259_PROVISION_NONE;
             s_lcd.provision_screen = screen;
             s_lcd.provision_update = true;
             if (screen == BK7259_PROVISION_NONE) {
                 bk7259_expression_policy_update(&s_lcd.expression_policy,
                                                  &s_lcd.latest, rtos_get_time());
             }
+            if (was_provisioning != (screen != BK7259_PROVISION_NONE))
+                sync_dialogue(true);
             s_lcd.pending = true;
             notify(&s_lcd.wake);
         }
@@ -1032,7 +1047,7 @@ static void lcd_sdk_destroy(void *context)
     s_lcd.sdk_attached = false;
     bk7259_expression_policy_cancel(&s_lcd.expression_policy);
     s_lcd.latest.indicators = MYBOT_LCD_INDICATOR_NONE;
-    set_gimbal_conversation(false);
+    sync_dialogue(true);
     if (s_lcd.accepting && !aosl_atomic_read(&s_lcd.stopping)) {
         s_lcd.pending = true;
         notify(&s_lcd.wake);

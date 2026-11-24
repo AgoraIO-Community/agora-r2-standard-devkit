@@ -8,8 +8,11 @@
 
 static const struct cli_command *registered;
 static int registered_count, register_calls, register_result = -4;
-static int request_result, raw_calls, scene_calls;
+static int request_result, raw_calls, scene_calls, charge_calls, probe_calls, dialogue_calls;
 static bk7259_gimbal_scene_t requested_scene;
+static bk7259_gimbal_phase_t requested_phase;
+static bool requested_charging;
+static bool requested_dialogue;
 
 int cli_register_commands(const struct cli_command *commands, int count)
 {
@@ -27,10 +30,31 @@ int bk7259_gimbal_send_next_command(void)
     return request_result;
 }
 
-int bk7259_gimbal_request_cli_scene(bk7259_gimbal_scene_t scene)
+int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 {
     ++scene_calls;
     requested_scene = scene;
+    return request_result;
+}
+
+int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
+{
+    ++dialogue_calls;
+    requested_dialogue = active;
+    requested_phase = phase;
+    return request_result;
+}
+
+int bk7259_gimbal_set_charging(bool enabled)
+{
+    ++charge_calls;
+    requested_charging = enabled;
+    return request_result;
+}
+
+int bk7259_gimbal_request_probe(void)
+{
+    ++probe_calls;
     return request_result;
 }
 
@@ -58,8 +82,11 @@ static void expect_scene(const char *argument, int result,
 {
     const int before = scene_calls;
     request_result = result;
-    invoke("gimbal_scene", argument, NULL,
-           result == 0 ? "queued" : result == -2 ? "busy" : "unavailable");
+    const char *reply = result == 0 ? "queued" : "unavailable";
+    if (result == BK7259_GIMBAL_NOT_READY) {
+        reply = "not ready";
+    }
+    invoke("gimbal_scene", argument, NULL, reply);
     assert(scene_calls == before + 1 && requested_scene == expected);
 }
 
@@ -69,19 +96,18 @@ int main(void)
     register_result = 0;
     assert(bk7259_gimbal_cli_init() == 0 && register_calls == 2);
     assert(bk7259_gimbal_cli_init() == 0 && register_calls == 2);
-    assert(registered_count == 2);
+    assert(registered_count == 5);
 
     invoke("gimbal_cmd", "happy", NULL, "Usage:");
     assert(raw_calls == 0 && scene_calls == 0);
-    const int results[] = {0, -2, -1};
-    const char *const replies[] = {"queued", "busy", "unavailable"};
+    const int results[] = {0, BK7259_GIMBAL_NOT_READY, -1};
+    const char *const replies[] = {"queued", "not ready", "unavailable"};
     for (int index = 0; index < 3; ++index) {
         request_result = results[index];
         invoke("gimbal_cmd", NULL, NULL, replies[index]);
         assert(raw_calls == index + 1 && scene_calls == 0);
     }
-
-    expect_scene(NULL, -2, BK7259_GIMBAL_SCENE_HAPPY);
+    expect_scene(NULL, BK7259_GIMBAL_NOT_READY, BK7259_GIMBAL_SCENE_HAPPY);
     expect_scene(NULL, -1, BK7259_GIMBAL_SCENE_HAPPY);
     invoke("gimbal_scene", "Happy", NULL, "Usage:");
     invoke("gimbal_scene", "happy", "sad", "Usage:");
@@ -89,7 +115,7 @@ int main(void)
     for (int index = 0; index < 5; ++index)
         expect_scene(NULL, 0, (bk7259_gimbal_scene_t)(index % 4));
 
-    expect_scene("angry", -2, BK7259_GIMBAL_SCENE_ANGRY);
+    expect_scene("angry", BK7259_GIMBAL_NOT_READY, BK7259_GIMBAL_SCENE_ANGRY);
     expect_scene(NULL, 0, BK7259_GIMBAL_SCENE_SAD);
     expect_scene("surprised", 0, BK7259_GIMBAL_SCENE_SURPRISED);
     expect_scene("sad", -1, BK7259_GIMBAL_SCENE_SAD);
@@ -100,6 +126,56 @@ int main(void)
     expect_scene(NULL, 0, BK7259_GIMBAL_SCENE_SURPRISED);
     assert(raw_calls == 3);
 
-    puts("PASS: CLI registration, arguments, scene order and admission cursor");
+    invoke("gimbal_probe", "extra", NULL, "Usage:");
+    assert(probe_calls == 0);
+    const int probe_results[] = {0, -2, -1};
+    const char *const probe_replies[] = {"queued", "busy", "unavailable"};
+    for (int index = 0; index < 3; ++index) {
+        request_result = probe_results[index];
+        invoke("gimbal_probe", NULL, NULL, probe_replies[index]);
+        assert(probe_calls == index + 1);
+    }
+
+    invoke("gimbal_dialogue", NULL, NULL, "Usage:");
+    invoke("gimbal_dialogue", "Listening", NULL, "Usage:");
+    invoke("gimbal_dialogue", "start", "end", "Usage:");
+    assert(dialogue_calls == 0);
+    const struct {
+        const char *argument;
+        bool active;
+        bk7259_gimbal_phase_t phase;
+    } dialogue[] = {
+        {"start", true, BK7259_GIMBAL_PHASE_NEUTRAL},
+        {"neutral", true, BK7259_GIMBAL_PHASE_NEUTRAL},
+        {"listening", true, BK7259_GIMBAL_PHASE_LISTENING},
+        {"thinking", true, BK7259_GIMBAL_PHASE_THINKING},
+        {"speaking", true, BK7259_GIMBAL_PHASE_SPEAKING},
+        {"end", false, BK7259_GIMBAL_PHASE_NEUTRAL},
+    };
+    request_result = 0;
+    for (size_t i = 0; i < sizeof(dialogue) / sizeof(dialogue[0]); ++i) {
+        invoke("gimbal_dialogue", dialogue[i].argument, NULL, "queued");
+        assert(dialogue_calls == (int)i + 1);
+        assert(requested_dialogue == dialogue[i].active && requested_phase == dialogue[i].phase);
+    }
+    request_result = BK7259_GIMBAL_NOT_READY;
+    invoke("gimbal_dialogue", "start", NULL, "not ready");
+    request_result = -1;
+    invoke("gimbal_dialogue", "end", NULL, "unavailable");
+
+    invoke("gimbal_charge", NULL, NULL, "Usage:");
+    invoke("gimbal_charge", "ON", NULL, "Usage:");
+    invoke("gimbal_charge", "on", "off", "Usage:");
+    assert(charge_calls == 0);
+    request_result = 0;
+    invoke("gimbal_charge", "on", NULL, "queued");
+    assert(charge_calls == 1 && requested_charging);
+    invoke("gimbal_charge", "off", NULL, "queued");
+    assert(charge_calls == 2 && !requested_charging);
+    request_result = -1;
+    invoke("gimbal_charge", "on", NULL, "unavailable");
+    assert(charge_calls == 3 && requested_charging);
+
+    puts("PASS: CLI registration, arguments, scene faults, UART probes, and charging control");
     return 0;
 }
