@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_provision.h"
 #include "bk7259_factory_reset.h"
+#include "mybot_bk7259_platform.h"
 
 #include <api/aosl_atomic.h>
 
@@ -15,9 +16,19 @@ enum {
     PROVISION_COMMITTING,
 };
 static aosl_atomic_t s_provision;
+/* A reboot request also interrupts a saved-network wait or open portal. */
+static aosl_atomic_t s_reboot_requested;
+
+void mybot_bk7259_platform_reboot(void) {
+    (void)aosl_atomic_cmpxchg(&s_reboot_requested, 0, 1);
+}
+
+bool mybot_bk7259_platform_take_reboot_request(void) {
+    return aosl_atomic_cmpxchg(&s_reboot_requested, 1, 0) == 1;
+}
 
 bool bk7259_provision_request(void) {
-    return !bk7259_factory_reset_requested() &&
+    return !bk7259_factory_reset_requested() && !aosl_atomic_read(&s_reboot_requested) &&
            aosl_atomic_cmpxchg(&s_provision, PROVISION_IDLE, PROVISION_REQUEST) == PROVISION_IDLE;
 }
 
@@ -84,14 +95,16 @@ int bk7259_provision_abort_reason(void) {
         return BK7259_NETWORK_CANCELLED;
     }
     intptr_t state = aosl_atomic_read(&s_provision);
-    if (state == PROVISION_CANCELLED || state == PROVISION_REQUEST_CANCELLED) {
+    /* Let an admitted credential commit finish before the AP owner reboots. */
+    if (state == PROVISION_CANCELLED || state == PROVISION_REQUEST_CANCELLED ||
+        (state != PROVISION_COMMITTING && aosl_atomic_read(&s_reboot_requested))) {
         return BK7259_PROVISION_CANCELLED;
     }
     return state == PROVISION_REQUEST ? BK7259_PROVISION_REQUESTED : 0;
 }
 
 bool bk7259_provision_try_commit(void) {
-    return !bk7259_factory_reset_requested() &&
+    return !bk7259_factory_reset_requested() && !aosl_atomic_read(&s_reboot_requested) &&
            aosl_atomic_cmpxchg(&s_provision, PROVISION_ACTIVE, PROVISION_COMMITTING) ==
                PROVISION_ACTIVE;
 }

@@ -110,7 +110,10 @@ if(CONFIG_MYBOT_VIDEO)
 endif()
 
 if(CONFIG_MYBOT_GIMBAL)
-    list(APPEND platform_srcs platforms/bk7259/bk7259_gimbal.c)
+    list(APPEND platform_srcs
+        platforms/bk7259/bk7259_audio_dialogue.c
+        platforms/bk7259/bk7259_gimbal.c
+    )
 endif()
 
 set(mybot_priv_requires
