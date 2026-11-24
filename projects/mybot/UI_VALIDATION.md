@@ -41,14 +41,14 @@ Local build footprint (Chinese with EB521, English from the earlier build):
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,947,752 B | 1,933,176 B |
-| AP RAM | 157,804 B | 157,740 B |
+| AP Flash | 1,948,568 B | 1,933,176 B |
+| AP RAM | 157,828 B | 157,740 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,455,104 B | 3,440,512 B |
-| OTA package | 2,069,248 B | 2,057,616 B |
+| Combined image | 3,455,904 B | 3,440,512 B |
+| OTA package | 2,069,744 B | 2,057,616 B |
 
-The OTA partition is 2,097,152 bytes. The Chinese package has 27,904 bytes
+The OTA partition is 2,097,152 bytes. The Chinese package has 27,408 bytes
 of headroom, so new assets or code need an explicit size review.
 
 ## Host Test Matrix

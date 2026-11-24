@@ -2,6 +2,7 @@
 #include "bk7259_ops.h"
 #include "bk7259_factory_reset.h"
 #include "bk7259_key.h"
+#include "bk7259_provision.h"
 
 #include <api/aosl_atomic.h>
 #include <common/bk_err.h>
@@ -49,29 +50,42 @@ typedef struct {
 static key_state_t s_key;
 static aosl_atomic_t s_conversation_requested;
 static aosl_atomic_t s_short_press_enabled;
+/* The low bits hold the allowed intent and pending flag. The generation
+ * changes even when the AP later reopens the same intent. */
+static aosl_atomic_t s_touch_conversation;
+#define TOUCH_CONVERSATION_INTENT_MASK 3U
+#define TOUCH_CONVERSATION_PENDING 4U
+#define TOUCH_CONVERSATION_GENERATION_STEP 8U
 
 static const key_item_t s_key_item = {
     .gpio = (gpio_id_t)CONFIG_MYBOT_KEY_GPIO,
     .active_level = (uint8_t)CONFIG_MYBOT_KEY_ACTIVE_LEVEL,
 };
 
-static void emit_key_event(mybot_key_event_t event) {
+bool bk7259_key_dispatch_conversation(bool start) {
+    mybot_key_event_t event = start ? MYBOT_KEY_EVENT_CONVERSATION_START
+                                    : MYBOT_KEY_EVENT_CONVERSATION_STOP;
     mybot_key_event_handler_t emit;
     void *user_data;
 
-    rtos_lock_mutex(&s_key.lock);
-    if (!s_key.sdk_attached || s_key.detaching || bk7259_factory_reset_requested()) {
+    if (!aosl_atomic_read(&s_short_press_enabled) ||
+        rtos_lock_mutex(&s_key.lock) != BK_OK) {
+        return false;
+    }
+    if (!s_key.sdk_attached || s_key.detaching || bk7259_provision_busy() ||
+        bk7259_provision_abort_reason() != 0) {
         MYBOT_LOGW(TAG, "drop key event=%d: sdk_attached=%u detaching=%u",
                    (int)event, s_key.sdk_attached ? 1U : 0U,
                    s_key.detaching ? 1U : 0U);
         rtos_unlock_mutex(&s_key.lock);
-        return;
+        return false;
     }
     s_key.in_flight++;
     emit = s_key.emit;
     user_data = s_key.user_data;
     rtos_unlock_mutex(&s_key.lock);
 
+    MYBOT_LOGI(TAG, "conversation key request: %s", start ? "start" : "stop");
     emit(event, user_data);
 
     rtos_lock_mutex(&s_key.lock);
@@ -80,16 +94,54 @@ static void emit_key_event(mybot_key_event_t event) {
         (void)rtos_set_semaphore(&s_key.callback_idle);
     }
     rtos_unlock_mutex(&s_key.lock);
-}
-
-void bk7259_key_dispatch_conversation(bool start) {
-    MYBOT_LOGI(TAG, "conversation key short press: %s", start ? "start" : "stop");
-    emit_key_event(start ? MYBOT_KEY_EVENT_CONVERSATION_START
-                         : MYBOT_KEY_EVENT_CONVERSATION_STOP);
+    return true;
 }
 
 bool bk7259_key_take_conversation_request(void) {
     return aosl_atomic_xchg(&s_conversation_requested, 0) != 0;
+}
+
+bool bk7259_key_request_touch_conversation(bool start) {
+    if (!aosl_atomic_read(&s_short_press_enabled) || bk7259_provision_busy() ||
+        bk7259_provision_abort_reason() != 0) {
+        return false;
+    }
+    intptr_t intent = start ? BK7259_TOUCH_CONVERSATION_START : BK7259_TOUCH_CONVERSATION_STOP;
+    intptr_t current = aosl_atomic_read(&s_touch_conversation);
+    if ((current & TOUCH_CONVERSATION_INTENT_MASK) != intent) {
+        return false;
+    }
+    intptr_t pending = current | TOUCH_CONVERSATION_PENDING;
+    intptr_t observed = aosl_atomic_cmpxchg(&s_touch_conversation, current, pending);
+    return observed == current || observed == pending;
+}
+
+static intptr_t next_touch_gate(intptr_t current, bk7259_touch_conversation_t allowed) {
+    uint32_t generation = (uint32_t)current / TOUCH_CONVERSATION_GENERATION_STEP;
+    return (intptr_t)((generation + 1U) * TOUCH_CONVERSATION_GENERATION_STEP & INT32_MAX) |
+           (intptr_t)allowed;
+}
+
+void bk7259_key_allow_touch_conversation(bk7259_touch_conversation_t allowed) {
+    intptr_t current = aosl_atomic_read(&s_touch_conversation);
+    while ((current & TOUCH_CONVERSATION_INTENT_MASK) != (intptr_t)allowed) {
+        intptr_t next = next_touch_gate(current, allowed);
+        intptr_t observed = aosl_atomic_cmpxchg(&s_touch_conversation, current, next);
+        if (observed == current) {
+            return;
+        }
+        current = observed;
+    }
+}
+
+bk7259_touch_conversation_t bk7259_key_take_touch_conversation(void) {
+    intptr_t current = aosl_atomic_read(&s_touch_conversation);
+    if ((current & TOUCH_CONVERSATION_PENDING) &&
+        aosl_atomic_cmpxchg(&s_touch_conversation, current,
+                            next_touch_gate(current, BK7259_TOUCH_CONVERSATION_DISABLED)) == current) {
+        return (bk7259_touch_conversation_t)(current & TOUCH_CONVERSATION_INTENT_MASK);
+    }
+    return BK7259_TOUCH_CONVERSATION_DISABLED;
 }
 
 static void key_scan_timer(void *arg) {
@@ -153,6 +205,7 @@ static void key_detach(void) {
 
     aosl_atomic_set(&s_short_press_enabled, 0);
     aosl_atomic_set(&s_conversation_requested, 0);
+    bk7259_key_allow_touch_conversation(BK7259_TOUCH_CONVERSATION_DISABLED);
     rtos_lock_mutex(&s_key.lock);
     if (!s_key.sdk_attached) {
         rtos_unlock_mutex(&s_key.lock);
@@ -222,6 +275,7 @@ int bk7259_key_prepare(void) {
     s_key.raw_changed_ms = rtos_get_time();
     aosl_atomic_set(&s_conversation_requested, 0);
     aosl_atomic_set(&s_short_press_enabled, 0);
+    bk7259_key_allow_touch_conversation(BK7259_TOUCH_CONVERSATION_DISABLED);
     s_key.prepared = true;
 
     if (rtos_init_timer(&s_key.scan_timer, KEY_SCAN_PERIOD_MS,
@@ -278,6 +332,7 @@ static int key_init(void **out_ctx, mybot_key_event_handler_t emit, void *user_d
     s_key.user_data = user_data;
     *out_ctx = &s_key;
     s_key.sdk_attached = true;
+    bk7259_key_allow_touch_conversation(BK7259_TOUCH_CONVERSATION_DISABLED);
     aosl_atomic_set(&s_short_press_enabled, 1);
     rtos_unlock_mutex(&s_key.lock);
     MYBOT_LOGI(TAG, "key callbacks attached emit=%p user_data=%p",

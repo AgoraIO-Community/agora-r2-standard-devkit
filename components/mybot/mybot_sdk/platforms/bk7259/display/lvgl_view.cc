@@ -4,6 +4,7 @@
  * src/expressions.js and src/reference-style.js. The renderer owns only LVGL
  * objects; the BK7259 display owner retains the panel and its fixed buffers. */
 #include "lvgl_view.h"
+#include "bk7259_key.h"
 #include "mybot_bk7259_platform.h"
 #include "pixel_expression_shapes.h"
 
@@ -35,9 +36,13 @@ constexpr uint32_t kTerminal = 0x639589;
 constexpr uint32_t kMuted = 0xa0a6a3;
 constexpr uint32_t kError = 0xe57876;
 constexpr int kTapSlop = 10;
+constexpr uint32_t kConversationTapMs = 400;
+constexpr uint32_t kConversationRearmMs = 250;
 
 enum class SettingsPage { Closed, Menu, Confirm, ConfirmProvision };
+enum class ConversationTap { None, Start, Stop };
 enum class ButtonAction {
+    Conversation,
     Settings,
     Return,
     ResetMenu,
@@ -190,11 +195,16 @@ struct View {
     lv_obj_t *retry_button;
     lv_obj_t *gesture_button;
     lv_point_t gesture_start;
+    uint32_t gesture_started;
+    uint32_t conversation_tap_at;
+    ConversationTap gesture_conversation;
     SettingsPage settings_page;
     bk7259_factory_reset_screen_t reset_screen;
     bk7259_provision_screen_t provision_screen;
     char provision_page_ssid[kSsidCapacity];
     bool gesture_cancelled;
+    bool conversation_tap_accepted;
+    bool reboot_requested;
     bool touch_available;
     lv_timer_t *timer;
     mybot_lcd_content_t previous;
@@ -599,6 +609,7 @@ bool create_provision_page() {
 
 void cancel_button_gesture(bool wait_release) {
     s_view.gesture_button = nullptr;
+    s_view.gesture_conversation = ConversationTap::None;
     s_view.gesture_cancelled = true;
     lv_indev_t *input = lv_indev_active();
     if (wait_release && input && lv_indev_get_type(input) == LV_INDEV_TYPE_POINTER) {
@@ -635,6 +646,19 @@ void show_settings(SettingsPage page) {
     update_touch_controls();
 }
 
+ConversationTap conversation_tap(mybot_lcd_screen_t screen,
+                                 const bk7259_lcd_runtime_status_t &status) {
+    if (screen == MYBOT_LCD_SCREEN_READY && !status.in_conversation &&
+        std::strcmp(status.state, "ready") == 0) {
+        return ConversationTap::Start;
+    }
+    if (screen == MYBOT_LCD_SCREEN_IN_CONVERSATION && status.in_conversation &&
+        std::strcmp(status.state, "in_conversation") == 0) {
+        return ConversationTap::Stop;
+    }
+    return ConversationTap::None;
+}
+
 bool action_available(ButtonAction action) {
     if (!s_view.touch_available) {
         return false;
@@ -643,6 +667,12 @@ bool action_available(ButtonAction action) {
         return action == ButtonAction::Retry && s_view.reset_screen == BK7259_FACTORY_RESET_FAILED;
     }
     switch (action) {
+    case ButtonAction::Conversation:
+        return s_view.settings_page == SettingsPage::Closed && s_view.face_visible &&
+               s_view.has_content && !s_view.reboot_requested &&
+               !bk7259_factory_reset_requested() && s_view.provision_screen == BK7259_PROVISION_NONE &&
+               !bk7259_provision_busy() &&
+               conversation_tap(s_view.previous.screen, s_view.runtime_status) != ConversationTap::None;
     case ButtonAction::Settings:
         return s_view.settings_page == SettingsPage::Closed;
     case ButtonAction::Return:
@@ -671,8 +701,14 @@ bool action_available(ButtonAction action) {
     return false;
 }
 
-void perform_button_action(ButtonAction action) {
+void perform_button_action(ButtonAction action, ConversationTap conversation) {
     switch (action) {
+    case ButtonAction::Conversation:
+        if (bk7259_key_request_touch_conversation(conversation == ConversationTap::Start)) {
+            s_view.conversation_tap_at = lv_tick_get();
+            s_view.conversation_tap_accepted = true;
+        }
+        break;
     case ButtonAction::Settings:
         show_settings(SettingsPage::Menu);
         break;
@@ -680,6 +716,7 @@ void perform_button_action(ButtonAction action) {
         show_settings(SettingsPage::Confirm);
         break;
     case ButtonAction::PowerOff:
+        s_view.reboot_requested = true;
         mybot_bk7259_platform_reboot();
         break;
     case ButtonAction::ProvisionMenu:
@@ -723,10 +760,22 @@ bool moved_too_far(const lv_point_t &point) {
     return dx * dx + dy * dy > kTapSlop * kTapSlop;
 }
 
+bool contains_point(lv_obj_t *object, const lv_point_t &point) {
+    lv_area_t bounds{};
+    lv_obj_get_coords(object, &bounds);
+    return point.x >= bounds.x1 && point.x <= bounds.x2 &&
+           point.y >= bounds.y1 && point.y <= bounds.y2;
+}
+
 void button_event(lv_event_t *event) {
     const lv_event_code_t code = lv_event_get_code(event);
     auto *button = static_cast<lv_obj_t *>(lv_event_get_current_target(event));
-    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL || code == LV_EVENT_DELETE) {
+    if (lv_event_get_target(event) != button) {
+        return;
+    }
+    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL || code == LV_EVENT_DELETE ||
+        code == LV_EVENT_INDEV_RESET ||
+        (code == LV_EVENT_LONG_PRESSED && button == s_view.root)) {
         if (s_view.gesture_button == button) {
             cancel_button_gesture(false);
         }
@@ -744,7 +793,18 @@ void button_event(lv_event_t *event) {
     }
     lv_point_t point{};
     lv_indev_get_point(input, &point);
+    const uint32_t now = lv_tick_get();
     if (code == LV_EVENT_PRESSED) {
+        if (action == ButtonAction::Conversation) {
+            if (contains_point(s_view.settings_button, point) ||
+                (s_view.conversation_tap_accepted &&
+                 now - s_view.conversation_tap_at < kConversationRearmMs)) {
+                cancel_button_gesture(false);
+                return;
+            }
+            s_view.gesture_conversation = conversation_tap(s_view.previous.screen, s_view.runtime_status);
+            s_view.gesture_started = now;
+        }
         s_view.gesture_button = button;
         s_view.gesture_start = point;
         s_view.gesture_cancelled = false;
@@ -756,14 +816,18 @@ void button_event(lv_event_t *event) {
     if (moved_too_far(point)) {
         s_view.gesture_cancelled = true;
     }
+    const ConversationTap conversation = s_view.gesture_conversation;
+    if (action == ButtonAction::Conversation &&
+        (now - s_view.gesture_started > kConversationTapMs ||
+         contains_point(s_view.settings_button, point) ||
+         conversation != conversation_tap(s_view.previous.screen, s_view.runtime_status))) {
+        s_view.gesture_cancelled = true;
+    }
     if (code == LV_EVENT_RELEASED) {
-        lv_area_t bounds{};
-        lv_obj_get_coords(button, &bounds);
-        const bool valid = !s_view.gesture_cancelled && point.x >= bounds.x1 &&
-                           point.x <= bounds.x2 && point.y >= bounds.y1 && point.y <= bounds.y2;
+        const bool valid = !s_view.gesture_cancelled && contains_point(button, point);
         cancel_button_gesture(true);
         if (valid) {
-            perform_button_action(action);
+            perform_button_action(action, conversation);
         }
     }
 }
@@ -940,6 +1004,8 @@ int mybot_lvgl_view_create(lv_display_t *display) {
      * sliding into Settings must never become a fresh button press. */
     lv_obj_add_flag(s_view.root,
                     static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+    lv_obj_add_event_cb(s_view.root, button_event, LV_EVENT_ALL,
+                        reinterpret_cast<void *>(static_cast<uintptr_t>(ButtonAction::Conversation)));
     s_view.artwork = make_panel(s_view.root, (width - s_view.artwork_width) / 2,
                                 (height - s_view.artwork_height) / 2, s_view.artwork_width,
                                 s_view.artwork_height, kBackground, LV_OPA_TRANSP);
@@ -997,6 +1063,11 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content, const char *ssid
         !s_view.has_content || normalized.indicators != s_view.previous.indicators ||
         copied_status.in_conversation != s_view.runtime_status.in_conversation ||
         std::strcmp(copied_status.state, s_view.runtime_status.state) != 0;
+    if (s_view.gesture_button == s_view.root &&
+        (workflow_changed ||
+         conversation_tap(normalized.screen, copied_status) != s_view.gesture_conversation)) {
+        cancel_button_gesture(true);
+    }
     if (s_view.provision_screen != BK7259_PROVISION_NONE) {
         /* Keep the newest borrowed SDK data, but never let a delayed ordinary
          * snapshot erase the local PREPARING/CANCELLING acknowledgement. */

@@ -62,6 +62,10 @@ define the hardware power-button timing. The CEN button remains hardware reset.
 
 Touch **Settings** to open Wi-Fi setup, power off, or factory reset.
 
+A single-finger tap released within 400 ms on the face screen starts a conversation
+when ready or hangs up during a conversation. The touchscreen and GPIO47 key can
+be used interchangeably. Settings, provisioning and reset screens have their own controls.
+
 Power off calls `bk_reboot()` and restarts the device without clearing Wi-Fi, device
 credentials, binding, or volume.
 
