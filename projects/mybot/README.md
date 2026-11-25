@@ -62,8 +62,9 @@ define the hardware power-button timing. The CEN button remains hardware reset.
 
 Open **Settings** to control servo motion and the bottom board's charging request independently, set up Wi-Fi, power off, or restore factory settings. Both switches default to on and retain their saved selections across reboots.
 
-A single-finger tap released within 400 ms on the face screen starts a conversation
-when ready or hangs up during a conversation. The touchscreen and GPIO47 key can
+A single-finger tap inside either glasses lens starts a conversation when ready or hangs up
+during a conversation. Release within 400 ms inside the same lens. Both touch areas stay
+at their READY positions as expressions change. The touchscreen and GPIO47 key can
 be used interchangeably. Settings, provisioning and reset screens have their own controls.
 
 Power off calls `bk_reboot()` and restarts the device without clearing Wi-Fi, device

@@ -12,7 +12,8 @@
 namespace {
 constexpr int kWidth = 640;
 constexpr int kHeight = 480;
-constexpr lv_point_t kFaceCenter = {320, 240};
+constexpr lv_point_t kLeftEyeCenter = {231, 230};
+constexpr lv_point_t kRightEyeCenter = {409, 230};
 std::array<uint16_t, kWidth * kHeight> pixels{};
 std::array<uint16_t, kWidth * 16> strip{};
 lv_display_t *display;
@@ -501,26 +502,26 @@ void test_touch_conversation_direction_and_duplicate() {
     update(MYBOT_LCD_SCREEN_READY);
     const unsigned before = touch_conversation_requests;
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
     assert(touch_conversation_requests == before);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before + 1 && pending_touch_conversation == 1);
     pending_touch_conversation = -1;
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1 && pending_touch_conversation == -1);
 
     settle(300);
     update(MYBOT_LCD_SCREEN_READY, "in_conversation");
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1);
     update(MYBOT_LCD_SCREEN_IN_CONVERSATION, "in_conversation");
     accept_touch_conversation = false;
     const unsigned attempted = touch_conversation_attempts;
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_attempts == attempted + 1 && touch_conversation_requests == before + 1);
     accept_touch_conversation = true;
-    tap_point(kFaceCenter);
+    tap_point(kRightEyeCenter);
     assert(touch_conversation_requests == before + 2 && pending_touch_conversation == 0);
     pending_touch_conversation = -1;
 }
@@ -530,52 +531,137 @@ void test_touch_conversation_invalid_gestures() {
     update(MYBOT_LCD_SCREEN_READY);
     const unsigned before = touch_conversation_requests;
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
     for (unsigned elapsed = 0; elapsed < 450; elapsed += 10) {
-        pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
+        pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
     }
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before);
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
-    pointer({kFaceCenter.x + 24, kFaceCenter.y}, LV_INDEV_STATE_PRESSED);
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
+    pointer({kLeftEyeCenter.x + 24, kLeftEyeCenter.y}, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before);
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
-    lv_point_t face = kFaceCenter;
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
+    lv_point_t face = kLeftEyeCenter;
     lv_obj_t *target = lv_indev_search_obj(screen(), &face);
     assert(target != nullptr);
     lv_obj_send_event(target, LV_EVENT_CANCEL, nullptr);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before);
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
     /* Mirror the touch transport's cancellation when a second finger lands. */
     lv_indev_reset(input, nullptr);
     lv_indev_wait_release(input);
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before);
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
     update(MYBOT_LCD_SCREEN_IN_CONVERSATION, "in_conversation");
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before);
 
-    pointer(kFaceCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
     bk7259_lvgl_view_set_touch_available(false);
     bk7259_lvgl_view_set_touch_available(true);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
-    pointer(kFaceCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_RELEASED);
     assert(touch_conversation_requests == before);
 
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1 && pending_touch_conversation == 0);
     pending_touch_conversation = -1;
+}
+
+void test_touch_conversation_eye_boundaries() {
+    settle(300);
+    update(MYBOT_LCD_SCREEN_READY);
+    unsigned before = touch_conversation_requests;
+
+    /* Use the actual outer lens-frame edges in the 640x480 view. */
+    const lv_point_t inside[] = {
+        {155, 230}, {304, 230}, {231, 187}, {231, 317},
+        {335, 230}, {484, 230}, {409, 187}, {409, 317},
+    };
+    for (const lv_point_t &point : inside) {
+        tap_point(point);
+        ++before;
+        assert(touch_conversation_requests == before && pending_touch_conversation == 1);
+        pending_touch_conversation = -1;
+        settle(300);
+    }
+
+    const lv_point_t outside[] = {
+        {154, 230}, {305, 230}, {231, 186}, {231, 318},
+        {334, 230}, {485, 230}, {409, 186}, {409, 318},
+        {320, 209}, {320, 240}, {147, 204}, {488, 204},
+    };
+    for (const lv_point_t &point : outside) {
+        tap_point(point);
+        assert(touch_conversation_requests == before);
+    }
+
+    /* Keep the excursions within the 10px drag slop so only the hit
+     * rectangles decide whether these gestures are valid. */
+    const lv_point_t inner_edge{304, 230};
+    const lv_point_t beyond_edge{305, 230};
+    pointer(inner_edge, LV_INDEV_STATE_PRESSED);
+    pointer(beyond_edge, LV_INDEV_STATE_PRESSED);
+    pointer(inner_edge, LV_INDEV_STATE_PRESSED);
+    pointer(inner_edge, LV_INDEV_STATE_RELEASED);
+    assert(touch_conversation_requests == before);
+
+    pointer(beyond_edge, LV_INDEV_STATE_PRESSED);
+    pointer(inner_edge, LV_INDEV_STATE_PRESSED);
+    pointer(inner_edge, LV_INDEV_STATE_RELEASED);
+    assert(touch_conversation_requests == before);
+
+    pointer(inner_edge, LV_INDEV_STATE_PRESSED);
+    pointer(beyond_edge, LV_INDEV_STATE_RELEASED);
+    assert(touch_conversation_requests == before);
+
+    pointer(kLeftEyeCenter, LV_INDEV_STATE_PRESSED);
+    pointer(kRightEyeCenter, LV_INDEV_STATE_RELEASED);
+    assert(touch_conversation_requests == before);
+}
+
+void test_touch_conversation_tracks_fixed_regions_across_expressions() {
+    settle(300);
+    update(MYBOT_LCD_SCREEN_IN_CONVERSATION, "in_conversation");
+    unsigned before = touch_conversation_requests;
+    const lv_point_t top_edge{409, 187};
+    pointer(top_edge, LV_INDEV_STATE_PRESSED);
+    /* The SAD expression moves the actor down during this press. */
+    assert(bk7259_lvgl_view_show_expression(BK7259_EXPRESSION_SAD) == 0);
+    settle(160);
+    pointer(top_edge, LV_INDEV_STATE_RELEASED);
+    ++before;
+    assert(touch_conversation_requests == before && pending_touch_conversation == 0);
+    pending_touch_conversation = -1;
+    settle(300);
+
+    const bk7259_expression_t expressions[] = {
+        BK7259_EXPRESSION_EXCITED, BK7259_EXPRESSION_THINKING, BK7259_EXPRESSION_HAPPY,
+    };
+    const lv_point_t centers[] = {kLeftEyeCenter, kRightEyeCenter};
+    for (bk7259_expression_t expression : expressions) {
+        assert(bk7259_lvgl_view_show_expression(expression) == 0);
+        for (const lv_point_t &point : centers) {
+            tap_point({320, 240});
+            assert(touch_conversation_requests == before);
+            tap_point(point);
+            ++before;
+            assert(touch_conversation_requests == before && pending_touch_conversation == 0);
+            pending_touch_conversation = -1;
+            settle(300);
+        }
+    }
 }
 
 void test_touch_conversation_respects_view_overlays() {
@@ -585,39 +671,39 @@ void test_touch_conversation_respects_view_overlays() {
 
     tap(kSetup);
     assert(label(kBack) && touch_conversation_requests == before);
-    const lv_point_t in_menu_gap = {320, 190};
+    const lv_point_t in_menu_gap = {231, 190};
     tap_point(in_menu_gap);
     assert(label(kBack) && touch_conversation_requests == before);
     tap(kReset);
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(label(kConfirmTitle) && touch_conversation_requests == before && requests == 0);
     tap(kCancel);
     tap(kSetup);
     tap(kBack);
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1 && pending_touch_conversation == 1);
     pending_touch_conversation = -1;
     settle(300);
 
     bk7259_lvgl_view_show_provision(BK7259_PROVISION_ACTIVE, "mybot-touch-test");
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1);
     bk7259_lvgl_view_show_provision(BK7259_PROVISION_NONE, nullptr);
 
     for (int workflow = MYBOT_LCD_SCREEN_STARTING; workflow < MYBOT_LCD_SCREEN_COUNT; ++workflow) {
         if (workflow != MYBOT_LCD_SCREEN_READY && workflow != MYBOT_LCD_SCREEN_IN_CONVERSATION) {
             update(static_cast<mybot_lcd_screen_t>(workflow));
-            tap_point(kFaceCenter);
+            tap_point(kLeftEyeCenter);
             assert(touch_conversation_requests == before + 1);
         }
     }
     update(MYBOT_LCD_SCREEN_READY);
     factory_reset_pending = true;
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1);
     factory_reset_pending = false;
     bk7259_lvgl_view_set_touch_available(false);
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == before + 1);
     bk7259_lvgl_view_set_touch_available(true);
 }
@@ -775,7 +861,7 @@ void test_confirmation_busy_and_retry() {
     pointer(point, LV_INDEV_STATE_RELEASED);
     assert(requests == 1 && label(kRestoring));
     const unsigned touch_before = touch_conversation_requests;
-    tap_point(kFaceCenter);
+    tap_point(kLeftEyeCenter);
     assert(touch_conversation_requests == touch_before);
     bk7259_lvgl_view_show_provision(BK7259_PROVISION_ACTIVE, "mybot-stale");
     bk7259_lvgl_view_show_provision(BK7259_PROVISION_NONE, nullptr);
@@ -899,6 +985,8 @@ int main(int argc, char **argv) {
     test_availability_and_workflows();
     test_touch_conversation_direction_and_duplicate();
     test_touch_conversation_invalid_gestures();
+    test_touch_conversation_eye_boundaries();
+    test_touch_conversation_tracks_fixed_regions_across_expressions();
     test_touch_conversation_respects_view_overlays();
     test_gimbal_settings_menu();
     test_power_off_action();
