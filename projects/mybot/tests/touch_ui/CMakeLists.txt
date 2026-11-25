@@ -18,7 +18,7 @@ if(TOUCH_UI_SANITIZERS)
     target_compile_options(lvgl_host PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(lvgl_host PUBLIC -fsanitize=address,undefined)
 endif()
-foreach(variant zh en noanim)
+foreach(variant zh en noanim nogimbal)
     add_executable(touch_ui_${variant} test_touch_ui.cc
         "${PLATFORM_DIR}/display/lvgl_view.cc"
         "${PLATFORM_DIR}/display/lvgl_fonts.c"
@@ -29,6 +29,11 @@ foreach(variant zh en noanim)
         "${PLATFORM_DIR}/display" "${PLATFORM_DIR}/include"
         "${SDK_ROOT}/include")
     target_compile_options(touch_ui_${variant} PRIVATE -Wall -Wextra -Werror)
+    if(variant STREQUAL nogimbal)
+        target_compile_definitions(touch_ui_${variant} PRIVATE CONFIG_MYBOT_GIMBAL=0)
+    else()
+        target_compile_definitions(touch_ui_${variant} PRIVATE CONFIG_MYBOT_GIMBAL=1)
+    endif()
     if(variant STREQUAL zh)
         target_compile_definitions(touch_ui_${variant} PRIVATE CONFIG_MYBOT_LANGUAGE_ZH_CN=1)
     else()

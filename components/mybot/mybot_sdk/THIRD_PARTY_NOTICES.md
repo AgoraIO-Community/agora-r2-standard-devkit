@@ -38,7 +38,7 @@ The following asset paths are relative to `platforms/bk7259/`.
 - `display/lvgl_fonts.c` contains the MyBot UI Sans 20-pixel subset derived
   from Source Han Sans SC Normal, copyright 2014-2021 Adobe. It is licensed
   under SIL OFL-1.1 in `display/assets/licenses/LVGL_VIEW_FONT_LICENSE.txt`.
-  The target regenerates its 152-glyph subset with
+  The target regenerates its 192-glyph subset with
   `display/generate-lvgl-font.py`, adapted from the MIT-licensed
   [agora-esp32-devkit generator](https://github.com/AgoraIO-Community/agora-esp32-devkit/blob/19af3bdfaf1dd35461af48def8f9558e3503e755/scripts/generate-lvgl-font.py),
   to cover the current fixed UI and factory-reset vocabulary.

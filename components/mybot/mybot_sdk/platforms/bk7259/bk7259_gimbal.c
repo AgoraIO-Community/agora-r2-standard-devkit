@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_gimbal.h"
 #include "bk7259_audio_dialogue.h"
+#include "bk7259_gimbal_prefs.h"
+#include "bk7259_gimbal_stats.h"
 #include "bk7259_platform_log.h"
 
 #include <api/aosl.h>
@@ -17,26 +19,28 @@
 
 #define TAG "bk7259_gimbal"
 #define GIMBAL_UART UART_ID_2
+#define GIMBAL_BAUD 115200U
 #define FRAME_BYTES 200U
 #define STACK_BYTES 4096U
 #define RX_POLL_MS 5U
 #define IDLE_WAIT_MS 20U
 #define STOP_TIMEOUT_MS 3000U
+#define TEST_START_DELAY_MS 10000U
+#define TEST_HOME_TIMEOUT_MS 5000U
 #define HOME_PERIOD_MS 1000U
 #define HOME_RESPONSE_MS 900U
 #define HOME_GUARD_MS 250U
-#define CHARGE_PERIOD_MS 1000U
-#define CHARGE_ACK_TIMEOUT_MS 250U
-#define LINK_LOSS_MS (3U * CHARGE_PERIOD_MS + CHARGE_ACK_TIMEOUT_MS)
+#define CHARGE_PERIOD_MS 2000U
+#define CHARGE_ACK_TIMEOUT_MS BK7259_GIMBAL_STATS_POWER_WINDOW_MS
 #define CHARGE_EXPIRY_MS 3000U
+#define LINK_LOSS_MS (CHARGE_EXPIRY_MS + CHARGE_ACK_TIMEOUT_MS)
 #define MOVE_REPLY_LOSS_MS 1000U
 #define MOVE_ACTIVE_GAP_MS 200U
-#define CONTROL_PERIOD_MS 40U
+#define CONTROL_PERIOD_MS BK7259_GIMBAL_MOTION_PERIOD_MS
 #define CENTER_TIME_MS 280U
 #define PAN_LIMIT 800
 #define PITCH_UP_LIMIT (-200)
 #define PITCH_DOWN_LIMIT 100
-#define DIALOGUE_STEP_MS 60U
 #define DIALOGUE_MAX_STEP 40
 #define MOTION_BLEND_MS 240U
 #define MOTION_LIMIT_TENTHS_PER_S 1600U
@@ -80,7 +84,18 @@ typedef struct {
     bool ready;
     bool conversation;
     bool opening_pending;
-    bool charge_enabled;
+    bool disable_home_pending;
+    bk7259_gimbal_settings_t settings;
+    bk7259_gimbal_stats_t stats;
+    bool stats_has_tx;
+    struct {
+        bk7259_gimbal_test_state_t state;
+        bk7259_gimbal_test_stage_t stage;
+        uint32_t due_at;
+        uint32_t expected_home;
+        bk7259_gimbal_stats_snapshot_t result;
+    } test;
+    uint32_t settings_revision;
     bool charge_changed;
     bool charge_locked;
     bool charge_off_pending;
@@ -102,6 +117,12 @@ typedef struct {
     beken_thread_t worker;
 } gimbal_context_t;
 
+typedef struct {
+    int16_t start;
+    int16_t target;
+    uint16_t ms_per_degree;
+} pose_axis_t;
+
 /* UART, parser and trajectory timing belong to the worker. */
 typedef struct {
     uint8_t rx[FRAME_BYTES];
@@ -115,12 +136,18 @@ typedef struct {
     bool home_needs_fence;
     bool home_has_fence;
     bool home_sent;
+    bool disable_home_sent;
     bool sent_ordinary_motion;
+    bool recent_ordinary_zero;
+    uint32_t ordinary_zero_at;
 
     uint32_t charge_due;
+    uint32_t last_tx_return_at;
+    uint8_t last_tx_command;
     uint32_t charge_sent_at;
     uint32_t last_link_rx_at;
     uint32_t last_on_at;
+    uint32_t stats_tick_at;
     uint32_t charge_wire_ticket;
     uint32_t probe_rx_bytes;
     uint8_t charge_wire_control;
@@ -132,22 +159,27 @@ typedef struct {
 
     uint32_t motion_revision;
     uint32_t motion_due;
-    uint32_t opening_at;
+    uint32_t path_elapsed_ms;
+    int16_t path_start_pan;
+    int16_t path_start_pitch;
+    uint8_t path_segment;
     bool opening;
-    bool target_sent;
+    bool target_attempted;
+    bool attempted_point;
+    bool has_motion_attempt;
+    uint32_t motion_attempt_at;
+    int16_t planned_pan;
+    int16_t planned_pitch;
     bool motion_unanswered;
     uint32_t first_unanswered_at;
     uint32_t ordinary_sent_at;
-    int16_t last_pan;
-    int16_t last_pitch;
-    int16_t previous_pan;
-    int16_t previous_pitch;
+    pose_axis_t pose_pan;
+    pose_axis_t pose_pitch;
+    uint32_t pose_started_at;
     uint32_t blend_at;
     uint32_t blend_ms;
     int16_t blend_pan;
     int16_t blend_pitch;
-    int16_t blend_pan_direction;
-    int16_t blend_pitch_direction;
     float speaking_amplitude;
     uint32_t envelope_at;
 } gimbal_io_t;
@@ -161,7 +193,7 @@ static beken_semaphore_t s_done;
 static beken_semaphore_t s_centered;
 
 static const uart_config_t k_uart_config = {
-    .baud_rate = 115200,
+    .baud_rate = GIMBAL_BAUD,
     .data_bits = UART_DATA_8_BITS,
     .parity = UART_PARITY_NONE,
     .stop_bits = UART_STOP_BITS_1,
@@ -188,6 +220,11 @@ static bool due(uint32_t now, uint32_t deadline)
     return (int32_t)(now - deadline) >= 0;
 }
 
+static bool mailbox_initialized(void)
+{
+    return __atomic_load_n(&s_lock, __ATOMIC_ACQUIRE) != NULL;
+}
+
 static uint16_t crc16(const uint8_t *bytes, size_t count)
 {
     uint16_t crc = 0xffff;
@@ -210,23 +247,74 @@ static void write_u16(uint8_t *bytes, uint16_t value)
     bytes[1] = (uint8_t)(value >> 8);
 }
 
-/* The single worker checks the 128-byte FIFO before making a short write.
- * Every protocol request is at most 14 bytes. */
-static bool send_frame(uint8_t command, const uint8_t *payload, size_t length)
+/* At FIFO-empty, one byte can still be shifting out. Budget that byte plus
+ * the new frame at 8N1, rounded up, with one extra tick for clock phase. */
+static unsigned tx_tail_ms(uint8_t command)
+{
+    unsigned bytes = command == EB521_MOVE ? 14U : 7U;
+    return ((bytes + 1U) * 10U * 1000U + GIMBAL_BAUD - 1U) / GIMBAL_BAUD + 1U;
+}
+
+static uint32_t bus_idle_ms(const gimbal_io_t *io, uint32_t now)
+{
+    uint32_t elapsed = now - io->last_tx_return_at;
+    unsigned tail = tx_tail_ms(io->last_tx_command);
+    return elapsed > tail ? elapsed - tail : 0;
+}
+
+static bool heartbeat_enabled(void)
+{
+    return !s_gimbal.charge_locked ||
+           (s_gimbal.settings.motion_enabled && !s_gimbal.ready && !s_gimbal.stopping);
+}
+
+/* Check before consuming any queued work or advancing a motion deadline. */
+static bool tx_ready(const gimbal_io_t *io, uint8_t command)
+{
+    uint32_t now = rtos_get_time();
+    if (io->last_tx_command && command != io->last_tx_command &&
+        bus_idle_ms(io, now) < BK7259_GIMBAL_TX_GUARD_MS)
+        return false;
+    if (command == EB521_MOVE && !io->charge_waiting) {
+        uint32_t reserved_until = now + tx_tail_ms(EB521_MOVE) + BK7259_GIMBAL_TX_GUARD_MS;
+        if (s_gimbal.charge_off_pending || s_gimbal.pending_probe ||
+            (heartbeat_enabled() && (s_gimbal.charge_changed || due(reserved_until, io->charge_due))))
+            return false;
+    }
+    return bk_uart_is_tx_over(GIMBAL_UART);
+}
+
+/* The single worker has secured the UART for this write. */
+static bool send_frame(gimbal_io_t *io, uint8_t command, const uint8_t *payload, size_t length)
 {
     uint8_t frame[14] = {0x03, command, 0, (uint8_t)length};
-    if (length > sizeof(frame) - 6 || !bk_uart_is_tx_over(GIMBAL_UART))
+    if (length > sizeof(frame) - 6)
         return false;
     memcpy(frame + 4, payload, length);
     write_u16(frame + 4 + length, crc16(frame, length + 4));
+    uint32_t started_at = rtos_get_time();
     if (bk_uart_write_bytes(GIMBAL_UART, frame, (uint32_t)length + 6U) != BK_OK) {
         MYBOT_LOGW(TAG, "UART write failed: command=0x%02x", (unsigned)command);
         return false;
     }
+    uint32_t returned_at = rtos_get_time();
+    if (s_gimbal.stats_has_tx && io->last_tx_command != command) {
+        bk7259_gimbal_stats_snapshot_t *stats = &s_gimbal.stats.snapshot;
+        uint32_t idle = bus_idle_ms(io, started_at);
+        uint32_t *pairs = command == EB521_MOVE ? &stats->charge_to_move_pairs : &stats->move_to_charge_pairs;
+        uint32_t *minimum = command == EB521_MOVE ? &stats->min_charge_to_move_idle_ms : &stats->min_move_to_charge_idle_ms;
+        if (*pairs == 0 || idle < *minimum)
+            *minimum = idle;
+        ++*pairs;
+    }
+    io->last_tx_return_at = returned_at;
+    io->last_tx_command = command;
+    s_gimbal.stats_has_tx = true;
     return true;
 }
 
-static bool send_move(int16_t pan, int16_t pitch, uint16_t pan_speed, uint16_t pitch_speed)
+static bool send_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch,
+                      uint16_t pan_speed, uint16_t pitch_speed)
 {
     if (pan < -PAN_LIMIT || pan > PAN_LIMIT || pitch < PITCH_UP_LIMIT || pitch > PITCH_DOWN_LIMIT)
         return false;
@@ -235,7 +323,17 @@ static bool send_move(int16_t pan, int16_t pitch, uint16_t pan_speed, uint16_t p
     write_u16(payload + 2, (uint16_t)pitch);
     write_u16(payload + 4, pan_speed);
     write_u16(payload + 6, pitch_speed);
-    return send_frame(EB521_MOVE, payload, sizeof(payload));
+    if (!send_frame(io, EB521_MOVE, payload, sizeof(payload))) {
+        bk7259_gimbal_stats_tx_failed(&s_gimbal.stats, group);
+        return false;
+    }
+    bk7259_gimbal_stats_tx(&s_gimbal.stats, io->last_tx_return_at, group, pan, pitch);
+    return true;
+}
+
+static bool send_home(gimbal_io_t *io)
+{
+    return send_move(io, BK7259_GIMBAL_STATS_HOME, 0, 0, 1000, 1000);
 }
 
 /* Drop expired explicit actions at every gate transition. The phase remains
@@ -247,6 +345,81 @@ static void start_home(void)
     s_gimbal.motion.kind = s_gimbal.conversation ? MOTION_DIALOGUE : MOTION_NONE;
     ++s_gimbal.motion.revision;
     ++s_gimbal.home_ticket;
+}
+
+/* All test and motion state is serialized by the UART mailbox lock. */
+static bool test_active(void)
+{
+    return s_gimbal.test.state == BK7259_GIMBAL_TEST_SCHEDULED ||
+           s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING;
+}
+
+static void finish_test(bk7259_gimbal_test_state_t state, uint32_t now)
+{
+    if (!test_active())
+        return;
+    if (s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING) {
+        bk7259_gimbal_stats_snapshot(&s_gimbal.stats, now, &s_gimbal.test.result);
+        bk7259_gimbal_stats_stage(&s_gimbal.stats, BK7259_GIMBAL_TEST_NONE);
+        s_gimbal.conversation = false;
+        s_gimbal.opening_pending = false;
+        s_gimbal.motion.kind = MOTION_NONE;
+        ++s_gimbal.motion.revision;
+    }
+    s_gimbal.test.state = state;
+    s_gimbal.test.result.test_state = state;
+    s_gimbal.test.result.test_stage = s_gimbal.test.stage;
+}
+
+static void recover_home(uint32_t now)
+{
+    finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, now);
+    start_home();
+}
+
+static int update_dialogue(bool active, bk7259_gimbal_phase_t phase, uint32_t now)
+{
+    bool started = active && !s_gimbal.conversation;
+    bool ended = !active && (s_gimbal.conversation || s_gimbal.ready);
+    bool changed = active && (phase != s_gimbal.phase || s_gimbal.motion.kind != MOTION_DIALOGUE);
+    if (started || ended || changed) {
+        s_gimbal.conversation = active;
+        s_gimbal.phase = phase;
+        s_gimbal.phase_at = now;
+        bk7259_audio_dialogue_set_speaking(active && s_gimbal.test.state != BK7259_GIMBAL_TEST_RUNNING &&
+                                           s_gimbal.settings.motion_enabled &&
+                                           phase == BK7259_GIMBAL_PHASE_SPEAKING);
+        if (ended) {
+            if (s_gimbal.ready) {
+                start_home();
+            } else {
+                s_gimbal.motion.kind = MOTION_NONE;
+                s_gimbal.opening_pending = false;
+            }
+        } else {
+            s_gimbal.motion.kind = MOTION_DIALOGUE;
+            s_gimbal.motion.started_at = s_gimbal.phase_at;
+            ++s_gimbal.motion.revision;
+            /* A real phase supersedes any unsent opening samples. */
+            s_gimbal.opening_pending = started && s_gimbal.ready && phase == BK7259_GIMBAL_PHASE_NEUTRAL;
+        }
+        notify(&s_wake);
+    }
+    int result = 0;
+    if (!s_gimbal.settings.motion_enabled)
+        result = BK7259_GIMBAL_MOTION_DISABLED;
+    else if (active && !s_gimbal.ready)
+        result = BK7259_GIMBAL_NOT_READY;
+    return result;
+}
+
+static void queue_scene(bk7259_gimbal_scene_t scene, uint32_t now)
+{
+    s_gimbal.opening_pending = false;
+    s_gimbal.motion.kind = MOTION_SCENE;
+    s_gimbal.motion.scene = scene;
+    s_gimbal.motion.started_at = now;
+    ++s_gimbal.motion.revision;
 }
 
 static void sync_home(gimbal_io_t *io, uint32_t now)
@@ -265,20 +438,54 @@ static void sync_home(gimbal_io_t *io, uint32_t now)
     io->motion_unanswered = false;
 }
 
+static int16_t estimate_axis(const pose_axis_t *axis, uint32_t elapsed)
+{
+    int delta = axis->target - axis->start;
+    uint32_t travel = (uint32_t)abs(delta) * axis->ms_per_degree;
+    if (elapsed >= (travel + 9U) / 10U)
+        return axis->target;
+
+    /* The duration check bounds this multiplication and the result stays
+     * between the start and target. Angles are measured in tenths of a degree. */
+    int progress = (int)(elapsed * 10U / axis->ms_per_degree);
+    return (int16_t)(axis->start + (delta < 0 ? -progress : progress));
+}
+
+static void estimate_pose(const gimbal_io_t *io, uint32_t now, int16_t *pan, int16_t *pitch)
+{
+    uint32_t elapsed = now - io->pose_started_at;
+    *pan = estimate_axis(&io->pose_pan, elapsed);
+    *pitch = estimate_axis(&io->pose_pitch, elapsed);
+}
+
+/* Each submitted absolute target replaces the previous device trajectory.
+ * The estimate follows the protocol speed from the preceding estimate. */
+static void record_pose_command(gimbal_io_t *io, uint32_t now, int16_t target_pan,
+                                int16_t target_pitch, uint16_t pan_pps, uint16_t pitch_pps)
+{
+    int16_t pan, pitch;
+    estimate_pose(io, now, &pan, &pitch);
+    io->pose_pan = (pose_axis_t){pan, target_pan, (uint16_t)(5000U / pan_pps)};
+    io->pose_pitch = (pose_axis_t){pitch, target_pitch, (uint16_t)(5000U / pitch_pps)};
+    io->pose_started_at = now;
+}
+
 static void confirm_home(gimbal_io_t *io)
 {
+    ++s_gimbal.stats.snapshot.center_confirmed;
     s_gimbal.ready = true;
     s_gimbal.centered_ticket = s_gimbal.home_ticket;
     io->home_waiting = false;
     io->sent_ordinary_motion = false;
-    io->last_pan = 0;
-    io->last_pitch = 0;
-    io->previous_pan = 0;
-    io->previous_pitch = 0;
+    io->recent_ordinary_zero = false;
+    io->pose_pan = (pose_axis_t){0};
+    io->pose_pitch = (pose_axis_t){0};
+    io->has_motion_attempt = false;
     io->ordinary_sent_at = 0;
     io->speaking_amplitude = 0;
     /* Timing starts here after returning from an offline interval. */
     s_gimbal.phase_at = rtos_get_time();
+    io->pose_started_at = s_gimbal.phase_at;
     notify(&s_centered);
     MYBOT_LOGI(TAG, "gimbal center confirmed");
 }
@@ -286,25 +493,34 @@ static void confirm_home(gimbal_io_t *io)
 static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, uint32_t now)
 {
     uint8_t code = frame[4];
-    if (size == 7 && code == 1) {
+    bool complete = size == 11 && code == 6;
+    bool immediate = size == 7 && (code == 0 || code == 1 || code == 2 || code == 4);
+    if (!complete && !immediate) {
+        bk7259_gimbal_stats_bad_reply(&s_gimbal.stats);
+        return;
+    }
+    bk7259_gimbal_stats_reply(&s_gimbal.stats, now, code, complete ? read_i16(frame + 5) : 0,
+                              complete ? read_i16(frame + 7) : 0);
+    if (!s_gimbal.settings.motion_enabled)
+        return;
+    if (code == 1) {
         io->home_waiting = false;
         if (s_gimbal.ready) {
             MYBOT_LOGW(TAG, "EB521 boot demonstration detected, centering again");
-            start_home();
+            recover_home(now);
         }
         return;
     }
-    bool complete = size == 11 && code == 6;
-    bool immediate = size == 7 && (code == 0 || code == 2 || code == 4);
-    if (!complete && !immediate)
-        return;
     io->last_link_rx_at = now;
     io->motion_unanswered = false;
     if (s_gimbal.ready || io->home_ticket != s_gimbal.home_ticket ||
         !io->home_waiting || now - io->home_sent_at > HOME_RESPONSE_MS)
         return;
+    /* An earlier ordinary (0,0) and a home have identical E1/06
+     * payloads. A late completion in their overlapping windows cannot
+     * unlock the next conversation. */
     if ((size == 7 && code == 4 && io->home_accepts_short_reply) ||
-        (complete && read_i16(frame + 5) == 0 && read_i16(frame + 7) == 0))
+        (complete && !io->recent_ordinary_zero && read_i16(frame + 5) == 0 && read_i16(frame + 7) == 0))
         confirm_home(io);
 }
 
@@ -318,6 +534,7 @@ static void finish_charge_off(uint32_t ticket, int result)
 
 static void on_charge_reply(gimbal_io_t *io, uint8_t code, uint32_t now)
 {
+    bk7259_gimbal_stats_power_reply(&s_gimbal.stats, now, code);
     if (!io->charge_waiting || now - io->charge_sent_at > CHARGE_ACK_TIMEOUT_MS)
         return;
     uint8_t control = io->charge_wire_control;
@@ -362,6 +579,7 @@ static void on_charge_reply(gimbal_io_t *io, uint8_t code, uint32_t now)
  * consumes at most one 200-byte UART read and one buffer scan per poll. */
 static void drain_frames(gimbal_io_t *io, uint32_t now)
 {
+    size_t previous_bytes = io->used;
     if (uart_read_ready(GIMBAL_UART) == BK_OK) {
         size_t capacity = sizeof(io->rx) - io->used;
         int count = bk_uart_read_bytes(GIMBAL_UART, io->rx + io->used, (uint32_t)capacity, 0);
@@ -397,6 +615,10 @@ static void drain_frames(gimbal_io_t *io, uint32_t now)
         }
         size_t length = remaining >= 4 ? (size_t)frame[2] * 256U + frame[3] + 6U : 0;
         if (length != 0 && length != 7 && !(move && length == 11)) {
+            if (move && pos + 4 > previous_bytes)
+                bk7259_gimbal_stats_bad_reply(&s_gimbal.stats);
+            if (charge && pos + 4 > previous_bytes)
+                bk7259_gimbal_stats_power_bad_reply(&s_gimbal.stats);
             ++pos;
             continue;
         }
@@ -408,6 +630,10 @@ static void drain_frames(gimbal_io_t *io, uint32_t now)
         }
         uint16_t crc = (uint16_t)frame[length - 2] | (uint16_t)frame[length - 1] << 8;
         if (crc16(frame, length - 2) != crc) {
+            if (move && pos + length > previous_bytes)
+                bk7259_gimbal_stats_bad_reply(&s_gimbal.stats);
+            if (charge && pos + length > previous_bytes)
+                bk7259_gimbal_stats_power_bad_reply(&s_gimbal.stats);
             ++pos;
             continue;
         }
@@ -446,14 +672,14 @@ static void service_charge(gimbal_io_t *io, uint32_t now)
     }
 
     bool stop = s_gimbal.charge_off_pending;
-    bool heartbeat = (!s_gimbal.charge_locked || (!s_gimbal.ready && !s_gimbal.stopping)) &&
-                     (s_gimbal.charge_changed || due(now, io->charge_due));
+    bool heartbeat = heartbeat_enabled() && (s_gimbal.charge_changed || due(now, io->charge_due));
     if (!heartbeat && !stop && !s_gimbal.pending_probe)
         return;
-    if (!bk_uart_is_tx_over(GIMBAL_UART))
+    if (!tx_ready(io, EB521_CHARGE))
         return;
 
-    uint8_t control = stop ? 0 : heartbeat ? (uint8_t)s_gimbal.charge_enabled : EB521_PROBE_CONTROL;
+    bool charge_enabled = s_gimbal.settings.charge_enabled && !s_gimbal.charge_locked;
+    uint8_t control = stop ? 0 : heartbeat ? (uint8_t)charge_enabled : EB521_PROBE_CONTROL;
     uint32_t ticket = stop ? s_gimbal.charge_off_ticket : 0;
     if (control == EB521_PROBE_CONTROL) {
         s_gimbal.pending_probe = false;
@@ -461,20 +687,24 @@ static void service_charge(gimbal_io_t *io, uint32_t now)
         io->probe_echo = false;
         io->probe_rx_bytes = 0;
     } else {
-        s_gimbal.charge_changed = false;
-        io->charge_due = now + CHARGE_PERIOD_MS;
+        s_gimbal.charge_changed = control != (uint8_t)charge_enabled;
     }
 
     io->charge_wire_control = control;
     io->charge_wire_ticket = ticket;
-    io->charge_sent_at = now;
-    io->charge_waiting = send_frame(EB521_CHARGE, &control, 1);
+    io->charge_waiting = send_frame(io, EB521_CHARGE, &control, 1);
+    io->charge_sent_at = io->charge_waiting ? io->last_tx_return_at : rtos_get_time();
+    /* Start each periodic interval at this write; a delayed send must not
+     * bring the following renewal closer. Probes do not renew charging. */
+    if (control != EB521_PROBE_CONTROL)
+        io->charge_due = io->charge_sent_at + CHARGE_PERIOD_MS;
+    bk7259_gimbal_stats_power_tx(&s_gimbal.stats, io->charge_sent_at, control, io->charge_waiting);
     if (!io->charge_waiting) {
         s_gimbal.probe_running = false;
         if (stop)
             finish_charge_off(ticket, -1);
     } else if (control == 1) {
-        io->last_on_at = now;
+        io->last_on_at = io->charge_sent_at;
     } else if (control == EB521_PROBE_CONTROL) {
         MYBOT_LOGI(TAG, "UART probe sent: 03 66 00 01 02 FE D9");
     }
@@ -513,8 +743,8 @@ static void dialogue_target(gimbal_io_t *io, uint32_t now, int16_t *pan, int16_t
     case BK7259_GIMBAL_PHASE_LISTENING: {
         uint32_t cycle = elapsed % LISTENING_INTERVAL_MS;
         if (elapsed >= LISTENING_INTERVAL_MS && cycle < LISTENING_NOD_MS) {
-            float fade_in = smooth((float)cycle / DIALOGUE_STEP_MS);
-            float fade_out = smooth((float)(LISTENING_NOD_MS - cycle) / DIALOGUE_STEP_MS);
+            float fade_in = smooth((float)cycle / CONTROL_PERIOD_MS);
+            float fade_out = smooth((float)(LISTENING_NOD_MS - cycle) / CONTROL_PERIOD_MS);
             *pitch = angle_units(3.0f * fade_in * fade_out * sinf(2.0f * turn * cycle / LISTENING_NOD_MS));
             *wait = CONTROL_PERIOD_MS;
         } else {
@@ -535,16 +765,18 @@ static void dialogue_target(gimbal_io_t *io, uint32_t now, int16_t *pan, int16_t
         }
         break;
     case BK7259_GIMBAL_PHASE_SPEAKING: {
-        unsigned level = bk7259_audio_dialogue_level();
+        unsigned level;
+        if (s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING)
+            level = elapsed < 1400U ? 30U : elapsed < 3200U ? 95U : 0U;
+        else
+            level = bk7259_audio_dialogue_level();
         if (level > 100)
             level = 100;
         uint32_t sample_ms = now - io->envelope_at;
         io->envelope_at = now;
-        if (sample_ms > DIALOGUE_STEP_MS)
-            sample_ms = DIALOGUE_STEP_MS;
         float desired = 0.06f * level;
         io->speaking_amplitude += (desired - io->speaking_amplitude) *
-                                  (float)sample_ms / (sample_ms + SPEAKING_ENVELOPE_MS);
+                                  ((float)sample_ms / ((float)sample_ms + SPEAKING_ENVELOPE_MS));
         *pan = angle_units(io->speaking_amplitude * sinf(turn * (elapsed % WOBBLE_PERIOD_MS) /
                                                          WOBBLE_PERIOD_MS));
         break;
@@ -555,75 +787,89 @@ static void dialogue_target(gimbal_io_t *io, uint32_t now, int16_t *pan, int16_t
     }
 }
 
+typedef enum { PATH_OPENING, PATH_ANGRY, PATH_SURPRISED } path_kind_t;
+
+typedef struct {
+    int16_t pan;
+    int16_t pitch;
+    uint16_t duration_ms;
+} path_point_t;
+
+static const path_point_t k_opening_path[] = {
+    {20, 0, 140}, {35, 0, 140}, {15, 0, 140}, {-12, 0, 140}, {0, 0, 140},
+};
+static const path_point_t k_angry_path[] = {
+    {80, 0, 300}, {-80, 0, 500}, {100, 0, 500}, {100, 0, 350}, {0, 0, 410},
+};
+static const path_point_t k_surprised_path[] = {
+    {300, 0, 800}, {250, 0, 300}, {250, 0, 300}, {0, 0, 650},
+};
+
+static const path_point_t *path_points(path_kind_t kind, size_t *count)
+{
+    switch (kind) {
+    case PATH_OPENING:
+        *count = sizeof(k_opening_path) / sizeof(k_opening_path[0]);
+        return k_opening_path;
+    case PATH_ANGRY:
+        *count = sizeof(k_angry_path) / sizeof(k_angry_path[0]);
+        return k_angry_path;
+    case PATH_SURPRISED:
+        *count = sizeof(k_surprised_path) / sizeof(k_surprised_path[0]);
+        return k_surprised_path;
+    }
+    *count = 0;
+    return NULL;
+}
+
 static uint32_t scene_duration(bk7259_gimbal_scene_t scene)
 {
-    static const uint16_t durations[] = {2000, 3000, 1200, 800};
-    return durations[scene];
+    if (scene == BK7259_GIMBAL_SCENE_HAPPY)
+        return 2000;
+    if (scene == BK7259_GIMBAL_SCENE_SAD)
+        return 3000;
+
+    size_t count;
+    const path_point_t *points = path_points(
+        scene == BK7259_GIMBAL_SCENE_ANGRY ? PATH_ANGRY : PATH_SURPRISED, &count);
+    uint32_t duration = 0;
+    for (size_t i = 0; i < count; ++i)
+        duration += points[i].duration_ms;
+    return duration;
 }
 
 static void scene_sample(bk7259_gimbal_scene_t scene, uint32_t time,
                          int16_t *pan, int16_t *pitch)
 {
-    float angle = 0;
+    *pan = 0;
     *pitch = 0;
     if (scene == BK7259_GIMBAL_SCENE_HAPPY) {
         float fade_in = smooth((float)time / MOTION_BLEND_MS);
         float fade_out = smooth((float)(2000U - time) / MOTION_BLEND_MS);
-        angle = 6.0f * fade_in * fade_out * sinf(2.0f * 3.14159265359f * 0.8f * time / 1000.0f);
+        *pan = angle_units(6.0f * fade_in * fade_out *
+                           sinf(2.0f * 3.14159265359f * 0.8f * time / 1000.0f));
     } else if (scene == BK7259_GIMBAL_SCENE_SAD) {
         *pitch = angle_units(10.0f * smooth(time / 3000.0f));
-    } else if (scene == BK7259_GIMBAL_SCENE_ANGRY) {
-        if (time <= 180)
-            angle = 8.0f * smooth(time / 180.0f);
-        else if (time <= 360)
-            angle = 8.0f - 16.0f * smooth((time - 180) / 180.0f);
-        else if (time <= 550)
-            angle = -8.0f + 18.0f * smooth((time - 360) / 190.0f);
-        else angle = 10.0f;
-    } else if (scene == BK7259_GIMBAL_SCENE_SURPRISED) {
-        if (time <= 380)
-            angle = 30.0f * smooth(time / 380.0f);
-        else if (time <= 500)
-            angle = 30.0f - 5.0f * smooth((time - 380) / 120.0f);
-        else angle = 25.0f;
     }
-    *pan = angle_units(angle);
-}
-
-static uint32_t next_sample(bk7259_gimbal_scene_t scene, uint32_t time)
-{
-    uint32_t next = time + (scene == BK7259_GIMBAL_SCENE_SAD ? 50U : CONTROL_PERIOD_MS);
-    static const uint16_t angry_keys[] = {180, 360, 550, 1200};
-    static const uint16_t surprise_keys[] = {380, 500, 800};
-    const uint16_t *keys = scene == BK7259_GIMBAL_SCENE_ANGRY ? angry_keys : surprise_keys;
-    size_t count = scene == BK7259_GIMBAL_SCENE_ANGRY ? 4 : 3;
-    if (scene == BK7259_GIMBAL_SCENE_ANGRY || scene == BK7259_GIMBAL_SCENE_SURPRISED) {
-        for (size_t i = 0; i < count; ++i) {
-            if (keys[i] <= time)
-                continue;
-            /* Keep the turn/end point without leaving a final segment shorter
-             * than the minimum period. Merge that remainder into this one. */
-            if (next >= keys[i] || keys[i] - next < CONTROL_PERIOD_MS)
-                next = keys[i];
-            break;
-        }
-    }
-    uint32_t duration = scene_duration(scene);
-    return next < duration ? next : duration;
 }
 
 static void service_home(gimbal_io_t *io, uint32_t now)
 {
-    if (!due(now, io->home_due) || !bk_uart_is_tx_over(GIMBAL_UART))
+    /* E1 does not identify its request. Drain replies to the one-shot home
+     * before sending a new home that can unlock motion on re-enable. */
+    if (io->disable_home_sent && now - io->home_sent_at <= HOME_RESPONSE_MS)
+        return;
+    io->disable_home_sent = false;
+    if (!due(now, io->home_due) || !tx_ready(io, EB521_MOVE))
         return;
     io->home_due = now + HOME_PERIOD_MS;
     /* Drop a stale partial motion reply at the new home boundary. Keep other
      * fragments because a charge reply can arrive in parallel with motion. */
     if (io->used >= 2 && io->rx[1] == EB521_MOVE_REPLY)
         io->used = 0;
-    if (send_move(0, 0, 1000, 1000)) {
+    if (send_home(io)) {
         io->home_waiting = true;
-        io->home_sent_at = now;
+        io->home_sent_at = io->last_tx_return_at;
         io->home_accepts_short_reply = !io->home_needs_fence || io->home_has_fence || io->home_sent;
         io->home_sent = true;
     } else {
@@ -631,15 +877,75 @@ static void service_home(gimbal_io_t *io, uint32_t now)
     }
 }
 
-static const float k_dialogue_opening[] = {0, 2.0f, 3.5f, 1.5f, -1.2f, 0};
+static void reset_path(gimbal_io_t *io, int16_t pan, int16_t pitch)
+{
+    io->path_elapsed_ms = 0;
+    io->path_start_pan = pan;
+    io->path_start_pitch = pitch;
+    io->path_segment = 0;
+}
+
+static uint32_t path_segment_duration(const gimbal_io_t *io, const path_point_t *point)
+{
+    unsigned int pan_distance = (unsigned int)abs(point->pan - io->path_start_pan);
+    unsigned int pitch_distance = (unsigned int)abs(point->pitch - io->path_start_pitch);
+    unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
+    /* At 18 ms/degree, quintic peak speed stays near 104 degrees/s even
+     * when the new path starts far from its first target. */
+    uint32_t minimum = (distance * 18U + 9U) / 10U;
+    return minimum > point->duration_ms ? minimum : point->duration_ms;
+}
+
+static bool path_target(const gimbal_io_t *io, path_kind_t kind,
+                        int16_t *pan, int16_t *pitch, uint32_t *interval)
+{
+    size_t count;
+    const path_point_t *points = path_points(kind, &count);
+    if (io->path_segment >= count)
+        return false;
+
+    const path_point_t *point = &points[io->path_segment];
+    uint32_t duration = path_segment_duration(io, point);
+    uint32_t remaining = duration - io->path_elapsed_ms;
+    bool hold = io->path_start_pan == point->pan && io->path_start_pitch == point->pitch;
+    /* Merge a short remainder into the last sample so it ends exactly on
+     * the keyframe while keeping at least 100 ms between submissions. */
+    *interval = hold || remaining < 2U * CONTROL_PERIOD_MS ? remaining : CONTROL_PERIOD_MS;
+    float eased = smooth((float)(io->path_elapsed_ms + *interval) / duration);
+    *pan = angle_units((io->path_start_pan + (point->pan - io->path_start_pan) * eased) / 10.0f);
+    *pitch = angle_units((io->path_start_pitch + (point->pitch - io->path_start_pitch) * eased) / 10.0f);
+    return true;
+}
+
+/* Consume each planned point once, including a failed local write. */
+static void advance_path(gimbal_io_t *io, path_kind_t kind, uint32_t interval)
+{
+    size_t count;
+    const path_point_t *points = path_points(kind, &count);
+    if (io->path_segment >= count)
+        return;
+
+    const path_point_t *point = &points[io->path_segment];
+    uint32_t remaining = path_segment_duration(io, point) - io->path_elapsed_ms;
+    if (interval < remaining) {
+        io->path_elapsed_ms += interval;
+        return;
+    }
+    ++io->path_segment;
+    io->path_elapsed_ms = 0;
+    io->path_start_pan = point->pan;
+    io->path_start_pitch = point->pitch;
+}
 
 static void scene_target(bk7259_gimbal_scene_t scene, uint32_t elapsed,
                          int16_t *pan, int16_t *pitch, uint32_t *interval)
 {
     uint32_t duration = scene_duration(scene);
+    *interval = CONTROL_PERIOD_MS;
     if (elapsed < duration) {
-        uint32_t sample = next_sample(scene, elapsed);
-        *interval = sample - elapsed;
+        uint32_t sample = elapsed + CONTROL_PERIOD_MS;
+        if (sample > duration)
+            sample = duration;
         scene_sample(scene, sample, pan, pitch);
         return;
     }
@@ -672,21 +978,16 @@ static int16_t clamp_angle(int16_t angle, int16_t minimum, int16_t maximum)
     return angle;
 }
 
-static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32_t now)
+static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32_t now,
+                        int16_t pan, int16_t pitch)
 {
     io->blend_at = now;
     io->blend_ms = MOTION_BLEND_MS;
-    io->blend_pan = io->last_pan;
-    io->blend_pitch = io->last_pitch;
-    io->blend_pan_direction = 0;
-    io->blend_pitch_direction = 0;
-    if (now - io->ordinary_sent_at <= 2U * DIALOGUE_STEP_MS) {
-        io->blend_pan_direction = clamp_angle(io->last_pan - io->previous_pan, -8, 8);
-        io->blend_pitch_direction = clamp_angle(io->last_pitch - io->previous_pitch, -8, 8);
-    }
+    io->blend_pan = pan;
+    io->blend_pitch = pitch;
     if (request->kind == MOTION_TARGET) {
-        unsigned int pan_distance = (unsigned int)abs(request->target.pan - io->last_pan);
-        unsigned int pitch_distance = (unsigned int)abs(request->target.pitch - io->last_pitch);
+        unsigned int pan_distance = (unsigned int)abs(request->target.pan - pan);
+        unsigned int pitch_distance = (unsigned int)abs(request->target.pitch - pitch);
         unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
         /* Quintic peak rate is 1.875 times average. Longer moves get extra
          * time so the motor can follow the transition without a final jump. */
@@ -696,41 +997,39 @@ static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32
     }
 }
 
-static int16_t blend_angle(int16_t from, int16_t to, int16_t direction, float phase, float eased)
-{
-    float rest = 1.0f - phase;
-    float position = from + (to - from) * eased + direction * 4.0f * phase * rest * rest * rest;
-    return (int16_t)(position >= 0 ? position + 0.5f : position - 0.5f);
-}
-
 static void service_motion(gimbal_io_t *io, uint32_t now)
 {
     const motion_request_t *request = &s_gimbal.motion;
-    if (io->motion_revision != request->revision) {
+    bool changed = io->motion_revision != request->revision;
+    if (request->kind == MOTION_NONE ||
+        (!changed && (io->target_attempted || !due(now, io->motion_due))) ||
+        (io->has_motion_attempt && now - io->motion_attempt_at < CONTROL_PERIOD_MS) ||
+        !tx_ready(io, EB521_MOVE))
+        return;
+
+    /* Sample only once the new revision actually has a transmit slot. The
+     * last command can still move the axes while we wait for either guard. */
+    now = rtos_get_time();
+    int16_t estimated_pan, estimated_pitch;
+    estimate_pose(io, now, &estimated_pan, &estimated_pitch);
+    if (changed) {
         io->motion_revision = request->revision;
-        io->motion_due = now;
-        io->target_sent = false;
-        if (!io->opening || !s_gimbal.opening_pending)
-            start_blend(io, request, now);
+        io->target_attempted = false;
+        io->attempted_point = false;
+        io->planned_pan = estimated_pan;
+        io->planned_pitch = estimated_pitch;
+        io->opening = s_gimbal.opening_pending;
+        reset_path(io, estimated_pan, estimated_pitch);
+        start_blend(io, request, now, estimated_pan, estimated_pitch);
         io->speaking_amplitude = 0;
         io->envelope_at = now;
-        if (s_gimbal.opening_pending && !io->opening) {
-            io->opening = true;
-            io->opening_at = now;
-            if (io->last_pan == 0 && io->last_pitch == 0 &&
-                io->blend_pan_direction == 0 && io->blend_pitch_direction == 0)
-                io->blend_ms = 0;
-        } else if (!s_gimbal.opening_pending) {
-            io->opening = false;
-        }
     }
-    if (request->kind == MOTION_NONE || io->target_sent || !due(now, io->motion_due) ||
-        !bk_uart_is_tx_over(GIMBAL_UART))
-        return;
 
     uint32_t interval = CONTROL_PERIOD_MS;
     int16_t pan = 0, pitch = 0;
     bool scene_returned = false;
+    bool keyed = false;
+    path_kind_t path = PATH_OPENING;
     uint32_t elapsed = now - request->started_at;
     switch (request->kind) {
     case MOTION_TARGET:
@@ -738,82 +1037,208 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
         pitch = request->target.pitch;
         break;
     case MOTION_SCENE:
-        scene_target(request->scene, elapsed, &pan, &pitch, &interval);
-        scene_returned = elapsed >= scene_duration(request->scene) && pan == 0 && pitch == 0;
-        break;
-    case MOTION_DIALOGUE: {
-        interval = DIALOGUE_STEP_MS;
-        uint32_t opening_time = now - io->opening_at;
-        uint32_t opening_step = opening_time / DIALOGUE_STEP_MS;
-        if (io->opening && opening_step + 1 < sizeof(k_dialogue_opening) / sizeof(k_dialogue_opening[0])) {
-            float from = k_dialogue_opening[opening_step];
-            float to = k_dialogue_opening[opening_step + 1];
-            float progress = smooth((float)(opening_time % DIALOGUE_STEP_MS) / DIALOGUE_STEP_MS);
-            pan = angle_units(from + (to - from) * progress);
-            interval = CONTROL_PERIOD_MS;
+        if (request->scene == BK7259_GIMBAL_SCENE_ANGRY || request->scene == BK7259_GIMBAL_SCENE_SURPRISED) {
+            path = request->scene == BK7259_GIMBAL_SCENE_ANGRY ? PATH_ANGRY : PATH_SURPRISED;
+            keyed = path_target(io, path, &pan, &pitch, &interval);
+            if (!keyed) {
+                start_home();
+                return;
+            }
         } else {
-            io->opening = false;
-            s_gimbal.opening_pending = false;
-            dialogue_target(io, now, &pan, &pitch, &interval);
+            scene_target(request->scene, elapsed, &pan, &pitch, &interval);
+            scene_returned = elapsed >= scene_duration(request->scene) && pan == 0 && pitch == 0;
         }
         break;
-    }
+    case MOTION_DIALOGUE:
+        if (io->opening) {
+            keyed = path_target(io, path, &pan, &pitch, &interval);
+            if (!keyed) {
+                io->opening = false;
+                s_gimbal.opening_pending = false;
+                start_blend(io, request, now, estimated_pan, estimated_pitch);
+            }
+        }
+        if (!keyed)
+            dialogue_target(io, now, &pan, &pitch, &interval);
+        break;
     case MOTION_NONE:
         return;
     }
 
     bool explicit_target = request->kind == MOTION_TARGET;
     uint32_t blending = now - io->blend_at;
-    if (blending < io->blend_ms) {
+    if (!keyed && blending < io->blend_ms) {
         float phase = (float)blending / io->blend_ms;
         float eased = smooth(phase);
-        pan = blend_angle(io->blend_pan, pan, io->blend_pan_direction, phase, eased);
-        pitch = blend_angle(io->blend_pitch, pitch, io->blend_pitch_direction, phase, eased);
+        pan = angle_units((io->blend_pan + (pan - io->blend_pan) * eased) / 10.0f);
+        pitch = angle_units((io->blend_pitch + (pitch - io->blend_pitch) * eased) / 10.0f);
         if (interval > CONTROL_PERIOD_MS)
             interval = CONTROL_PERIOD_MS;
     }
     pan = clamp_angle(pan, -PAN_LIMIT, PAN_LIMIT);
     pitch = clamp_angle(pitch, PITCH_UP_LIMIT, PITCH_DOWN_LIMIT);
-    if ((pan != io->last_pan || pitch != io->last_pitch) && interval > DIALOGUE_STEP_MS)
-        interval = DIALOGUE_STEP_MS;
-    int maximum_step = (int)(MOTION_LIMIT_TENTHS_PER_S * interval / 1000U);
-    if (maximum_step == 0)
-        maximum_step = 1;
-    if (request->kind == MOTION_DIALOGUE && maximum_step > DIALOGUE_MAX_STEP)
-        maximum_step = DIALOGUE_MAX_STEP;
-    pan = step_toward(io->last_pan, pan, maximum_step);
-    pitch = step_toward(io->last_pitch, pitch, maximum_step);
+    if (!keyed && (pan != io->planned_pan || pitch != io->planned_pitch) && interval > CONTROL_PERIOD_MS)
+        interval = CONTROL_PERIOD_MS;
+    if (interval < CONTROL_PERIOD_MS)
+        interval = CONTROL_PERIOD_MS;
+    if (!keyed) {
+        int maximum_step = (int)(MOTION_LIMIT_TENTHS_PER_S * CONTROL_PERIOD_MS / 1000U);
+        if (request->kind == MOTION_DIALOGUE)
+            maximum_step = DIALOGUE_MAX_STEP;
+        pan = step_toward(io->planned_pan, pan, maximum_step);
+        pitch = step_toward(io->planned_pitch, pitch, maximum_step);
+    }
     if (scene_returned && pan == 0 && pitch == 0) {
         start_home();
         return;
     }
     bool terminal_target = explicit_target && pan == request->target.pan && pitch == request->target.pitch;
+    bool same_point = pan == io->planned_pan && pitch == io->planned_pitch;
+    bool last_goal_matches = pan == io->pose_pan.target && pitch == io->pose_pitch.target;
+    io->planned_pan = pan;
+    io->planned_pitch = pitch;
     io->motion_due = now + interval;
-    if (!terminal_target && pan == io->last_pan && pitch == io->last_pitch)
+    if (keyed)
+        advance_path(io, path, interval);
+    /* A plateau after a failed sample must not implicitly resend it. On a
+     * takeover, send a hold at the estimated pose if the old goal differs. */
+    if (!terminal_target && same_point && (io->attempted_point || last_goal_matches))
         return;
 
-    if (!io->motion_unanswered || now - io->ordinary_sent_at > MOVE_ACTIVE_GAP_MS) {
-        io->motion_unanswered = true;
-        io->first_unanswered_at = now;
-    } else if (now - io->first_unanswered_at >= MOVE_REPLY_LOSS_MS) {
+    if (io->motion_unanswered && now - io->ordinary_sent_at <= MOVE_ACTIVE_GAP_MS &&
+        now - io->first_unanswered_at >= MOVE_REPLY_LOSS_MS) {
         MYBOT_LOGW(TAG, "EB521 movement replies lost, centering again");
-        start_home();
+        recover_home(now);
         return;
     }
 
-    uint16_t pan_speed = choose_speed((unsigned int)abs(pan - io->last_pan), interval);
-    uint16_t pitch_speed = choose_speed((unsigned int)abs(pitch - io->last_pitch), interval);
-    io->target_sent = terminal_target;
-    if (send_move(pan, pitch, pan_speed, pitch_speed)) {
-        io->ordinary_sent_at = now;
-        io->sent_ordinary_motion = true;
-        io->previous_pan = io->last_pan;
-        io->previous_pitch = io->last_pitch;
-        io->last_pan = pan;
-        io->last_pitch = pitch;
+    unsigned int pan_distance = (unsigned int)abs(pan - estimated_pan);
+    unsigned int pitch_distance = (unsigned int)abs(pitch - estimated_pitch);
+    unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
+    unsigned int rate = request->kind == MOTION_DIALOGUE && !keyed
+                        ? DIALOGUE_MAX_STEP * 1000U / CONTROL_PERIOD_MS : MOTION_LIMIT_TENTHS_PER_S;
+    /* EB521 executes an integer number of milliseconds per degree. Round
+     * that bound up so a catch-up move also respects the configured rate. */
+    uint32_t min_ms_per_degree = (10000U + rate - 1U) / rate;
+    uint32_t travel_ms = (distance * min_ms_per_degree + 9U) / 10U;
+    if (travel_ms < interval)
+        travel_ms = interval;
+    uint16_t pan_speed = choose_speed(pan_distance, travel_ms);
+    uint16_t pitch_speed = choose_speed(pitch_distance, travel_ms);
+    io->attempted_point = true;
+    io->target_attempted = terminal_target;
+    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed);
+    uint32_t attempted_at = submitted ? io->last_tx_return_at : rtos_get_time();
+    io->has_motion_attempt = true;
+    io->motion_attempt_at = attempted_at;
+    io->motion_due = attempted_at + (submitted ? travel_ms : interval);
+    if (!submitted) {
         if (terminal_target)
-            MYBOT_LOGI(TAG, "absolute movement sent: pan=%d pitch=%d", pan, pitch);
+            MYBOT_LOGW(TAG, "absolute target not submitted: pan=%d pitch=%d", pan, pitch);
+        return;
     }
+
+    record_pose_command(io, attempted_at, pan, pitch, pan_speed, pitch_speed);
+    if (!io->motion_unanswered || attempted_at - io->ordinary_sent_at > MOVE_ACTIVE_GAP_MS)
+        io->first_unanswered_at = attempted_at;
+    io->motion_unanswered = true;
+    io->ordinary_sent_at = attempted_at;
+    io->sent_ordinary_motion = true;
+    if (pan == 0 && pitch == 0) {
+        io->recent_ordinary_zero = true;
+        io->ordinary_zero_at = attempted_at;
+    }
+    if (terminal_target)
+        MYBOT_LOGI(TAG, "absolute movement sent: pan=%d pitch=%d", pan, pitch);
+}
+
+/* Timed dialogue stages drive the same mailbox transitions as live dialogue.
+ * The hangup and each scene advance on their own center ticket. */
+static void enter_test_stage(bk7259_gimbal_test_stage_t stage, uint32_t now)
+{
+    static const struct {
+        bk7259_gimbal_phase_t phase;
+        unsigned duration_ms;
+    } dialogue[] = {
+        [BK7259_GIMBAL_TEST_OPENING]   = {BK7259_GIMBAL_PHASE_NEUTRAL, 900},
+        [BK7259_GIMBAL_TEST_LISTENING] = {BK7259_GIMBAL_PHASE_LISTENING, 5000},
+        [BK7259_GIMBAL_TEST_THINKING]  = {BK7259_GIMBAL_PHASE_THINKING, 6000},
+        [BK7259_GIMBAL_TEST_SPEAKING]  = {BK7259_GIMBAL_PHASE_SPEAKING, 4000},
+        [BK7259_GIMBAL_TEST_NEUTRAL]   = {BK7259_GIMBAL_PHASE_NEUTRAL, 1000},
+    };
+    static const bk7259_gimbal_scene_t scenes[] = {
+        BK7259_GIMBAL_SCENE_HAPPY, BK7259_GIMBAL_SCENE_SAD,
+        BK7259_GIMBAL_SCENE_ANGRY, BK7259_GIMBAL_SCENE_SURPRISED,
+    };
+    s_gimbal.test.stage = stage;
+    bk7259_gimbal_stats_stage(&s_gimbal.stats, stage);
+    if (stage < BK7259_GIMBAL_TEST_HANGUP) {
+        update_dialogue(true, dialogue[stage].phase, now);
+        s_gimbal.test.due_at = now + dialogue[stage].duration_ms;
+        return;
+    }
+    s_gimbal.test.expected_home = s_gimbal.home_ticket + 1U;
+    s_gimbal.test.due_at = now + TEST_HOME_TIMEOUT_MS;
+    if (stage == BK7259_GIMBAL_TEST_HANGUP) {
+        update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL, now);
+    } else {
+        bk7259_gimbal_scene_t scene = scenes[stage - BK7259_GIMBAL_TEST_HAPPY];
+        queue_scene(scene, now);
+        s_gimbal.test.due_at += scene_duration(scene);
+    }
+}
+
+/* Preserve the UART guard across a statistics reset. The first new frame
+ * starts a fresh pair on the reporting side only. */
+static void reset_stats_window(uint32_t now)
+{
+    bk7259_gimbal_stats_reset(&s_gimbal.stats, now);
+    s_gimbal.stats_has_tx = false;
+}
+
+static void service_test(uint32_t now)
+{
+    if (!test_active())
+        return;
+    if (s_gimbal.test.state == BK7259_GIMBAL_TEST_SCHEDULED) {
+        if (!due(now, s_gimbal.test.due_at))
+            return;
+        if (!s_gimbal.ready || !s_gimbal.accepting) {
+            finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, now);
+            return;
+        }
+        reset_stats_window(now);
+        s_gimbal.test.state = BK7259_GIMBAL_TEST_RUNNING;
+        enter_test_stage(BK7259_GIMBAL_TEST_OPENING, now);
+        return;
+    }
+    bk7259_gimbal_test_stage_t stage = s_gimbal.test.stage;
+    if (stage < BK7259_GIMBAL_TEST_HANGUP) {
+        if (!due(now, s_gimbal.test.due_at))
+            return;
+        if (stage == BK7259_GIMBAL_TEST_OPENING && s_gimbal.opening_pending) {
+            if (due(now, s_gimbal.test.due_at + TEST_HOME_TIMEOUT_MS))
+                recover_home(now);
+            return;
+        }
+    } else if (!s_gimbal.ready || s_gimbal.centered_ticket != s_gimbal.test.expected_home) {
+        if (due(now, s_gimbal.test.due_at)) {
+            finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, now);
+            if (s_gimbal.ready)
+                start_home();
+        }
+        return;
+    }
+    if (stage == BK7259_GIMBAL_TEST_SURPRISED) {
+        bk7259_gimbal_stats_tick(&s_gimbal.stats, now);
+        if (!s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].pending &&
+            !s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_HOME].pending &&
+            !s_gimbal.stats.snapshot.power.groups[BK7259_GIMBAL_POWER_STOP].pending &&
+            !s_gimbal.stats.snapshot.power.groups[BK7259_GIMBAL_POWER_REQUEST].pending)
+            finish_test(BK7259_GIMBAL_TEST_COMPLETED, now);
+        return;
+    }
+    enter_test_stage((bk7259_gimbal_test_stage_t)(stage + 1), now);
 }
 
 static void worker(void *arg)
@@ -826,19 +1251,35 @@ static void worker(void *arg)
         if (rtos_lock_mutex(&s_lock) != BK_OK)
             break;
         uint32_t now = rtos_get_time();
-        sync_home(&io, now);
-        drain_frames(&io, now);
-        service_charge(&io, now);
-        if (s_gimbal.ready && now - io.last_link_rx_at >= LINK_LOSS_MS) {
-            MYBOT_LOGW(TAG, "EB521 replies lost, centering again");
-            start_home();
+        if (io.recent_ordinary_zero && now - io.ordinary_zero_at > HOME_RESPONSE_MS)
+            io.recent_ordinary_zero = false;
+        if (now - io.stats_tick_at >= 1000U) {
+            io.stats_tick_at = now;
+            bk7259_gimbal_stats_tick(&s_gimbal.stats, now);
         }
         sync_home(&io, now);
-        if (s_gimbal.stopping && !s_gimbal.charge_off_pending) {
+        drain_frames(&io, now);
+        if (s_gimbal.disable_home_pending && tx_ready(&io, EB521_MOVE)) {
+            s_gimbal.disable_home_pending = false;
+            if (send_home(&io)) {
+                io.disable_home_sent = true;
+                io.home_sent_at = io.last_tx_return_at;
+                MYBOT_LOGI(TAG, "servo control disabled: center command sent");
+            }
+        }
+        service_charge(&io, now);
+        now = rtos_get_time();
+        if (s_gimbal.ready && now - io.last_link_rx_at >= LINK_LOSS_MS) {
+            MYBOT_LOGW(TAG, "EB521 replies lost, centering again");
+            recover_home(now);
+        }
+        if (s_gimbal.stopping && !s_gimbal.charge_off_pending && !s_gimbal.settings.pending) {
             unlock();
             break;
         }
-        if (!s_gimbal.stopping) {
+        service_test(now);
+        sync_home(&io, now);
+        if (!s_gimbal.stopping && s_gimbal.settings.motion_enabled) {
             if (s_gimbal.ready) {
                 service_motion(&io, now);
             } else {
@@ -846,19 +1287,40 @@ static void worker(void *arg)
                 service_home(&io, now);
             }
         }
-        unsigned wait = io.charge_waiting || !s_gimbal.ready || s_gimbal.motion.kind != MOTION_NONE
-                        ? RX_POLL_MS : IDLE_WAIT_MS;
+        bool motion_work = s_gimbal.settings.motion_enabled &&
+                           (!s_gimbal.ready || s_gimbal.motion.kind != MOTION_NONE);
+        unsigned wait = io.charge_waiting || motion_work ? RX_POLL_MS : IDLE_WAIT_MS;
+        bk7259_gimbal_settings_t settings = s_gimbal.settings;
+        uint32_t settings_revision = s_gimbal.settings_revision;
         unlock();
+        if (settings.pending) {
+            int result = bk7259_gimbal_prefs_save(settings.motion_enabled, settings.charge_enabled);
+            if (rtos_lock_mutex(&s_lock) != BK_OK)
+                break;
+            if (settings_revision == s_gimbal.settings_revision) {
+                s_gimbal.settings.pending = false;
+                s_gimbal.settings.save_failed = result < 0;
+            }
+            unlock();
+            if (result < 0)
+                MYBOT_LOGW(TAG, "gimbal settings save failed");
+            continue;
+        }
         bk_err_t ret = rtos_get_semaphore(&s_wake, wait);
         if (ret != BK_OK && ret != kTimeoutErr)
             break;
     }
     if (rtos_lock_mutex(&s_lock) == BK_OK) {
+        finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, rtos_get_time());
         s_gimbal.accepting = false;
         s_gimbal.stopping = true;
         s_gimbal.pending_probe = false;
         s_gimbal.probe_running = false;
         bk7259_audio_dialogue_set_speaking(false);
+        if (s_gimbal.settings.pending) {
+            s_gimbal.settings.pending = false;
+            s_gimbal.settings.save_failed = true;
+        }
         if (s_gimbal.charge_off_pending)
             finish_charge_off(s_gimbal.charge_off_ticket, -1);
         unlock();
@@ -889,8 +1351,13 @@ static int release_uart(void)
 
 int bk7259_gimbal_prepare(void)
 {
-    if (!s_lock && rtos_init_mutex(&s_lock) != BK_OK)
-        return -1;
+    if (!mailbox_initialized()) {
+        beken_mutex_t lock = NULL;
+        if (rtos_init_mutex(&lock) != BK_OK)
+            return -1;
+        /* Settings reads may come from the UI before platform preparation. */
+        __atomic_store_n(&s_lock, lock, __ATOMIC_RELEASE);
+    }
     if ((!s_wake && rtos_init_semaphore(&s_wake, 1) != BK_OK) ||
         (!s_done && rtos_init_semaphore(&s_done, 1) != BK_OK) ||
         (!s_centered && rtos_init_semaphore(&s_centered, 1) != BK_OK))
@@ -908,7 +1375,14 @@ int bk7259_gimbal_prepare(void)
         return -1;
     if (s_gimbal.aosl_owned)
         aosl_dtor();
+    if (rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
     memset(&s_gimbal, 0, sizeof(s_gimbal));
+    reset_stats_window(rtos_get_time());
+    unlock();
+    bk7259_gimbal_settings_t settings = {0};
+    settings.save_failed = bk7259_gimbal_prefs_load(&settings.motion_enabled,
+                                                   &settings.charge_enabled) < 0;
     while (rtos_get_semaphore(&s_done, 0) == BK_OK) { }
     while (rtos_get_semaphore(&s_wake, 0) == BK_OK) { }
     while (rtos_get_semaphore(&s_centered, 0) == BK_OK) { }
@@ -930,10 +1404,10 @@ int bk7259_gimbal_prepare(void)
     s_gimbal.aosl_owned = true;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         goto failed;
+    s_gimbal.home_ticket = 1;
+    s_gimbal.settings = settings;
     bk_err_t created = rtos_create_psram_thread(&s_gimbal.worker, BEKEN_APPLICATION_PRIORITY,
                                                 "eb521", worker, STACK_BYTES, NULL);
-    s_gimbal.home_ticket = 1;
-    s_gimbal.charge_enabled = true;
     s_gimbal.prepared = created == BK_OK;
     s_gimbal.accepting = created == BK_OK;
     unlock();
@@ -955,7 +1429,7 @@ int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
 {
     if (phase < BK7259_GIMBAL_PHASE_NEUTRAL || phase > BK7259_GIMBAL_PHASE_SPEAKING)
         return -1;
-    if (!s_lock)
+    if (!mailbox_initialized())
         return active ? -1 : 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
@@ -963,31 +1437,9 @@ int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
         unlock();
         return active ? -1 : 0;
     }
-    bool started = active && !s_gimbal.conversation;
-    bool ended = !active && (s_gimbal.conversation || s_gimbal.ready);
-    bool changed = active && (phase != s_gimbal.phase || s_gimbal.motion.kind != MOTION_DIALOGUE);
-    if (started || ended || changed) {
-        s_gimbal.conversation = active;
-        s_gimbal.phase = phase;
-        s_gimbal.phase_at = rtos_get_time();
-        bk7259_audio_dialogue_set_speaking(active && phase == BK7259_GIMBAL_PHASE_SPEAKING);
-        if (ended) {
-            if (s_gimbal.ready) {
-                start_home();
-            } else {
-                s_gimbal.motion.kind = MOTION_NONE;
-                s_gimbal.opening_pending = false;
-            }
-        } else {
-            s_gimbal.motion.kind = MOTION_DIALOGUE;
-            s_gimbal.motion.started_at = s_gimbal.phase_at;
-            ++s_gimbal.motion.revision;
-            if (started && s_gimbal.ready)
-                s_gimbal.opening_pending = true;
-        }
-        notify(&s_wake);
-    }
-    int result = active && !s_gimbal.ready ? BK7259_GIMBAL_NOT_READY : 0;
+    if (test_active())
+        finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, rtos_get_time());
+    int result = update_dialogue(active, phase, rtos_get_time());
     unlock();
     return result;
 }
@@ -997,13 +1449,17 @@ static int admit_motion(void)
 {
     if (!s_gimbal.prepared || !s_gimbal.accepting || s_gimbal.charge_locked || s_gimbal.stopping)
         return -1;
+    if (!s_gimbal.settings.motion_enabled)
+        return BK7259_GIMBAL_MOTION_DISABLED;
+    if (test_active())
+        return BK7259_GIMBAL_BUSY;
     return s_gimbal.ready ? 0 : BK7259_GIMBAL_NOT_READY;
 }
 
 int bk7259_gimbal_send_next_command(void)
 {
     static const int16_t positions[][2] = {{-300, 0}, {0, 100}, {0, -200}, {100, 0}};
-    if (!s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
     int result = admit_motion();
     if (result == 0) {
@@ -1024,15 +1480,11 @@ int bk7259_gimbal_send_next_command(void)
 int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 {
     if (scene < BK7259_GIMBAL_SCENE_HAPPY || scene >= BK7259_GIMBAL_SCENE_COUNT ||
-        !s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+        !mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
     int result = admit_motion();
     if (result == 0) {
-        s_gimbal.opening_pending = false;
-        s_gimbal.motion.kind = MOTION_SCENE;
-        s_gimbal.motion.scene = scene;
-        s_gimbal.motion.started_at = rtos_get_time();
-        ++s_gimbal.motion.revision;
+        queue_scene(scene, rtos_get_time());
         notify(&s_wake);
     }
     unlock();
@@ -1041,7 +1493,7 @@ int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 
 int bk7259_gimbal_request_probe(void)
 {
-    if (!s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
     int result = 0;
     if (!s_gimbal.prepared || !s_gimbal.accepting || s_gimbal.stopping || s_gimbal.charge_locked) {
@@ -1078,8 +1530,9 @@ static int wait_for_center(uint32_t ticket, uint32_t timeout_ms)
             return -1;
         bool done = (int32_t)(s_gimbal.centered_ticket - ticket) >= 0;
         bool stopped = s_gimbal.stopping;
+        bool disabled = !s_gimbal.settings.motion_enabled;
         unlock();
-        if (done)
+        if (done || disabled)
             return 0;
         uint32_t elapsed = rtos_get_time() - start;
         if (stopped || elapsed >= timeout_ms)
@@ -1092,14 +1545,15 @@ static int wait_for_center(uint32_t ticket, uint32_t timeout_ms)
 
 int bk7259_gimbal_center_wait(uint32_t timeout_ms)
 {
-    if (!s_lock)
+    if (!mailbox_initialized())
         return 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
-    if (!s_gimbal.prepared) {
+    if (!s_gimbal.prepared || !s_gimbal.settings.motion_enabled) {
         unlock();
         return 0;
     }
+    finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, rtos_get_time());
     uint32_t ticket = request_center();
     unlock();
     return wait_for_center(ticket, timeout_ms);
@@ -1107,7 +1561,6 @@ int bk7259_gimbal_center_wait(uint32_t timeout_ms)
 
 static uint32_t request_charge_off(void)
 {
-    s_gimbal.charge_enabled = false;
     if (!s_gimbal.charge_off_pending) {
         s_gimbal.charge_off_pending = true;
         ++s_gimbal.charge_off_ticket;
@@ -1116,23 +1569,121 @@ static uint32_t request_charge_off(void)
     return s_gimbal.charge_off_ticket;
 }
 
+/* The caller holds the mailbox lock. */
+static bool settings_available(void)
+{
+    return s_gimbal.prepared && s_gimbal.accepting && !s_gimbal.stopping && !s_gimbal.charge_locked;
+}
+
+static void schedule_settings_save(void)
+{
+    s_gimbal.settings.pending = true;
+    s_gimbal.settings.save_failed = false;
+    ++s_gimbal.settings_revision;
+    notify(&s_wake);
+}
+
+int bk7259_gimbal_request_motion_enabled(bool enabled)
+{
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    if (!settings_available()) {
+        unlock();
+        return -1;
+    }
+    if (enabled != s_gimbal.settings.motion_enabled) {
+        finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, rtos_get_time());
+        s_gimbal.settings.motion_enabled = enabled;
+        s_gimbal.disable_home_pending = !enabled;
+        start_home();
+        bk7259_audio_dialogue_set_speaking(enabled && s_gimbal.conversation &&
+                                           s_gimbal.phase == BK7259_GIMBAL_PHASE_SPEAKING);
+        notify(&s_centered);
+        schedule_settings_save();
+    } else if (s_gimbal.settings.save_failed) {
+        schedule_settings_save();
+    }
+    unlock();
+    return 0;
+}
+
 int bk7259_gimbal_set_charging(bool enabled)
 {
-    if (!s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
-    int result = 0;
-    if (!s_gimbal.prepared || !s_gimbal.accepting || s_gimbal.stopping || s_gimbal.charge_locked) {
-        result = -1;
-    } else if (enabled && s_gimbal.charge_off_pending) {
-        result = -2;
-    } else if (enabled) {
-        if (!s_gimbal.charge_enabled) {
-            s_gimbal.charge_enabled = true;
-            s_gimbal.charge_changed = true;
-            notify(&s_wake);
-        }
-    } else {
-        (void)request_charge_off();
+    if (!settings_available()) {
+        unlock();
+        return -1;
+    }
+    if (enabled != s_gimbal.settings.charge_enabled) {
+        s_gimbal.settings.charge_enabled = enabled;
+        s_gimbal.charge_changed = true;
+        if (!enabled)
+            (void)request_charge_off();
+        schedule_settings_save();
+    } else if (s_gimbal.settings.save_failed) {
+        schedule_settings_save();
+    }
+    unlock();
+    return 0;
+}
+
+int bk7259_gimbal_get_settings(bk7259_gimbal_settings_t *settings)
+{
+    if (!settings || !mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    bool available = settings_available();
+    if (available)
+        *settings = s_gimbal.settings;
+    unlock();
+    return available ? 0 : -1;
+}
+
+int bk7259_gimbal_get_stats(bk7259_gimbal_stats_snapshot_t *out)
+{
+    if (!out || !mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    bool prepared = s_gimbal.prepared;
+    if (prepared) {
+        if (s_gimbal.test.state == BK7259_GIMBAL_TEST_IDLE || s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING)
+            bk7259_gimbal_stats_snapshot(&s_gimbal.stats, rtos_get_time(), out);
+        else
+            *out = s_gimbal.test.result;
+        out->test_state = s_gimbal.test.state;
+        out->test_stage = s_gimbal.test.stage;
+    }
+    unlock();
+    return prepared ? 0 : -1;
+}
+
+int bk7259_gimbal_reset_stats(void)
+{
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    int result = -1;
+    if (test_active()) {
+        result = BK7259_GIMBAL_BUSY;
+    } else if (s_gimbal.prepared) {
+        reset_stats_window(rtos_get_time());
+        memset(&s_gimbal.test, 0, sizeof(s_gimbal.test));
+        result = 0;
+    }
+    unlock();
+    return result;
+}
+
+int bk7259_gimbal_schedule_test(void)
+{
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    int result = admit_motion();
+    if (result == 0 && (s_gimbal.conversation || s_gimbal.motion.kind != MOTION_NONE))
+        result = BK7259_GIMBAL_BUSY;
+    if (result == 0) {
+        memset(&s_gimbal.test, 0, sizeof(s_gimbal.test));
+        s_gimbal.test.state = BK7259_GIMBAL_TEST_SCHEDULED;
+        s_gimbal.test.due_at = rtos_get_time() + TEST_START_DELAY_MS;
+        notify(&s_wake);
     }
     unlock();
     return result;
@@ -1144,7 +1695,8 @@ static int wait_for_charge_off(uint32_t ticket, uint32_t timeout_ms)
     for (;;) {
         if (rtos_lock_mutex(&s_lock) != BK_OK)
             return -1;
-        bool done = (int32_t)(s_gimbal.charge_off_completed - ticket) >= 0;
+        bool done = (int32_t)(s_gimbal.charge_off_completed - ticket) >= 0 &&
+                    !s_gimbal.settings.pending && !s_gimbal.disable_home_pending;
         int result = s_gimbal.charge_off_result;
         unlock();
         if (done)
@@ -1160,7 +1712,7 @@ static int wait_for_charge_off(uint32_t ticket, uint32_t timeout_ms)
 
 int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
 {
-    if (!s_lock)
+    if (!mailbox_initialized())
         return 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
@@ -1172,6 +1724,7 @@ int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
         unlock();
         return -1;
     }
+    finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, rtos_get_time());
     s_gimbal.charge_locked = true;
     s_gimbal.pending_probe = false;
     s_gimbal.opening_pending = false;
@@ -1186,7 +1739,7 @@ int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
 
 int bk7259_gimbal_shutdown(void)
 {
-    if (!s_lock)
+    if (!mailbox_initialized())
         return 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;

@@ -25,6 +25,7 @@
 
 #define TAG "mybot"
 #define MYBOT_POLL_INTERVAL_MS 100
+#define CONVERSATION_INPUT_WAIT_MS 5500U
 #define MYBOT_APP_TASK_STACK_SIZE (16 * 1024)
 #define DEVICE_ID_DIGEST_BYTES 12
 #define GIMBAL_CHARGE_STOP_TIMEOUT_MS 1000U
@@ -40,6 +41,13 @@ extern volatile const char build_version[];
 static mybot_config_t s_config;
 /* Only the product task accesses this flag; LCD calls copy into its snapshot. */
 static bool s_display_prepared;
+/* The product owner clears this when the SDK leaves the state it was in at
+ * dispatch, or permits another press after the SDK's five-second HTTP deadline. */
+static struct {
+    bool pending;
+    mybot_state_t source_state;
+    uint32_t sent_at;
+} s_conversation_input;
 
 static const char *mybot_state_name(mybot_state_t state)
 {
@@ -167,8 +175,16 @@ static void show_factory_reset(bk7259_factory_reset_screen_t screen)
     }
 }
 
+static void discard_conversation_input(void)
+{
+    bk7259_key_allow_touch_conversation(BK7259_TOUCH_CONVERSATION_DISABLED);
+    (void)bk7259_key_take_conversation_request();
+    s_conversation_input.pending = false;
+}
+
 static void mybot_reboot(void)
 {
+    discard_conversation_input();
     if (bk7259_gimbal_stop_charging_wait(GIMBAL_CHARGE_STOP_TIMEOUT_MS) < 0) {
         BK_LOGW(TAG, "gimbal charge stop unconfirmed. EB521 timeout will stop charging\r\n");
     }
@@ -189,7 +205,7 @@ static void mybot_factory_reset_loop(bool requested)
         (void)bk7259_provision_take_request();
         bk7259_provision_finish();
         if (!requested) {
-            (void)bk7259_key_take_conversation_request();
+            discard_conversation_input();
             requested = bk7259_factory_reset_take_request();
             if (!requested) {
                 (void)rtos_delay_milliseconds(MYBOT_POLL_INTERVAL_MS);
@@ -198,7 +214,7 @@ static void mybot_factory_reset_loop(bool requested)
         }
         requested = false;
         (void)bk7259_factory_reset_take_request();
-        (void)bk7259_key_take_conversation_request();
+        discard_conversation_input();
         show_factory_reset(BK7259_FACTORY_RESET_RESTORING);
 
         /* Writing intent does not erase live SDK data. Persist it first so a
@@ -235,15 +251,39 @@ static void mybot_factory_reset_loop(bool requested)
 
 static void mybot_poll_conversation_key(void)
 {
-    if (!bk7259_key_take_conversation_request() ||
-        bk7259_factory_reset_requested() || bk7259_provision_busy()) {
+    if (bk7259_provision_busy() || bk7259_provision_abort_reason() != 0) {
+        discard_conversation_input();
         return;
     }
+    bool physical_toggle = bk7259_key_take_conversation_request();
     mybot_state_t state = mybot_get_state();
+    uint32_t now = rtos_get_time();
+    if (s_conversation_input.pending && state == s_conversation_input.source_state &&
+        (uint32_t)(now - s_conversation_input.sent_at) < CONVERSATION_INPUT_WAIT_MS) {
+        return;
+    }
+    s_conversation_input.pending = false;
+
+    bk7259_touch_conversation_t allowed = BK7259_TOUCH_CONVERSATION_DISABLED;
     if (state == MYBOT_STATE_READY) {
-        bk7259_key_dispatch_conversation(true);
+        allowed = BK7259_TOUCH_CONVERSATION_START;
     } else if (state == MYBOT_STATE_IN_CONVERSATION) {
-        bk7259_key_dispatch_conversation(false);
+        allowed = BK7259_TOUCH_CONVERSATION_STOP;
+    }
+    bk7259_key_allow_touch_conversation(allowed);
+    if (allowed == BK7259_TOUCH_CONVERSATION_DISABLED) {
+        return;
+    }
+    bk7259_touch_conversation_t touch = bk7259_key_take_touch_conversation();
+    if (physical_toggle || touch == allowed) {
+        bk7259_key_allow_touch_conversation(BK7259_TOUCH_CONVERSATION_DISABLED);
+        if (bk7259_key_dispatch_conversation(allowed == BK7259_TOUCH_CONVERSATION_START)) {
+            s_conversation_input.pending = true;
+            s_conversation_input.source_state = state;
+            s_conversation_input.sent_at = now;
+        } else {
+            bk7259_key_allow_touch_conversation(allowed);
+        }
     }
 }
 
@@ -275,6 +315,7 @@ static int show_provision(bk7259_provision_screen_t screen)
 
 static bool mybot_stop_for_network(void)
 {
+    discard_conversation_input();
     mybot_stop();
     mybot_publish_runtime_status(mybot_get_state());
     if (mybot_is_running() || mybot_get_state() != MYBOT_STATE_STOPPED) {
@@ -300,7 +341,7 @@ static bool mybot_network_ready_to_start(void)
 static bool mybot_finish_network_setup(int result)
 {
     mybot_check_product_requests();
-    (void)bk7259_key_take_conversation_request();
+    discard_conversation_input();
     if (result >= 0) {
         bk7259_provision_finish();
         return mybot_network_ready_to_start();
@@ -322,7 +363,7 @@ static bool mybot_finish_network_setup(int result)
     (void)show_provision(BK7259_PROVISION_RECONNECTING);
     int restored = bk7259_wifi_restore_saved(s_config.device_id);
     mybot_check_product_requests();
-    (void)bk7259_key_take_conversation_request();
+    discard_conversation_input();
     if (restored == 0) {
         return mybot_network_ready_to_start();
     }
@@ -338,7 +379,7 @@ static bool mybot_finish_network_setup(int result)
 static void mybot_handle_provision_request(bool *sdk_started, bool *start_pending)
 {
     (void)show_provision(BK7259_PROVISION_PREPARING);
-    (void)bk7259_key_take_conversation_request();
+    discard_conversation_input();
     mybot_check_product_requests();
     if (bk7259_provision_abort_reason() == BK7259_PROVISION_CANCELLED) {
         /* A quick cancel before SDK stop leaves a live conversation and its
@@ -373,6 +414,7 @@ static int mybot_run(void)
     mybot_state_t last_state = MYBOT_STATE_STOPPED;
     bool state_valid = false;
 
+    discard_conversation_input();
     if (mybot_build_config() < 0) {
         BK_LOGE(TAG, "could not build the device configuration\r\n");
         return -1;
@@ -399,9 +441,6 @@ static int mybot_run(void)
         return -1;
     }
     s_display_prepared = true;
-    if (bk7259_gimbal_cli_init() != 0) {
-        BK_LOGW(TAG, "gimbal CLI registration failed\r\n");
-    }
     mybot_log_state_transition(&last_state, &state_valid);
 
     int reset_pending = bk7259_factory_reset_pending();
@@ -415,6 +454,15 @@ static int mybot_run(void)
         mybot_factory_reset_loop(reset_pending > 0);
     }
     mybot_check_product_requests();
+
+    /* Factory recovery prepares its UI and network cleanup helpers before
+     * opening any subsystem that can move the gimbal or renew charging. */
+    if (bk7259_gimbal_prepare() < 0) {
+        BK_LOGW(TAG, "gimbal preparation failed; continuing without motion\r\n");
+    }
+    if (bk7259_gimbal_cli_init() != 0) {
+        BK_LOGW(TAG, "gimbal CLI registration failed\r\n");
+    }
 
     bool platform_registered = mybot_bk7259_platform_register() == 0;
     mybot_check_product_requests();
@@ -444,7 +492,7 @@ static int mybot_run(void)
                 continue;
             }
             start_pending = false;
-            (void)bk7259_key_take_conversation_request();
+            discard_conversation_input();
             if (!platform_registered) {
                 platform_registered = mybot_bk7259_platform_register() == 0;
             }
@@ -477,7 +525,7 @@ static int mybot_run(void)
                 mybot_poll_conversation_key();
             }
         } else {
-            (void)bk7259_key_take_conversation_request();
+            discard_conversation_input();
         }
         (void)rtos_delay_milliseconds(MYBOT_POLL_INTERVAL_MS);
     }

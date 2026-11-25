@@ -802,7 +802,8 @@ static void sync_dialogue(bool force)
     s_lcd.dialogue_active = active;
     s_lcd.dialogue_phase = phase;
     int result = bk7259_gimbal_update_dialogue(active, phase);
-    if (result < 0 && result != BK7259_GIMBAL_NOT_READY)
+    if (result < 0 && result != BK7259_GIMBAL_NOT_READY &&
+        result != BK7259_GIMBAL_MOTION_DISABLED)
         MYBOT_LOGW(TAG, "dialogue motion unavailable: active=%d phase=%d", (int)active, (int)phase);
 }
 

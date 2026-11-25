@@ -17,5 +17,5 @@ target_link_libraries(r2_manual_ui PRIVATE lvgl_host m)
 target_include_directories(r2_manual_ui PRIVATE
     "${PLATFORM_DIR}/display" "${PLATFORM_DIR}/include" "${SDK_ROOT}/include")
 target_compile_definitions(r2_manual_ui PRIVATE
-    CONFIG_MYBOT_LANGUAGE_ZH_CN=1 CONFIG_MYBOT_LVGL_UI_ANIMATIONS=1)
+    CONFIG_MYBOT_LANGUAGE_ZH_CN=1 CONFIG_MYBOT_LVGL_UI_ANIMATIONS=1 CONFIG_MYBOT_GIMBAL=1)
 target_compile_options(r2_manual_ui PRIVATE -Wall -Wextra -Werror)

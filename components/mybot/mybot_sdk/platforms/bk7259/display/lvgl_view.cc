@@ -4,9 +4,12 @@
  * src/expressions.js and src/reference-style.js. The renderer owns only LVGL
  * objects; the BK7259 display owner retains the panel and its fixed buffers. */
 #include "lvgl_view.h"
+#include "bk7259_gimbal.h"
+#include "bk7259_key.h"
 #include "mybot_bk7259_platform.h"
 #include "pixel_expression_shapes.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -19,7 +22,8 @@ namespace {
 
 constexpr int kArtworkWidth = 1024;
 constexpr int kArtworkHeight = 896;
-constexpr unsigned kFrameParts = 13;
+constexpr unsigned kLensFrameParts = 5;
+constexpr unsigned kFrameParts = 2 * kLensFrameParts + 3;
 constexpr size_t kSsidCapacity = 33;
 constexpr size_t kStateLineCapacity =
     BK7259_LCD_STATE_CAPACITY + sizeof("> state: ") + sizeof(" | vp:pending") - 2;
@@ -35,10 +39,18 @@ constexpr uint32_t kTerminal = 0x639589;
 constexpr uint32_t kMuted = 0xa0a6a3;
 constexpr uint32_t kError = 0xe57876;
 constexpr int kTapSlop = 10;
+constexpr uint32_t kConversationTapMs = 400;
+constexpr uint32_t kConversationRearmMs = 250;
+constexpr uint32_t kSettingsRefreshMs = 200;
 
 enum class SettingsPage { Closed, Menu, Confirm, ConfirmProvision };
+enum class ConversationTap { None, Start, Stop };
 enum class ButtonAction {
+    Conversation,
     Settings,
+    MotionSetting,
+    ChargeSetting,
+    RetrySettings,
     Return,
     ResetMenu,
     PowerOff,
@@ -76,11 +88,18 @@ constexpr Presentation kResetScreens[] = {
 };
 constexpr const char *kPortalNotice = "请连接设备热点\nhttp://192.168.4.1";
 constexpr const char *kSettings = "设置";
+constexpr const char *kDisableMotion = "关闭舵机控制";
+constexpr const char *kEnableMotion = "开启舵机控制";
+constexpr const char *kDisableCharge = "关闭供电请求";
+constexpr const char *kEnableCharge = "开启供电请求";
+constexpr const char *kSettingsSaving = "正在保存设置";
+constexpr const char *kSettingsSaveFailed = "保存失败，点击重试";
+constexpr const char *kSettingsUnavailable = "设置暂不可用";
 constexpr const char *kPowerOff = "关机";
 constexpr const char *kReset = "恢复出厂";
 constexpr const char *kReturn = "返回";
 constexpr const char *kConfirmTitle = "恢复出厂？";
-constexpr const char *kConfirmNotice = "将清除本机Wi-Fi、设备凭据及音量，完成后重启";
+constexpr const char *kConfirmNotice = "将清除本机Wi-Fi、设备凭据、音量、舵机及供电设置，完成后重启";
 constexpr const char *kConfirm = "确认恢复";
 constexpr const char *kCancel = "取消";
 constexpr const char *kRetry = "重试";
@@ -121,12 +140,19 @@ constexpr Presentation kResetScreens[] = {
 };
 constexpr const char *kPortalNotice = "Connect to device Wi-Fi\nhttp://192.168.4.1";
 constexpr const char *kSettings = "Setup";
+constexpr const char *kDisableMotion = "Disable servos";
+constexpr const char *kEnableMotion = "Enable servos";
+constexpr const char *kDisableCharge = "Stop power request";
+constexpr const char *kEnableCharge = "Start power request";
+constexpr const char *kSettingsSaving = "Saving settings";
+constexpr const char *kSettingsSaveFailed = "Save failed. Tap to retry";
+constexpr const char *kSettingsUnavailable = "Settings unavailable";
 constexpr const char *kPowerOff = "Power off";
 constexpr const char *kReset = "Factory reset";
 constexpr const char *kReturn = "Back";
 constexpr const char *kConfirmTitle = "Factory reset?";
 constexpr const char *kConfirmNotice =
-    "Clear this device's Wi-Fi, device credentials and volume, then restart.";
+    "Clear Wi-Fi, device credentials, volume, servo and power settings, then restart.";
 constexpr const char *kConfirm = "Reset";
 constexpr const char *kCancel = "Cancel";
 constexpr const char *kRetry = "Retry";
@@ -164,6 +190,7 @@ struct View {
     lv_obj_t *terminal[4];
     lv_obj_t *face;
     lv_obj_t *frame[kFrameParts];
+    lv_area_t ready_lenses[2];
     pixel_shapes::Bank banks[2];
     lv_obj_t *guide;
     lv_obj_t *divider;
@@ -176,6 +203,9 @@ struct View {
     lv_obj_t *settings_overlay;
     lv_obj_t *settings_menu;
     lv_obj_t *settings_confirm;
+    lv_obj_t *motion_setting;
+    lv_obj_t *charge_setting;
+    lv_obj_t *settings_status;
     lv_obj_t *confirm_title;
     lv_obj_t *confirm_notice;
     lv_obj_t *confirm_button;
@@ -189,12 +219,23 @@ struct View {
     lv_obj_t *provision_retry_button;
     lv_obj_t *retry_button;
     lv_obj_t *gesture_button;
+    const lv_area_t *gesture_lens;
     lv_point_t gesture_start;
+    uint32_t gesture_started;
+    uint32_t conversation_tap_at;
+    uint32_t settings_refreshed_at;
+    ConversationTap gesture_conversation;
     SettingsPage settings_page;
+    bk7259_gimbal_settings_t gimbal_settings;
     bk7259_factory_reset_screen_t reset_screen;
     bk7259_provision_screen_t provision_screen;
     char provision_page_ssid[kSsidCapacity];
     bool gesture_cancelled;
+    bool gesture_setting_enable;
+    bool gimbal_settings_available;
+    bool gimbal_setting_rejected;
+    bool conversation_tap_accepted;
+    bool reboot_requested;
     bool touch_available;
     lv_timer_t *timer;
     mybot_lcd_content_t previous;
@@ -240,6 +281,16 @@ void set_hidden(lv_obj_t *object, bool hidden) {
 void set_text(lv_obj_t *label, const char *text) {
     if (lv_label_get_text(label) != text) {
         lv_label_set_text_static(label, text);
+    }
+}
+
+void set_disabled(lv_obj_t *object, bool disabled) {
+    if (disabled != lv_obj_has_state(object, LV_STATE_DISABLED)) {
+        if (disabled) {
+            lv_obj_add_state(object, LV_STATE_DISABLED);
+        } else {
+            lv_obj_remove_state(object, LV_STATE_DISABLED);
+        }
     }
 }
 
@@ -402,35 +453,79 @@ void render_expression(uint32_t now) {
     }
 }
 
+void refresh_gimbal_settings() {
+    s_view.settings_refreshed_at = lv_tick_get();
+    bk7259_gimbal_settings_t snapshot{};
+    s_view.gimbal_settings_available = bk7259_gimbal_get_settings(&snapshot) == 0;
+    s_view.gimbal_settings = snapshot;
+    const bool can_change = s_view.gimbal_settings_available && !snapshot.pending;
+    set_text(lv_obj_get_child(s_view.motion_setting, 0),
+             snapshot.motion_enabled ? kDisableMotion : kEnableMotion);
+    set_text(lv_obj_get_child(s_view.charge_setting, 0),
+             snapshot.charge_enabled ? kDisableCharge : kEnableCharge);
+    set_disabled(s_view.motion_setting, !can_change);
+    set_disabled(s_view.charge_setting, !can_change);
+    const char *status = "";
+    if (!s_view.gimbal_settings_available) {
+        status = kSettingsUnavailable;
+    } else if (snapshot.pending) {
+        status = kSettingsSaving;
+    } else if (snapshot.save_failed) {
+        status = kSettingsSaveFailed;
+    } else if (s_view.gimbal_setting_rejected) {
+        status = kSettingsUnavailable;
+    }
+    set_text(lv_obj_get_child(s_view.settings_status, 0), status);
+    set_hidden(s_view.settings_status, status[0] == '\0');
+    set_disabled(s_view.settings_status, !can_change || !snapshot.save_failed);
+}
+
 void update_timer() {
+    if (!s_view.timer) {
+        return;
+    }
+    uint32_t period = 0;
+    const uint32_t now = lv_tick_get();
 #if CONFIG_MYBOT_LVGL_UI_ANIMATIONS
-    if (s_view.factory_reset || !s_view.face_visible) {
+    if (!s_view.factory_reset && s_view.face_visible) {
+        const bool flash = (pixel_shapes::kConfigs[s_view.expression].motion & pixel_shapes::Flash) &&
+                           now - s_view.transition_started < 90;
+        period = s_view.transitioning || pixel_shapes::animated(s_view.expression) || flash
+                     ? kTransitionTickMs
+                     : kCursorMs - now % kCursorMs;
+    }
+#endif
+    if (s_view.settings_page == SettingsPage::Menu) {
+        const uint32_t elapsed = now - s_view.settings_refreshed_at;
+        const uint32_t refresh = elapsed < kSettingsRefreshMs ? kSettingsRefreshMs - elapsed : 1;
+        if (period == 0 || refresh < period) {
+            period = refresh;
+        }
+    }
+    if (period == 0) {
         lv_timer_pause(s_view.timer);
         return;
     }
-    const uint32_t now = lv_tick_get();
-    const bool flash = (pixel_shapes::kConfigs[s_view.expression].motion & pixel_shapes::Flash) &&
-                       (uint32_t)(now - s_view.transition_started) < 90;
-    const uint32_t period =
-        s_view.transitioning || pixel_shapes::animated(s_view.expression) || flash
-            ? kTransitionTickMs
-            : kCursorMs - now % kCursorMs;
     lv_timer_set_period(s_view.timer, period);
     if (lv_timer_get_paused(s_view.timer)) {
         lv_timer_reset(s_view.timer);
         lv_timer_resume(s_view.timer);
     }
-#else
-    lv_timer_pause(s_view.timer);
-#endif
 }
 
 void timer_callback(lv_timer_t *) {
-#if CONFIG_MYBOT_LVGL_UI_ANIMATIONS
     const uint32_t now = lv_tick_get();
-    if (s_view.transitioning || pixel_shapes::animated(s_view.expression))
-        render_expression(now);
-    set_hidden(s_view.cursor, (now / kCursorMs) % 2 != 0);
+    if (s_view.settings_page == SettingsPage::Menu &&
+        now - s_view.settings_refreshed_at >= kSettingsRefreshMs) {
+        refresh_gimbal_settings();
+    }
+#if CONFIG_MYBOT_LVGL_UI_ANIMATIONS
+    if (!s_view.factory_reset && s_view.face_visible) {
+        if (s_view.transitioning || pixel_shapes::animated(s_view.expression)) {
+            render_expression(now);
+        }
+        set_hidden(s_view.cursor, (now / kCursorMs) % 2 != 0);
+    }
 #endif
     update_timer();
 }
@@ -511,6 +606,22 @@ bool create_face() {
     for (auto *object : s_view.frame) {
         if (!object) {
             return false;
+        }
+    }
+    /* Capture each full lens before any expression moves the actor. The
+     * last three frame parts (bridge and temples) are outside the lenses. */
+    lv_obj_update_layout(s_view.face);
+    for (unsigned eye = 0; eye < 2; ++eye) {
+        const unsigned first = eye * kLensFrameParts;
+        lv_area_t &lens = s_view.ready_lenses[eye];
+        lv_obj_get_coords(s_view.frame[first], &lens);
+        for (unsigned i = 1; i < kLensFrameParts; ++i) {
+            lv_area_t bar;
+            lv_obj_get_coords(s_view.frame[first + i], &bar);
+            lens.x1 = std::min(lens.x1, bar.x1);
+            lens.y1 = std::min(lens.y1, bar.y1);
+            lens.x2 = std::max(lens.x2, bar.x2);
+            lens.y2 = std::max(lens.y2, bar.y2);
         }
     }
     for (auto &bank : s_view.banks) {
@@ -599,6 +710,8 @@ bool create_provision_page() {
 
 void cancel_button_gesture(bool wait_release) {
     s_view.gesture_button = nullptr;
+    s_view.gesture_lens = nullptr;
+    s_view.gesture_conversation = ConversationTap::None;
     s_view.gesture_cancelled = true;
     lv_indev_t *input = lv_indev_active();
     if (wait_release && input && lv_indev_get_type(input) == LV_INDEV_TYPE_POINTER) {
@@ -633,6 +746,24 @@ void show_settings(SettingsPage page) {
                                       lv_color_hex(provision ? kTerminal : kError), 0);
     }
     update_touch_controls();
+    if (page == SettingsPage::Menu) {
+        s_view.gimbal_setting_rejected = false;
+        refresh_gimbal_settings();
+    }
+    update_timer();
+}
+
+ConversationTap conversation_tap(mybot_lcd_screen_t screen,
+                                 const bk7259_lcd_runtime_status_t &status) {
+    if (screen == MYBOT_LCD_SCREEN_READY && !status.in_conversation &&
+        std::strcmp(status.state, "ready") == 0) {
+        return ConversationTap::Start;
+    }
+    if (screen == MYBOT_LCD_SCREEN_IN_CONVERSATION && status.in_conversation &&
+        std::strcmp(status.state, "in_conversation") == 0) {
+        return ConversationTap::Stop;
+    }
+    return ConversationTap::None;
 }
 
 bool action_available(ButtonAction action) {
@@ -643,8 +774,20 @@ bool action_available(ButtonAction action) {
         return action == ButtonAction::Retry && s_view.reset_screen == BK7259_FACTORY_RESET_FAILED;
     }
     switch (action) {
+    case ButtonAction::Conversation:
+        return s_view.settings_page == SettingsPage::Closed && s_view.face_visible &&
+               s_view.has_content && !s_view.reboot_requested &&
+               !bk7259_factory_reset_requested() && s_view.provision_screen == BK7259_PROVISION_NONE &&
+               !bk7259_provision_busy() &&
+               conversation_tap(s_view.previous.screen, s_view.runtime_status) != ConversationTap::None;
     case ButtonAction::Settings:
         return s_view.settings_page == SettingsPage::Closed;
+    case ButtonAction::MotionSetting:
+    case ButtonAction::ChargeSetting:
+    case ButtonAction::RetrySettings:
+        return s_view.settings_page == SettingsPage::Menu &&
+               s_view.gimbal_settings_available && !s_view.gimbal_settings.pending &&
+               (action != ButtonAction::RetrySettings || s_view.gimbal_settings.save_failed);
     case ButtonAction::Return:
     case ButtonAction::ResetMenu:
         return s_view.settings_page == SettingsPage::Menu;
@@ -671,15 +814,44 @@ bool action_available(ButtonAction action) {
     return false;
 }
 
-void perform_button_action(ButtonAction action) {
+void perform_button_action(ButtonAction action, ConversationTap conversation) {
     switch (action) {
+    case ButtonAction::Conversation:
+        if (bk7259_key_request_touch_conversation(conversation == ConversationTap::Start)) {
+            s_view.conversation_tap_at = lv_tick_get();
+            s_view.conversation_tap_accepted = true;
+        }
+        break;
     case ButtonAction::Settings:
         show_settings(SettingsPage::Menu);
         break;
+    case ButtonAction::MotionSetting:
+    case ButtonAction::ChargeSetting:
+    case ButtonAction::RetrySettings: {
+        const bool enable = s_view.gesture_setting_enable;
+        refresh_gimbal_settings();
+        if (!action_available(action)) {
+            break;
+        }
+        if ((action == ButtonAction::MotionSetting && s_view.gimbal_settings.motion_enabled == enable) ||
+            (action == ButtonAction::ChargeSetting && s_view.gimbal_settings.charge_enabled == enable)) {
+            break;
+        }
+        const int result = action == ButtonAction::ChargeSetting
+                               ? bk7259_gimbal_set_charging(enable)
+                               : bk7259_gimbal_request_motion_enabled(
+                                     action == ButtonAction::RetrySettings
+                                         ? s_view.gimbal_settings.motion_enabled
+                                         : enable);
+        s_view.gimbal_setting_rejected = result != 0;
+        refresh_gimbal_settings();
+        break;
+    }
     case ButtonAction::ResetMenu:
         show_settings(SettingsPage::Confirm);
         break;
     case ButtonAction::PowerOff:
+        s_view.reboot_requested = true;
         mybot_bk7259_platform_reboot();
         break;
     case ButtonAction::ProvisionMenu:
@@ -723,10 +895,34 @@ bool moved_too_far(const lv_point_t &point) {
     return dx * dx + dy * dy > kTapSlop * kTapSlop;
 }
 
+bool contains_point(const lv_area_t &bounds, const lv_point_t &point) {
+    return point.x >= bounds.x1 && point.x <= bounds.x2 &&
+           point.y >= bounds.y1 && point.y <= bounds.y2;
+}
+
+bool contains_point(lv_obj_t *object, const lv_point_t &point) {
+    lv_area_t bounds;
+    lv_obj_get_coords(object, &bounds);
+    return contains_point(bounds, point);
+}
+
+const lv_area_t *conversation_lens(const lv_point_t &point) {
+    for (const auto &lens : s_view.ready_lenses) {
+        if (contains_point(lens, point))
+            return &lens;
+    }
+    return nullptr;
+}
+
 void button_event(lv_event_t *event) {
     const lv_event_code_t code = lv_event_get_code(event);
     auto *button = static_cast<lv_obj_t *>(lv_event_get_current_target(event));
-    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL || code == LV_EVENT_DELETE) {
+    if (lv_event_get_target(event) != button) {
+        return;
+    }
+    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CANCEL || code == LV_EVENT_DELETE ||
+        code == LV_EVENT_INDEV_RESET ||
+        (code == LV_EVENT_LONG_PRESSED && button == s_view.root)) {
         if (s_view.gesture_button == button) {
             cancel_button_gesture(false);
         }
@@ -744,7 +940,24 @@ void button_event(lv_event_t *event) {
     }
     lv_point_t point{};
     lv_indev_get_point(input, &point);
+    const uint32_t now = lv_tick_get();
     if (code == LV_EVENT_PRESSED) {
+        if (action == ButtonAction::Conversation) {
+            s_view.gesture_lens = conversation_lens(point);
+            if (!s_view.gesture_lens || contains_point(s_view.settings_button, point) ||
+                (s_view.conversation_tap_accepted &&
+                 now - s_view.conversation_tap_at < kConversationRearmMs)) {
+                cancel_button_gesture(false);
+                return;
+            }
+            s_view.gesture_conversation = conversation_tap(s_view.previous.screen, s_view.runtime_status);
+            s_view.gesture_started = now;
+        }
+        if (action == ButtonAction::MotionSetting) {
+            s_view.gesture_setting_enable = !s_view.gimbal_settings.motion_enabled;
+        } else if (action == ButtonAction::ChargeSetting) {
+            s_view.gesture_setting_enable = !s_view.gimbal_settings.charge_enabled;
+        }
         s_view.gesture_button = button;
         s_view.gesture_start = point;
         s_view.gesture_cancelled = false;
@@ -756,14 +969,19 @@ void button_event(lv_event_t *event) {
     if (moved_too_far(point)) {
         s_view.gesture_cancelled = true;
     }
+    const ConversationTap conversation = s_view.gesture_conversation;
+    if (action == ButtonAction::Conversation &&
+        (now - s_view.gesture_started > kConversationTapMs ||
+         conversation_lens(point) != s_view.gesture_lens ||
+         contains_point(s_view.settings_button, point) ||
+         conversation != conversation_tap(s_view.previous.screen, s_view.runtime_status))) {
+        s_view.gesture_cancelled = true;
+    }
     if (code == LV_EVENT_RELEASED) {
-        lv_area_t bounds{};
-        lv_obj_get_coords(button, &bounds);
-        const bool valid = !s_view.gesture_cancelled && point.x >= bounds.x1 &&
-                           point.x <= bounds.x2 && point.y >= bounds.y1 && point.y <= bounds.y2;
+        const bool valid = !s_view.gesture_cancelled && contains_point(button, point);
         cancel_button_gesture(true);
         if (valid) {
-            perform_button_action(action);
+            perform_button_action(action, conversation);
         }
     }
 }
@@ -886,18 +1104,36 @@ bool create_settings(int width, int height) {
         lv_obj_set_style_border_width(panel, 1, 0);
         lv_obj_set_style_border_color(panel, lv_color_hex(kTerminal), 0);
     }
+    constexpr int column_width = 196;
+    constexpr int left = 28;
+    constexpr int right = panel_width - left - column_width;
+    constexpr int row_height = 56;
+    s_view.motion_setting =
+        make_button(s_view.settings_menu, left, 70, column_width, row_height, kEnableMotion,
+                    ButtonAction::MotionSetting);
+    s_view.charge_setting =
+        make_button(s_view.settings_menu, right, 70, column_width, row_height, kEnableCharge,
+                    ButtonAction::ChargeSetting);
     s_view.provision_menu_button =
-        make_button(s_view.settings_menu, 40, 70, 384, 56, kProvision, ButtonAction::ProvisionMenu);
+        make_button(s_view.settings_menu, left, 142, column_width, row_height, kProvision,
+                    ButtonAction::ProvisionMenu);
+    s_view.settings_status =
+        make_button(s_view.settings_menu, left, 292, panel_width - 2 * left, 44, "",
+                    ButtonAction::RetrySettings, true);
     s_view.confirm_title =
         make_ui_label(s_view.settings_confirm, 24, 22, 416, 36, kConfirmTitle, kNeutral);
     s_view.confirm_button = make_button(s_view.settings_confirm, 248, 224, 184, 56, kConfirm,
                                         ButtonAction::Confirm, true);
-    if (!s_view.provision_menu_button || !s_view.confirm_title || !s_view.confirm_button ||
+    if (!s_view.motion_setting || !s_view.charge_setting || !s_view.settings_status ||
+        !s_view.provision_menu_button || !s_view.confirm_title || !s_view.confirm_button ||
         !make_ui_label(s_view.settings_menu, 24, 22, 416, 36, kSettings, kNeutral) ||
-        !make_button(s_view.settings_menu, 40, 142, 384, 56, kPowerOff, ButtonAction::PowerOff) ||
-        !make_button(s_view.settings_menu, 40, 214, 384, 56, kReset, ButtonAction::ResetMenu,
+        !make_button(s_view.settings_menu, right, 142, column_width, row_height, kPowerOff,
+                     ButtonAction::PowerOff) ||
+        !make_button(s_view.settings_menu, left, 214, column_width, row_height, kReset,
+                     ButtonAction::ResetMenu,
                      true) ||
-        !make_button(s_view.settings_menu, 40, 286, 384, 56, kReturn, ButtonAction::Return) ||
+        !make_button(s_view.settings_menu, right, 214, column_width, row_height, kReturn,
+                     ButtonAction::Return) ||
         !make_button(s_view.settings_confirm, 32, 224, 184, 56, kCancel, ButtonAction::Cancel)) {
         return false;
     }
@@ -908,6 +1144,7 @@ bool create_settings(int width, int height) {
     }
     lv_obj_set_style_text_align(s_view.confirm_notice, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_line_space(s_view.confirm_notice, 6, 0);
+    set_hidden(s_view.settings_status, true);
     show_settings(SettingsPage::Closed);
     update_touch_controls();
     return true;
@@ -940,6 +1177,8 @@ int mybot_lvgl_view_create(lv_display_t *display) {
      * sliding into Settings must never become a fresh button press. */
     lv_obj_add_flag(s_view.root,
                     static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK));
+    lv_obj_add_event_cb(s_view.root, button_event, LV_EVENT_ALL,
+                        reinterpret_cast<void *>(static_cast<uintptr_t>(ButtonAction::Conversation)));
     s_view.artwork = make_panel(s_view.root, (width - s_view.artwork_width) / 2,
                                 (height - s_view.artwork_height) / 2, s_view.artwork_width,
                                 s_view.artwork_height, kBackground, LV_OPA_TRANSP);
@@ -997,6 +1236,11 @@ void mybot_lvgl_view_update(const mybot_lcd_content_t *content, const char *ssid
         !s_view.has_content || normalized.indicators != s_view.previous.indicators ||
         copied_status.in_conversation != s_view.runtime_status.in_conversation ||
         std::strcmp(copied_status.state, s_view.runtime_status.state) != 0;
+    if (s_view.gesture_button == s_view.root &&
+        (workflow_changed ||
+         conversation_tap(normalized.screen, copied_status) != s_view.gesture_conversation)) {
+        cancel_button_gesture(true);
+    }
     if (s_view.provision_screen != BK7259_PROVISION_NONE) {
         /* Keep the newest borrowed SDK data, but never let a delayed ordinary
          * snapshot erase the local PREPARING/CANCELLING acknowledgement. */
