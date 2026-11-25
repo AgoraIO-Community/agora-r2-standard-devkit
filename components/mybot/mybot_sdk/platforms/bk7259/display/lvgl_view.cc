@@ -9,6 +9,7 @@
 #include "mybot_bk7259_platform.h"
 #include "pixel_expression_shapes.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -21,7 +22,8 @@ namespace {
 
 constexpr int kArtworkWidth = 1024;
 constexpr int kArtworkHeight = 896;
-constexpr unsigned kFrameParts = 13;
+constexpr unsigned kLensFrameParts = 5;
+constexpr unsigned kFrameParts = 2 * kLensFrameParts + 3;
 constexpr size_t kSsidCapacity = 33;
 constexpr size_t kStateLineCapacity =
     BK7259_LCD_STATE_CAPACITY + sizeof("> state: ") + sizeof(" | vp:pending") - 2;
@@ -188,6 +190,7 @@ struct View {
     lv_obj_t *terminal[4];
     lv_obj_t *face;
     lv_obj_t *frame[kFrameParts];
+    lv_area_t ready_lenses[2];
     pixel_shapes::Bank banks[2];
     lv_obj_t *guide;
     lv_obj_t *divider;
@@ -216,6 +219,7 @@ struct View {
     lv_obj_t *provision_retry_button;
     lv_obj_t *retry_button;
     lv_obj_t *gesture_button;
+    const lv_area_t *gesture_lens;
     lv_point_t gesture_start;
     uint32_t gesture_started;
     uint32_t conversation_tap_at;
@@ -604,6 +608,22 @@ bool create_face() {
             return false;
         }
     }
+    /* Capture each full lens before any expression moves the actor. The
+     * last three frame parts (bridge and temples) are outside the lenses. */
+    lv_obj_update_layout(s_view.face);
+    for (unsigned eye = 0; eye < 2; ++eye) {
+        const unsigned first = eye * kLensFrameParts;
+        lv_area_t &lens = s_view.ready_lenses[eye];
+        lv_obj_get_coords(s_view.frame[first], &lens);
+        for (unsigned i = 1; i < kLensFrameParts; ++i) {
+            lv_area_t bar;
+            lv_obj_get_coords(s_view.frame[first + i], &bar);
+            lens.x1 = std::min(lens.x1, bar.x1);
+            lens.y1 = std::min(lens.y1, bar.y1);
+            lens.x2 = std::max(lens.x2, bar.x2);
+            lens.y2 = std::max(lens.y2, bar.y2);
+        }
+    }
     for (auto &bank : s_view.banks) {
         if (!pixel_shapes::create(bank, s_view.face, s_view.artwork_width, s_view.artwork_height))
             return false;
@@ -690,6 +710,7 @@ bool create_provision_page() {
 
 void cancel_button_gesture(bool wait_release) {
     s_view.gesture_button = nullptr;
+    s_view.gesture_lens = nullptr;
     s_view.gesture_conversation = ConversationTap::None;
     s_view.gesture_cancelled = true;
     lv_indev_t *input = lv_indev_active();
@@ -874,11 +895,23 @@ bool moved_too_far(const lv_point_t &point) {
     return dx * dx + dy * dy > kTapSlop * kTapSlop;
 }
 
-bool contains_point(lv_obj_t *object, const lv_point_t &point) {
-    lv_area_t bounds{};
-    lv_obj_get_coords(object, &bounds);
+bool contains_point(const lv_area_t &bounds, const lv_point_t &point) {
     return point.x >= bounds.x1 && point.x <= bounds.x2 &&
            point.y >= bounds.y1 && point.y <= bounds.y2;
+}
+
+bool contains_point(lv_obj_t *object, const lv_point_t &point) {
+    lv_area_t bounds;
+    lv_obj_get_coords(object, &bounds);
+    return contains_point(bounds, point);
+}
+
+const lv_area_t *conversation_lens(const lv_point_t &point) {
+    for (const auto &lens : s_view.ready_lenses) {
+        if (contains_point(lens, point))
+            return &lens;
+    }
+    return nullptr;
 }
 
 void button_event(lv_event_t *event) {
@@ -910,7 +943,8 @@ void button_event(lv_event_t *event) {
     const uint32_t now = lv_tick_get();
     if (code == LV_EVENT_PRESSED) {
         if (action == ButtonAction::Conversation) {
-            if (contains_point(s_view.settings_button, point) ||
+            s_view.gesture_lens = conversation_lens(point);
+            if (!s_view.gesture_lens || contains_point(s_view.settings_button, point) ||
                 (s_view.conversation_tap_accepted &&
                  now - s_view.conversation_tap_at < kConversationRearmMs)) {
                 cancel_button_gesture(false);
@@ -938,6 +972,7 @@ void button_event(lv_event_t *event) {
     const ConversationTap conversation = s_view.gesture_conversation;
     if (action == ButtonAction::Conversation &&
         (now - s_view.gesture_started > kConversationTapMs ||
+         conversation_lens(point) != s_view.gesture_lens ||
          contains_point(s_view.settings_button, point) ||
          conversation != conversation_tap(s_view.previous.screen, s_view.runtime_status))) {
         s_view.gesture_cancelled = true;

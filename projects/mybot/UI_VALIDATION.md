@@ -34,21 +34,21 @@ python3 scripts/build_all.py --language zh-CN
 ```
 
 The Chinese build produces both cores, the combined image, and the OTA package.
-It completed in 34 seconds on the development host.
+It completed in 33 seconds on the development host.
 Generated endpoints and configuration were verified by the build script.
 
 Local build footprint (Chinese with EB521, English from the earlier build):
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,952,200 B | 1,933,176 B |
-| AP RAM | 158,004 B | 157,740 B |
+| AP Flash | 1,960,600 B | 1,933,176 B |
+| AP RAM | 164,724 B | 157,740 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,459,552 B | 3,440,512 B |
-| OTA package | 2,072,032 B | 2,057,616 B |
+| Combined image | 3,467,936 B | 3,440,512 B |
+| OTA package | 2,076,624 B | 2,057,616 B |
 
-The OTA partition is 2,097,152 bytes. The Chinese package has 25,120 bytes
+The OTA partition is 2,097,152 bytes. The Chinese package has 20,528 bytes
 of headroom, so new assets or code need an explicit size review.
 
 ## Host Test Matrix

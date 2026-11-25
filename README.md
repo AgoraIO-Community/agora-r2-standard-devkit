@@ -190,7 +190,7 @@ Typical R2 flow:
 3. After the STA interface obtains IPv4, provisioning stops and MyBot starts.
 4. An unclaimed device displays and announces a pairing code. Enter the complete code,
    including leading zeros, in the device-service console.
-5. In `READY`, tap the face screen or briefly press the GPIO47 conversation key to start a conversation. Use either control again to hang up.
+5. In `READY`, tap either glasses lens or briefly press the GPIO47 conversation key to start a conversation. During a conversation, tap either lens at the same screen position or press the key to hang up.
 6. Touch **Settings** to toggle servo motion and the bottom board's power request independently, change Wi-Fi, power off, or confirm a factory reset.
 
 The current R2 hardware handles long-press power on/off outside the firmware conversation
