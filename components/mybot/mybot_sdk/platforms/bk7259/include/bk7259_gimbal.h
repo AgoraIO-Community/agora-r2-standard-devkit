@@ -24,24 +24,41 @@ typedef enum {
     BK7259_GIMBAL_PHASE_SPEAKING,
 } bk7259_gimbal_phase_t;
 
-enum { BK7259_GIMBAL_NOT_READY = -4 };
+enum {
+    BK7259_GIMBAL_NOT_READY = -4,
+    BK7259_GIMBAL_MOTION_DISABLED = -5,
+};
+
+typedef struct {
+    bool motion_enabled;
+    bool charge_enabled;
+    bool pending;
+    bool save_failed;
+} bk7259_gimbal_settings_t;
 
 #if defined(CONFIG_MYBOT_GIMBAL) && CONFIG_MYBOT_GIMBAL
 /* Product-owned UART2 worker. Preparation does not wait for motor homing. */
 int bk7259_gimbal_prepare(void);
 /* Publish dialogue activity and phase. Duplicate phases preserve timing.
- * While centering, active updates retain the phase and return NOT_READY. */
+ * While centering or disabled the driver retains the phase and reports
+ * NOT_READY or MOTION_DISABLED, respectively. */
 int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase);
 /* Queue the next of four absolute targets or a scene, replacing older motion.
- * Returns 0 queued, -1 unavailable, or BK7259_GIMBAL_NOT_READY while centering. */
+ * Returns 0 queued, -1 unavailable, NOT_READY while centering, or
+ * MOTION_DISABLED when the motion setting is off. */
 int bk7259_gimbal_send_next_command(void);
 int bk7259_gimbal_request(bk7259_gimbal_scene_t scene);
 /* Queue a link diagnostic. Returns 0 queued, -2 pending, or -1 unavailable. */
 int bk7259_gimbal_request_probe(void);
-/* Cancel motion and wait for confirmed center. */
+/* Cancel motion and wait for confirmed center. Skips centering while disabled. */
 int bk7259_gimbal_center_wait(uint32_t timeout_ms);
-/* Queue a charging policy change. The worker starts and stops the heartbeat. */
+/* Publish requested policies without waiting for flash or UART. Switching
+ * motion off queues one final home without requiring an ACK. Restoring an
+ * already-disabled setting at boot does not move the servos. A repeated
+ * request retries a failed save. get_settings snapshots the latest selection. */
+int bk7259_gimbal_request_motion_enabled(bool enabled);
 int bk7259_gimbal_set_charging(bool enabled);
+int bk7259_gimbal_get_settings(bk7259_gimbal_settings_t *settings);
 /* Disable charging for product shutdown and wait for an explicit stop ACK
  * after any enable attempt. Enabling is blocked until platform preparation. */
 int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms);
@@ -57,8 +74,12 @@ static inline int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 { (void)scene; return 0; }
 static inline int bk7259_gimbal_center_wait(uint32_t timeout_ms)
 { (void)timeout_ms; return 0; }
+static inline int bk7259_gimbal_request_motion_enabled(bool enabled)
+{ (void)enabled; return -1; }
 static inline int bk7259_gimbal_set_charging(bool enabled)
 { (void)enabled; return -1; }
+static inline int bk7259_gimbal_get_settings(bk7259_gimbal_settings_t *settings)
+{ (void)settings; return -1; }
 static inline int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
 { (void)timeout_ms; return 0; }
 static inline int bk7259_gimbal_shutdown(void) { return 0; }

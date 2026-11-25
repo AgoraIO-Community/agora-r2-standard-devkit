@@ -32,6 +32,8 @@ static void motion_reply(char *buffer, int length, int result)
         command_reply(buffer, length, "gimbal motion queued");
     else if (result == BK7259_GIMBAL_NOT_READY)
         command_reply(buffer, length, "gimbal not ready: waiting for center confirmation");
+    else if (result == BK7259_GIMBAL_MOTION_DISABLED)
+        command_reply(buffer, length, "gimbal motion disabled by settings");
     else
         command_reply(buffer, length, "gimbal unavailable");
 }

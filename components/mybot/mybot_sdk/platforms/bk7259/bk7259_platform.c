@@ -30,10 +30,6 @@ int mybot_bk7259_platform_prepare(void) {
         bk7259_lcd_shutdown();
         return -1;
     }
-    if (bk7259_gimbal_prepare() < 0) {
-        /* Optional actuator failure must not prevent voice/UI startup. */
-        MYBOT_LOGW(TAG, "gimbal preparation failed; continuing without motion");
-    }
     s_prepared = true;
     MYBOT_LOGI(TAG, "platform prepared");
     return 0;

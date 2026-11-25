@@ -85,6 +85,8 @@ static void expect_scene(const char *argument, int result,
     const char *reply = result == 0 ? "queued" : "unavailable";
     if (result == BK7259_GIMBAL_NOT_READY) {
         reply = "not ready";
+    } else if (result == BK7259_GIMBAL_MOTION_DISABLED) {
+        reply = "disabled by settings";
     }
     invoke("gimbal_scene", argument, NULL, reply);
     assert(scene_calls == before + 1 && requested_scene == expected);
@@ -100,18 +102,19 @@ int main(void)
 
     invoke("gimbal_cmd", "happy", NULL, "Usage:");
     assert(raw_calls == 0 && scene_calls == 0);
-    const int results[] = {0, BK7259_GIMBAL_NOT_READY, -1};
-    const char *const replies[] = {"queued", "not ready", "unavailable"};
-    for (int index = 0; index < 3; ++index) {
+    const int results[] = {0, BK7259_GIMBAL_NOT_READY, BK7259_GIMBAL_MOTION_DISABLED, -1};
+    const char *const replies[] = {"queued", "not ready", "disabled by settings", "unavailable"};
+    for (size_t index = 0; index < sizeof(results) / sizeof(results[0]); ++index) {
         request_result = results[index];
         invoke("gimbal_cmd", NULL, NULL, replies[index]);
-        assert(raw_calls == index + 1 && scene_calls == 0);
+        assert(raw_calls == (int)index + 1 && scene_calls == 0);
     }
     expect_scene(NULL, BK7259_GIMBAL_NOT_READY, BK7259_GIMBAL_SCENE_HAPPY);
+    expect_scene(NULL, BK7259_GIMBAL_MOTION_DISABLED, BK7259_GIMBAL_SCENE_HAPPY);
     expect_scene(NULL, -1, BK7259_GIMBAL_SCENE_HAPPY);
     invoke("gimbal_scene", "Happy", NULL, "Usage:");
     invoke("gimbal_scene", "happy", "sad", "Usage:");
-    assert(scene_calls == 2);
+    assert(scene_calls == 3);
     for (int index = 0; index < 5; ++index)
         expect_scene(NULL, 0, (bk7259_gimbal_scene_t)(index % 4));
 
@@ -124,7 +127,7 @@ int main(void)
     expect_scene("sad", 0, BK7259_GIMBAL_SCENE_SAD);
     expect_scene("angry", 0, BK7259_GIMBAL_SCENE_ANGRY);
     expect_scene(NULL, 0, BK7259_GIMBAL_SCENE_SURPRISED);
-    assert(raw_calls == 3);
+    assert(raw_calls == 4);
 
     invoke("gimbal_probe", "extra", NULL, "Usage:");
     assert(probe_calls == 0);
@@ -160,6 +163,11 @@ int main(void)
     }
     request_result = BK7259_GIMBAL_NOT_READY;
     invoke("gimbal_dialogue", "start", NULL, "not ready");
+    request_result = BK7259_GIMBAL_MOTION_DISABLED;
+    invoke("gimbal_dialogue", "thinking", NULL, "disabled by settings");
+    assert(requested_dialogue && requested_phase == BK7259_GIMBAL_PHASE_THINKING);
+    invoke("gimbal_dialogue", "end", NULL, "disabled by settings");
+    assert(!requested_dialogue);
     request_result = -1;
     invoke("gimbal_dialogue", "end", NULL, "unavailable");
 

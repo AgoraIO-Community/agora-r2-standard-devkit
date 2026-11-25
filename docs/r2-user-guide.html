@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="MyBot R2 中文操作手册：配网、配对、对话、屏幕状态、更换 Wi-Fi、关机与恢复出厂。">
+  <meta name="description" content="MyBot R2 中文操作手册。介绍配网、配对、对话、屏幕状态、舵机控制、供电请求、关机和恢复出厂。">
   <title>MyBot R2 操作手册</title>
   <style>
     @page { size: A4; margin: 0; }
@@ -63,6 +63,9 @@
     .section-gap { margin-top: 5mm; }
     .status-table th:first-child, .status-table td:first-child { width: 37mm; }
     .status-table th, .status-table td { padding-block: 1.7mm; }
+    .settings-guide .grid2 { max-width: 157mm; margin-inline: auto; }
+    .settings-guide .section-gap { margin-top: 3mm; }
+    .settings-guide th, .settings-guide td { padding-block: 1.7mm; }
     .faq th:first-child, .faq td:first-child { width: 39mm; }
     .faq td { padding-top: 2.4mm; padding-bottom: 2.4mm; }
     .two-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin: 4mm 0; }
@@ -76,7 +79,7 @@
 <body>
 
 <section class="page" aria-label="封面与快速开始">
-  <header class="masthead"><b>MYBOT / R2</b><span>中文操作手册 · v1.2</span></header>
+  <header class="masthead"><b>MYBOT / R2</b><span>中文操作手册 · v1.3</span></header>
   <p class="chapter">开始使用你的 R2</p>
   <h1>开机，联网，<br>开始对话。</h1>
   <p class="subtitle">触屏设置 · 像素眼镜 · 轻触或按键会话</p>
@@ -90,7 +93,7 @@
     <div><b>03　完成配对</b><span>若显示配对码，在网页控制台输入六位数字。</span></div>
     <div><b>04　轻触开聊</b><span>轻触表情主页开聊，再次轻触挂断。也可短按会话键完成任一操作。</span></div>
   </div>
-  <p class="small">适用于长按按钮可硬件开关机、带“设置 → 配网 / 关机 / 恢复出厂”入口的 R2 中文版本；
+  <p class="small">适用于设置菜单带舵机控制和供电请求的 R2 中文版本。
     图中热点名、网络名及配对码均为示例，以设备实际显示为准。</p>
   <footer class="footer"><span>使用顺序：配网 02 → 配对 03 → 对话 04</span><span>01 / 07</span></footer>
 </section>
@@ -195,13 +198,13 @@
   <footer class="footer"><span>更换网络、关机或恢复出厂时，使用屏幕右上角“设置”</span><span>04 / 07</span></footer>
 </section>
 
-<section class="page" aria-label="更换 Wi-Fi 与取消配网">
+<section class="page settings-guide" aria-label="更换 Wi-Fi、取消配网和设备设置">
   <header class="masthead"><b>MYBOT / R2</b><span>设置 · 配网</span></header>
   <p class="chapter">04 / 更换网络</p>
   <h2>保留绑定，更换 Wi-Fi</h2>
   <p class="lead">待机、会话中或网络异常时，都可从右上角“设置”进入配网。</p>
   <div class="grid2">
-    <figure><img class="image" src="images/r2-user-guide/settings.png" alt="设置菜单：配网、关机、恢复出厂、返回。"><figcaption>① 打开设置，轻触“配网”；“关机”会立即重启设备。</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/settings.png" alt="两列三行设置菜单，首行为关闭舵机控制和关闭供电请求，其下是配网、关机、恢复出厂和返回。"><figcaption>① 打开设置，轻触“配网”。触屏“关机”会重启设备。</figcaption></figure>
     <figure><img class="image" src="images/r2-user-guide/provision-confirmation.png" alt="开始配网确认框，包含取消和开始配网按钮。"><figcaption>② 确认要更换网络后，轻触“开始配网”。</figcaption></figure>
   </div>
   <ol class="steps compact">
@@ -210,8 +213,7 @@
     <li>看到“Wi-Fi 配网”后，手机连接屏幕显示的热点，按第 02 页步骤设置新网络。</li>
     <li>新网络连接成功后，设备自动重新连接服务；等待出现 <code>ready</code> 再开聊。</li>
   </ol>
-  <div class="note"><strong>只更换网络，保留已有设置。</strong>设备身份、账号绑定、设备凭据和保存的音量不会清除，
-    也不会重启整机。</div>
+  <div class="note"><strong>更换网络会保留已有设置。</strong>设备身份、账号绑定、设备凭据、音量、舵机和供电偏好均保留，设备无需重启。</div>
   <h3 class="section-gap">不想继续时，轻触“取消配网”</h3>
   <p>进入“正在保存Wi-Fi”前，可以取消配网。即使已经点击网页 Connect，
     只要还在尝试连接、尚未开始保存，也可以取消。</p>
@@ -223,9 +225,13 @@
       <tr><td>已经开始保存 Wi-Fi</td><td>不再接受取消，请等待本次设置完成。</td></tr>
     </tbody>
   </table>
+  <h3 class="section-gap">调整舵机控制和供电请求</h3>
+  <p>轻触“关闭舵机控制”会取消待发动作，发送一次双轴绝对回中指令（每轴 1000 pps）。无应答时不重发。
+    保存为关闭后，下次开机不发送舵机动作，仍可对话。供电请求可独立开关，保存后下次开机沿用。
+    若显示“保存失败，点击重试”，轻触提示重新保存。</p>
   <p class="small">触屏操作请单指按下并在同一按钮内松开。拖动或多指操作不会确认，打开一层页面后，
     需要重新轻触下一层按钮。</p>
-  <footer class="footer"><span>配网用于换网；关机用于重启设备；恢复出厂用于清除本机设置</span><span>05 / 07</span></footer>
+  <footer class="footer"><span>设置首行可控制舵机和供电请求</span><span>05 / 07</span></footer>
 </section>
 
 <section class="page" aria-label="恢复出厂设置">
@@ -234,7 +240,7 @@
   <h2>从触摸屏恢复出厂设置</h2>
   <p class="lead">需要清除本机配置时，依次轻触“设置 → 恢复出厂 → 确认恢复”。</p>
   <div class="grid2">
-    <figure><img class="image" src="images/r2-user-guide/factory-confirmation.png" alt="恢复出厂确认框，说明清除 Wi-Fi、设备凭据和音量，提供取消及确认恢复。"><figcaption>确认前可以“取消”，不会清除任何配置。</figcaption></figure>
+    <figure><img class="image" src="images/r2-user-guide/factory-confirmation.png" alt="恢复出厂确认框，提示清除 Wi-Fi、设备凭据、音量和舵机供电设置，提供取消及确认恢复。"><figcaption>确认前可以“取消”，不会清除任何配置。</figcaption></figure>
     <figure><img class="image" src="images/r2-user-guide/restoring.png" alt="正在恢复出厂设置，请勿断电。"><figcaption>确认后结束服务并清理配置，恢复过程中不能取消。</figcaption></figure>
   </div>
   <div class="note attention"><strong>恢复和重启期间，请保持供电，不要关机或断电。</strong>看到“恢复完成，正在重启”后，
@@ -245,6 +251,7 @@
       <tr><td>本机 Wi-Fi</td><td>清除；重启后需要重新配网。</td></tr>
       <tr><td>本机设备凭据</td><td>清除；联网后重新完成设备鉴权。</td></tr>
       <tr><td>保存的音量</td><td>清除；恢复为固件默认音量。</td></tr>
+      <tr><td>舵机控制、供电请求</td><td>清除保存的偏好，两项恢复为开启。</td></tr>
       <tr><td>设备 ID、已烧录固件</td><td>保留，不会更换设备身份或回退固件。</td></tr>
       <tr><td>服务器上的账号 / 智能体绑定</td><td>保留；重新联网后继续按服务端绑定状态工作。</td></tr>
     </tbody>
@@ -283,7 +290,7 @@
         轻触表情主页或短按会话键重新开聊。</td></tr>
     </tbody>
   </table>
-  <p class="small">本手册对应 R2 触屏会话版，版本 1.2 / 2026-11-24。界面图由与固件相同的 UI 渲染代码生成，
+  <p class="small">本手册对应带舵机和供电设置的 R2 版本，版本 1.3 / 2026-11-25。界面图由与固件相同的 UI 渲染代码生成，
     不是实机照片；动画以静帧展示。图中示例不代表设备的实际网络、身份或配对码。</p>
   <footer class="footer"><span>MyBot R2 · 操作手册</span><span>07 / 07</span></footer>
 </section>
