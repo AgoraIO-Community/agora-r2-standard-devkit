@@ -8,7 +8,7 @@ This page records the current reproducible checks and remaining release blockers
 It replaces the former chronological development log. Older intermediate
 diagnostics remain available in Git history and are not current instructions.
 
-On 2026-11-24, the Chinese and English video builds passed with EB521 V1.2
+On 2026-11-25, the Chinese and English video builds passed with EB521 V1.2
 enabled. On an earlier hardware test image, two consecutive `happy` runs completed
 and returned to center. The current builds still require board validation.
 
@@ -23,14 +23,14 @@ python3 scripts/check_sources.py
 This verifies:
 
 - AVDK and Solution gitlinks and tracked-tree cleanliness.
-- Patch hashes and the MyBot/AOSL content digests.
+- Patch hashes and the SDK/AOSL content digests.
 - RTSA header and static-library hashes.
 - Product include boundaries.
 
 The managed clean build passes:
 
 ```bash
-python3 scripts/build_all.py
+python3 scripts/build_all.py --language both
 ```
 
 It builds both languages, both cores, the combined image, and the OTA package.
@@ -38,13 +38,13 @@ The build script verified the generated configuration and service endpoint for e
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,947,504 B | 1,947,520 B |
-| AP RAM | 157,804 B | 157,804 B |
+| AP Flash | 1,960,288 B | 1,960,280 B |
+| AP RAM | 164,724 B | 164,724 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,454,848 B | 3,454,848 B |
-| OTA package | 2,069,232 B | 2,068,976 B |
-| OTA headroom | 27,920 B | 28,176 B |
+| Combined image | 3,467,616 B | 3,467,616 B |
+| OTA package | 2,076,608 B | 2,076,272 B |
+| OTA headroom | 20,544 B | 20,880 B |
 
 ## Host Test Matrix
 
@@ -66,9 +66,9 @@ Coverage includes:
 
 - Build preparation and dependency workspace ownership.
 - Provisioning owner, cancellation, credential commit, and reset priority.
-- Factory-reset persistence and storage-failure injection.
+- Persistent servo and power preferences, save failure and retry, and factory-reset recovery.
 - CST7XX touch parsing, GPIO capabilities, lifecycle, and event bounds.
-- Native LVGL touch flows, both languages, disabled animations, the power action,
+- Native LVGL touch flows, both languages, disabled animations, unavailable gimbal controls, the power action,
   and 23 expressions.
 - Expression and voiceprint indicator policy.
 - HTTPS retry, timeout, EOF, socket-error isolation, and clock wraparound.

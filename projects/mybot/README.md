@@ -61,7 +61,12 @@ The key is active low, scanned every 20 ms, and debounced with two matching
 samples. `KEY_SHORT_PRESS_LIMIT_MS=5000` filters prolonged presses; it does not
 define the hardware power-button timing. The CEN button remains hardware reset.
 
-Touch **Settings** to open Wi-Fi setup, power off, or factory reset.
+Open **Settings** to control servo motion and the bottom board's charging request independently, set up Wi-Fi, power off, or restore factory settings. Both switches default to on and retain their saved selections across reboots.
+
+A single-finger tap inside either glasses lens starts a conversation when ready or hangs up
+during a conversation. Release within 400 ms inside the same lens. Both touch areas stay
+at their READY positions as expressions change. The touchscreen and GPIO47 key can
+be used interchangeably. Settings, provisioning and reset screens have their own controls.
 
 Power off calls `bk_reboot()` and restarts the device without clearing Wi-Fi, device
 credentials, binding, or volume.
@@ -80,7 +85,7 @@ Factory reset is owned by the product task:
 1. Persist `mybot.factory_reset.v1`.
 2. Stop the SDK and require the `STOPPED` state.
 3. Stop the portal, SoftAP, scans, and STA.
-4. Delete `mybot.device_auth`, `mybot.wifi.v1`, and `mybot.volume.v1`.
+4. Delete `mybot.device_auth`, `mybot.wifi.v1`, `mybot.volume.v1`, and `mybot.gimbal.v1`. Servo motion and the power request both default to on at the next boot.
 5. Verify deletion, remove the reset marker, and reboot.
 
 The reset does not erase the whole EasyFlash environment, change the UID-derived
@@ -173,6 +178,6 @@ Configuration and source are in
 - [Validation status](./UI_VALIDATION.md)
 - [UI screenshots](../../docs/images/r2-user-guide/README.md)
 
-The default R2 AP configuration enables EB521 V1.2 on CN1. At boot the firmware
+The default R2 AP configuration enables EB521 V1.2 on CN1. On first use the firmware
 requests charging and commands both axes to center at 1000 pps. Device audio, video, touch, power-loss, and
 long-duration behavior are not implied by a successful host build.
