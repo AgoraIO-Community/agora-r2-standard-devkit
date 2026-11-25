@@ -8,7 +8,7 @@ This page records the current reproducible checks and remaining release blockers
 It replaces the former chronological development log. Older intermediate
 diagnostics remain available in Git history and are not current instructions.
 
-The original board checklist was reviewed on 2026-10-22. On 2026-11-24 the
+The original board checklist was reviewed on 2026-10-22. On 2026-11-25 the
 Chinese R2 build was verified with EB521 V1.2 enabled. On the preceding test
 image, two consecutive `happy` runs completed and returned to center on hardware.
 
@@ -30,25 +30,25 @@ This verifies:
 The managed clean build passes:
 
 ```bash
-python3 scripts/build_all.py
+python3 scripts/build_all.py --language zh-CN
 ```
 
-It builds both languages, both cores, the combined image, and the OTA package.
-The latest observed runtime was about 50 seconds on the development host.
+The Chinese build produces both cores, the combined image, and the OTA package.
+It completed in 34 seconds on the development host.
 Generated endpoints and configuration were verified by the build script.
 
 Local build footprint (Chinese with EB521, English from the earlier build):
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,948,568 B | 1,933,176 B |
-| AP RAM | 157,828 B | 157,740 B |
+| AP Flash | 1,952,200 B | 1,933,176 B |
+| AP RAM | 158,004 B | 157,740 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,455,904 B | 3,440,512 B |
-| OTA package | 2,069,744 B | 2,057,616 B |
+| Combined image | 3,459,552 B | 3,440,512 B |
+| OTA package | 2,072,032 B | 2,057,616 B |
 
-The OTA partition is 2,097,152 bytes. The Chinese package has 27,408 bytes
+The OTA partition is 2,097,152 bytes. The Chinese package has 25,120 bytes
 of headroom, so new assets or code need an explicit size review.
 
 ## Host Test Matrix
@@ -71,9 +71,9 @@ Coverage includes:
 
 - Build preparation and dependency workspace ownership.
 - Provisioning owner, cancellation, credential commit, and reset priority.
-- Factory-reset persistence and storage-failure injection.
+- Persistent servo and power preferences, save failure and retry, and factory-reset recovery.
 - CST7XX touch parsing, GPIO capabilities, lifecycle, and event bounds.
-- Native LVGL touch flows, both languages, disabled animations, the power action,
+- Native LVGL touch flows, both languages, disabled animations, unavailable gimbal controls, the power action,
   and 23 expressions.
 - Expression and voiceprint indicator policy.
 - HTTPS retry, timeout, EOF, socket-error isolation, and clock wraparound.

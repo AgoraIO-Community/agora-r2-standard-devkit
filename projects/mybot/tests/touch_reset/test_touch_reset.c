@@ -8,14 +8,19 @@
 
 /* Exercise the actual request mailbox, GPIO gestures and application owner.
  * Only hardware, storage and SDK lifecycle calls are fault-injected. */
+#define CONFIG_MYBOT_GIMBAL 1
+#include "bk7259_gimbal_prefs.c"
 #include "bk7259_factory_reset.c"
+#undef CONFIG_MYBOT_GIMBAL
 #undef TAG
 #include "bk7259_key.c"
 #undef TAG
 #include "bk7259_provision.c"
 #include "bk7259_gimbal.h"
+static int host_gimbal_prepare(void);
 static int host_gimbal_stop_charging_wait(uint32_t timeout_ms);
 static bool host_take_reboot_request(void);
+#define bk7259_gimbal_prepare host_gimbal_prepare
 #define bk7259_gimbal_stop_charging_wait host_gimbal_stop_charging_wait
 #define mybot_bk7259_platform_take_reboot_request host_take_reboot_request
 #define mybot_start host_sdk_start
@@ -31,12 +36,13 @@ static bool host_take_reboot_request(void);
 #undef mybot_get_state
 #undef mybot_bk7259_platform_take_reboot_request
 #undef bk7259_gimbal_stop_charging_wait
+#undef bk7259_gimbal_prepare
 
 enum { EXIT_REBOOT = 1, EXIT_IDLE };
-enum { INTENT, AUTH, WIFI, VOLUME, UNRELATED, RECORDS };
+enum { INTENT, AUTH, WIFI, VOLUME, GIMBAL, UNRELATED, RECORDS };
 static const char *const record_names[RECORDS] = {
     "mybot.factory_reset.v1", "mybot.device_auth",  "mybot.wifi.v1",
-    "mybot.volume.v1",        "vendor.calibration",
+    "mybot.volume.v1",        BK7259_GIMBAL_PREFS_KEY, "vendor.calibration",
 };
 typedef struct {
   bool present;
@@ -54,9 +60,11 @@ static int delete_failure;
 static unsigned idle_polls, touch_at_poll, stop_calls, start_calls,
     network_calls;
 static unsigned writes, deletes, reboot_calls, failures, conversation_events;
+static unsigned gimbal_prepares, gimbal_writes;
 static mybot_key_event_t last_conversation_event;
 static bool fail_start, fail_network;
 static bool fail_charge_stop;
+static bool fail_flash_init, fail_gimbal_read, fail_gimbal_write;
 static bool factory_on_reboot_claim;
 /* Optional fault/scheduling hooks used by the provisioning-owner regression.
  * Normal reset cases below leave these unset and retain their original flow. */
@@ -106,6 +114,7 @@ static void fixture(void) {
   (void)bk7259_provision_take_request();
   bk7259_provision_finish();
   discard_conversation_input();
+  s_writes_blocked = false;
   memset(records, 0, sizeof(records));
   const unsigned char data[] = {1, 2, 3, 4};
   for (int i = AUTH; i < RECORDS; ++i)
@@ -118,8 +127,10 @@ static void fixture(void) {
   delete_failure = -1;
   idle_polls = touch_at_poll = stop_calls = start_calls = network_calls = 0;
   writes = deletes = reboot_calls = failures = conversation_events = 0;
+  gimbal_prepares = gimbal_writes = 0;
   fail_start = fail_network = false;
   fail_charge_stop = false;
+  fail_flash_init = fail_gimbal_read = fail_gimbal_write = false;
   factory_on_reboot_claim = false;
   owner_poll_hook = owner_stop_hook = owner_start_hook = NULL;
   owner_workflow_hook = NULL;
@@ -266,7 +277,7 @@ int mbedtls_md_hmac(const mbedtls_md_info_t *info, const unsigned char *key,
   return 0;
 }
 
-EfErrCode easyflash_init(void) { return EF_NO_ERR; }
+EfErrCode easyflash_init(void) { return fail_flash_init ? EF_READ_ERR : EF_NO_ERR; }
 bool ef_get_env_obj(const char *name, env_node_obj_t node) {
   host_record_t *entry = &records[record_index(name)];
   if (!entry->present)
@@ -276,14 +287,25 @@ bool ef_get_env_obj(const char *name, env_node_obj_t node) {
 }
 size_t ef_get_env_blob(const char *name, void *out, size_t capacity,
                        size_t *saved) {
-  host_record_t *entry = &records[record_index(name)];
+  int index = record_index(name);
+  host_record_t *entry = &records[index];
   assert(entry->present && capacity >= entry->metadata.value_len);
   *saved = entry->metadata.value_len;
+  if (index == GIMBAL && fail_gimbal_read)
+    return *saved; /* Beken's port can report the length without reading bytes. */
   memcpy(out, entry->bytes, *saved);
   return *saved;
 }
 EfErrCode ef_set_env_blob(const char *name, const void *bytes, size_t length) {
-  assert(record_index(name) == INTENT);
+  int index = record_index(name);
+  if (index == GIMBAL) {
+    ++gimbal_writes;
+    if (fail_gimbal_write)
+      return EF_WRITE_ERR;
+    store(GIMBAL, bytes, length);
+    return EF_NO_ERR;
+  }
+  assert(index == INTENT);
   ++writes;
   record('B');
   if (write_failures) {
@@ -298,7 +320,7 @@ EfErrCode ef_del_env(const char *name) {
   assert(index != UNRELATED);
   assert(!sdk_running && sdk_state == MYBOT_STATE_STOPPED && network_stopped);
   ++deletes;
-  record("xawv"[index]);
+  record("xawvg"[index]);
   if (index == delete_failure) {
     delete_failure = -1;
     return EF_ERASE_ERR;
@@ -344,6 +366,10 @@ int bk7259_lcd_set_runtime_status(const char *state, bool active) {
   return 0;
 }
 int bk7259_gimbal_cli_init(void) { return 0; }
+static int host_gimbal_prepare(void) {
+  ++gimbal_prepares;
+  return 0;
+}
 static int host_gimbal_stop_charging_wait(uint32_t timeout_ms) {
   assert(timeout_ms == 1000);
   record('C');
@@ -460,7 +486,7 @@ static int run_owner(bool boot) {
   return reason;
 }
 static void assert_erased(void) {
-  for (int i = INTENT; i <= VOLUME; ++i)
+  for (int i = INTENT; i <= GIMBAL; ++i)
     assert(!records[i].present);
   assert(records[UNRELATED].present && records[UNRELATED].bytes[0] == 1);
 }
@@ -608,9 +634,11 @@ static void test_live_reset_order_and_deduplication(void) {
   bk7259_factory_reset_request();
   bk7259_factory_reset_request();
   assert(run_owner(false) == EXIT_REBOOT);
-  assert(!strcmp(events, "BSPDawvxCR") && writes == 1 && stop_calls == 1);
+  assert(!strcmp(events, "BSPDawvgxCR") && writes == 1 && stop_calls == 1);
   assert(reboot_calls == 1 && !failures);
   assert_erased();
+  assert(bk7259_gimbal_prefs_save(false, false) < 0);
+  assert(!gimbal_writes && !records[GIMBAL].present);
 }
 static void test_failures_wait_for_fresh_touch(void) {
   for (int fault = 0; fault < 6; ++fault) {
@@ -645,19 +673,52 @@ static void test_boot_resume_and_invalid_marker(void) {
   event_length = 0;
   events[0] = '\0';
   assert(run_owner(true) == EXIT_REBOOT);
-  assert(!network_calls && !start_calls && !strcmp(events, "LSPDawvxCR"));
+  assert(!network_calls && !start_calls && !gimbal_prepares && !strcmp(events, "LSPDawvgxCR"));
   assert_erased();
 
   fixture();
   const unsigned char invalid = 0;
   store(INTENT, &invalid, 1);
   assert(run_owner(true) == EXIT_IDLE);
-  assert(!start_calls && !network_calls && !writes && !deletes &&
+  assert(!start_calls && !network_calls && !gimbal_prepares && !writes && !deletes &&
          failures == 1);
   idle_polls = 0;
   touch_at_poll = 2;
   assert(run_owner(false) == EXIT_REBOOT && idle_polls == 2);
   assert_erased();
+}
+
+static void test_gimbal_preferences(void) {
+  fixture();
+  records[GIMBAL].present = false;
+  bool motion = false, charge = false;
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) == 0 && motion && charge);
+  assert(bk7259_gimbal_prefs_save(true, true) == 0 && !gimbal_writes);
+  assert(bk7259_gimbal_prefs_save(false, true) == 0 && gimbal_writes == 1);
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) == 0 && !motion && charge);
+  assert(bk7259_gimbal_prefs_save(false, true) == 0 && gimbal_writes == 1);
+  assert(bk7259_gimbal_prefs_save(true, false) == 0 && gimbal_writes == 2);
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) == 0 && motion && !charge);
+
+  fail_gimbal_write = true;
+  assert(bk7259_gimbal_prefs_save(false, false) < 0 && gimbal_writes == 3);
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) == 0 && motion && !charge);
+  fail_gimbal_write = false;
+  fail_gimbal_read = true;
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) < 0 && !motion && !charge);
+  fail_gimbal_read = false;
+  fail_flash_init = true;
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) < 0 && !motion && !charge);
+  assert(bk7259_gimbal_prefs_save(true, true) < 0 && gimbal_writes == 3);
+  fail_flash_init = false;
+
+  records[GIMBAL].metadata.crc_is_ok = false;
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) < 0 && !motion && !charge);
+  records[GIMBAL].metadata.crc_is_ok = true;
+  records[GIMBAL].metadata.value_len = 3;
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) < 0 && !motion && !charge);
+  assert(bk7259_gimbal_prefs_save(false, false) == 0 && gimbal_writes == 4);
+  assert(bk7259_gimbal_prefs_load(&motion, &charge) == 0 && !motion && !charge);
 }
 static void test_startup_failure_and_cancel_keep_touch_entry(void) {
   for (int fault = 0; fault < 2; ++fault) {
@@ -698,7 +759,7 @@ static void test_reboot_attempts_charge_stop_and_preserves_settings(void) {
     if (!factory_on_reboot_claim)
       bk7259_factory_reset_request();
     assert(run_owner(true) == EXIT_REBOOT);
-    assert(!strcmp(events, "LBSPDawvxCR") && reboot_calls == 1);
+    assert(!strcmp(events, "LBSPDawvgxCR") && reboot_calls == 1 && !gimbal_prepares);
     assert_erased();
   }
 }
@@ -714,6 +775,7 @@ static void test_runtime_reboot_runs_on_product_task(void) {
   owner_poll_hook = request_reboot_while_running;
   assert(run_owner(true) == EXIT_REBOOT);
   assert(!strcmp(events, "LGNACR") && idle_polls == 1);
+  assert(gimbal_prepares == 1);
   assert(!writes && !deletes && reboot_calls == 1);
 }
 
@@ -729,6 +791,7 @@ int TOUCH_RESET_TEST_MAIN(void) {
   test_live_reset_order_and_deduplication();
   test_failures_wait_for_fresh_touch();
   test_boot_resume_and_invalid_marker();
+  test_gimbal_preferences();
   test_startup_failure_and_cancel_keep_touch_entry();
   test_reboot_attempts_charge_stop_and_preserves_settings();
   test_runtime_reboot_runs_on_product_task();

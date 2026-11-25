@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "lvgl_view.h"
+#include "bk7259_gimbal.h"
 
 #include <array>
 #include <cassert>
@@ -29,6 +30,12 @@ unsigned touch_conversation_attempts;
 int pending_touch_conversation = -1;
 bool accept_touch_conversation = true;
 bool factory_reset_pending;
+#if CONFIG_MYBOT_GIMBAL
+bk7259_gimbal_settings_t gimbal_settings{true, true, false, false};
+unsigned motion_setting_requests;
+unsigned charge_setting_requests;
+bool gimbal_settings_available = true;
+#endif
 bool provision_busy;
 bool accept_provision = true;
 bool accept_cancel = true;
@@ -39,6 +46,15 @@ const char *output_directory;
 
 #if CONFIG_MYBOT_LANGUAGE_ZH_CN
 constexpr const char *kSetup = "设置";
+constexpr const char *kDisableMotion = "关闭舵机控制";
+constexpr const char *kEnableMotion = "开启舵机控制";
+constexpr const char *kDisableCharge = "关闭供电请求";
+constexpr const char *kEnableCharge = "开启供电请求";
+#if CONFIG_MYBOT_GIMBAL
+constexpr const char *kSettingsSaving = "正在保存设置";
+constexpr const char *kSettingsSaveFailed = "保存失败，点击重试";
+#endif
+constexpr const char *kSettingsUnavailable = "设置暂不可用";
 constexpr const char *kPowerOff = "关机";
 constexpr const char *kReset = "恢复出厂";
 constexpr const char *kBack = "返回";
@@ -63,6 +79,15 @@ constexpr const char *kFinishing = "正在保存Wi-Fi";
 constexpr const char *kReconnecting = "正在连接Wi-Fi";
 #else
 constexpr const char *kSetup = "Setup";
+constexpr const char *kDisableMotion = "Disable servos";
+constexpr const char *kEnableMotion = "Enable servos";
+constexpr const char *kDisableCharge = "Stop power request";
+constexpr const char *kEnableCharge = "Start power request";
+#if CONFIG_MYBOT_GIMBAL
+constexpr const char *kSettingsSaving = "Saving settings";
+constexpr const char *kSettingsSaveFailed = "Save failed. Tap to retry";
+#endif
+constexpr const char *kSettingsUnavailable = "Settings unavailable";
 constexpr const char *kPowerOff = "Power off";
 constexpr const char *kReset = "Factory reset";
 constexpr const char *kBack = "Back";
@@ -327,6 +352,71 @@ void test_power_off_action() {
     assert(reboot_requests == before + 1);
     assert(requests == 0);
     tap(kBack);
+}
+
+void test_gimbal_settings_menu() {
+    update(MYBOT_LCD_SCREEN_READY);
+    tap(kSetup);
+    const lv_point_t left = center(button(CONFIG_MYBOT_GIMBAL ? kDisableMotion : kEnableMotion));
+    const lv_point_t right = center(button(CONFIG_MYBOT_GIMBAL ? kDisableCharge : kEnableCharge));
+    const lv_point_t provision = center(button(kProvision));
+    const lv_point_t power = center(button(kPowerOff));
+    const lv_point_t reset = center(button(kReset));
+    const lv_point_t back = center(button(kBack));
+    assert(left.x == provision.x && left.x == reset.x);
+    assert(right.x == power.x && right.x == back.x && left.x < right.x);
+    assert(left.y == right.y && provision.y == power.y && reset.y == back.y);
+    assert(left.y < provision.y && provision.y < reset.y);
+    snapshot("gimbal-settings");
+#if CONFIG_MYBOT_GIMBAL
+    assert(!label(kSettingsUnavailable));
+    tap(kDisableMotion);
+    assert(motion_setting_requests == 1 && !gimbal_settings.motion_enabled && gimbal_settings.charge_enabled);
+    assert(label(kSettingsSaving) && lv_obj_has_state(button(kEnableMotion), LV_STATE_DISABLED));
+    tap(kDisableCharge);
+    assert(charge_setting_requests == 0);
+    snapshot("gimbal-settings-saving");
+
+    gimbal_settings.pending = false;
+    gimbal_settings.save_failed = true;
+    settle(260);
+    assert(label(kSettingsSaveFailed) && !label(kSettingsSaving));
+    snapshot("gimbal-settings-save-failed");
+    tap(kSettingsSaveFailed);
+    assert(motion_setting_requests == 2 && !gimbal_settings.motion_enabled && gimbal_settings.charge_enabled);
+    gimbal_settings.pending = false;
+    settle(260);
+    assert(!label(kSettingsSaveFailed) && !label(kSettingsSaving));
+
+    tap(kDisableCharge);
+    assert(charge_setting_requests == 1 && !gimbal_settings.charge_enabled && label(kEnableCharge));
+    gimbal_settings.pending = false;
+    gimbal_settings.motion_enabled = true; /* Simulate an admitted change from the AP console. */
+    settle(260);
+    assert(label(kDisableMotion) && label(kEnableCharge));
+    pointer(center(button(kEnableCharge)), LV_INDEV_STATE_PRESSED);
+    gimbal_settings.charge_enabled = true;
+    const lv_point_t charge = center(button(kEnableCharge));
+    pointer(charge, LV_INDEV_STATE_RELEASED);
+    pointer(charge, LV_INDEV_STATE_RELEASED);
+    assert(charge_setting_requests == 1 && label(kDisableCharge));
+
+    gimbal_settings_available = false;
+    settle(260);
+    assert(label(kSettingsUnavailable) && lv_obj_has_state(button(kEnableCharge), LV_STATE_DISABLED));
+    gimbal_settings_available = true;
+    settle(260);
+    assert(!label(kSettingsUnavailable) && !lv_obj_has_state(button(kDisableCharge), LV_STATE_DISABLED));
+#else
+    assert(label(kSettingsUnavailable));
+    assert(lv_obj_has_state(button(kEnableMotion), LV_STATE_DISABLED));
+    assert(lv_obj_has_state(button(kEnableCharge), LV_STATE_DISABLED));
+    tap(kEnableMotion);
+    tap(kEnableCharge);
+    assert(label(kSettingsUnavailable));
+#endif
+    tap(kBack);
+    assert(!label(kEnableMotion) && !label(kDisableMotion));
 }
 
 void test_modal_cancel_and_latest_background() {
@@ -726,6 +816,32 @@ extern "C" void bk7259_factory_reset_request(void) { ++requests; }
 extern "C" bool bk7259_factory_reset_requested(void) { return factory_reset_pending; }
 extern "C" void mybot_bk7259_platform_reboot(void) { ++reboot_requests; }
 
+#if CONFIG_MYBOT_GIMBAL
+extern "C" int bk7259_gimbal_get_settings(bk7259_gimbal_settings_t *settings) {
+    if (!gimbal_settings_available) {
+        return -1;
+    }
+    *settings = gimbal_settings;
+    return 0;
+}
+
+extern "C" int bk7259_gimbal_request_motion_enabled(bool enabled) {
+    ++motion_setting_requests;
+    gimbal_settings.motion_enabled = enabled;
+    gimbal_settings.pending = true;
+    gimbal_settings.save_failed = false;
+    return 0;
+}
+
+extern "C" int bk7259_gimbal_set_charging(bool enabled) {
+    ++charge_setting_requests;
+    gimbal_settings.charge_enabled = enabled;
+    gimbal_settings.pending = true;
+    gimbal_settings.save_failed = false;
+    return 0;
+}
+#endif
+
 extern "C" bool bk7259_key_request_touch_conversation(bool start) {
     ++touch_conversation_attempts;
     if (!accept_touch_conversation || pending_touch_conversation != -1) {
@@ -784,6 +900,7 @@ int main(int argc, char **argv) {
     test_touch_conversation_direction_and_duplicate();
     test_touch_conversation_invalid_gestures();
     test_touch_conversation_respects_view_overlays();
+    test_gimbal_settings_menu();
     test_power_off_action();
     test_modal_cancel_and_latest_background();
     test_no_press_through();

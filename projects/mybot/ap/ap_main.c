@@ -441,9 +441,6 @@ static int mybot_run(void)
         return -1;
     }
     s_display_prepared = true;
-    if (bk7259_gimbal_cli_init() != 0) {
-        BK_LOGW(TAG, "gimbal CLI registration failed\r\n");
-    }
     mybot_log_state_transition(&last_state, &state_valid);
 
     int reset_pending = bk7259_factory_reset_pending();
@@ -457,6 +454,15 @@ static int mybot_run(void)
         mybot_factory_reset_loop(reset_pending > 0);
     }
     mybot_check_product_requests();
+
+    /* Factory recovery prepares its UI and network cleanup helpers before
+     * opening any subsystem that can move the gimbal or renew charging. */
+    if (bk7259_gimbal_prepare() < 0) {
+        BK_LOGW(TAG, "gimbal preparation failed; continuing without motion\r\n");
+    }
+    if (bk7259_gimbal_cli_init() != 0) {
+        BK_LOGW(TAG, "gimbal CLI registration failed\r\n");
+    }
 
     bool platform_registered = mybot_bk7259_platform_register() == 0;
     mybot_check_product_requests();

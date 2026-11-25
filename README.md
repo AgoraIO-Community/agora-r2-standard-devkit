@@ -25,7 +25,7 @@ deployment.
 - 16 kHz mono signed 16-bit audio playback and persistent volume control.
 - Optional MIPI CSI camera capture, hardware H.264 encoding, and Agora RTC video uplink.
 - GC9503CV MIPI display, CST7XX touch, local status UI, Wi-Fi setup, power off, and factory reset.
-- EB521 V1.2 gimbal control over UART2, with automatic centering, four motion scenes and a charging heartbeat enabled at boot.
+- EB521 V1.2 gimbal control over UART2 with automatic centering, four motion scenes, and a charging heartbeat. Motion and charging default to on at first use and follow the saved settings on later boots.
 - One GPIO conversation key, EasyFlash key-value storage, HTTPS transport, and derived
   device identity.
 - Embedded Chinese and English prompt assets, with no SD card or separate asset partition.
@@ -191,7 +191,7 @@ Typical R2 flow:
 4. An unclaimed device displays and announces a pairing code. Enter the complete code,
    including leading zeros, in the device-service console.
 5. In `READY`, tap the face screen or briefly press the GPIO47 conversation key to start a conversation. Use either control again to hang up.
-6. Touch **Settings** to change Wi-Fi, power off, or confirm a factory reset.
+6. Touch **Settings** to toggle servo motion and the bottom board's power request independently, change Wi-Fi, power off, or confirm a factory reset.
 
 The current R2 hardware handles long-press power on/off outside the firmware conversation
 key path. The touchscreen power-off action calls `bk_reboot()` without clearing saved

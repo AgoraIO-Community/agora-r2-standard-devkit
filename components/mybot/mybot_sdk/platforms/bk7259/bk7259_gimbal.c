@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_gimbal.h"
 #include "bk7259_audio_dialogue.h"
+#include "bk7259_gimbal_prefs.h"
 #include "bk7259_platform_log.h"
 
 #include <api/aosl.h>
@@ -80,7 +81,9 @@ typedef struct {
     bool ready;
     bool conversation;
     bool opening_pending;
-    bool charge_enabled;
+    bool disable_home_pending;
+    bk7259_gimbal_settings_t settings;
+    uint32_t settings_revision;
     bool charge_changed;
     bool charge_locked;
     bool charge_off_pending;
@@ -115,6 +118,7 @@ typedef struct {
     bool home_needs_fence;
     bool home_has_fence;
     bool home_sent;
+    bool disable_home_sent;
     bool sent_ordinary_motion;
 
     uint32_t charge_due;
@@ -188,6 +192,11 @@ static bool due(uint32_t now, uint32_t deadline)
     return (int32_t)(now - deadline) >= 0;
 }
 
+static bool mailbox_initialized(void)
+{
+    return __atomic_load_n(&s_lock, __ATOMIC_ACQUIRE) != NULL;
+}
+
 static uint16_t crc16(const uint8_t *bytes, size_t count)
 {
     uint16_t crc = 0xffff;
@@ -238,6 +247,11 @@ static bool send_move(int16_t pan, int16_t pitch, uint16_t pan_speed, uint16_t p
     return send_frame(EB521_MOVE, payload, sizeof(payload));
 }
 
+static bool send_home(void)
+{
+    return send_move(0, 0, 1000, 1000);
+}
+
 /* Drop expired explicit actions at every gate transition. The phase remains
  * available as the latest live intent, without replaying its opening. */
 static void start_home(void)
@@ -285,6 +299,8 @@ static void confirm_home(gimbal_io_t *io)
 
 static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, uint32_t now)
 {
+    if (!s_gimbal.settings.motion_enabled)
+        return;
     uint8_t code = frame[4];
     if (size == 7 && code == 1) {
         io->home_waiting = false;
@@ -446,14 +462,16 @@ static void service_charge(gimbal_io_t *io, uint32_t now)
     }
 
     bool stop = s_gimbal.charge_off_pending;
-    bool heartbeat = (!s_gimbal.charge_locked || (!s_gimbal.ready && !s_gimbal.stopping)) &&
+    bool home_required = s_gimbal.settings.motion_enabled && !s_gimbal.ready && !s_gimbal.stopping;
+    bool heartbeat = (!s_gimbal.charge_locked || home_required) &&
                      (s_gimbal.charge_changed || due(now, io->charge_due));
     if (!heartbeat && !stop && !s_gimbal.pending_probe)
         return;
     if (!bk_uart_is_tx_over(GIMBAL_UART))
         return;
 
-    uint8_t control = stop ? 0 : heartbeat ? (uint8_t)s_gimbal.charge_enabled : EB521_PROBE_CONTROL;
+    bool charge_enabled = s_gimbal.settings.charge_enabled && !s_gimbal.charge_locked;
+    uint8_t control = stop ? 0 : heartbeat ? (uint8_t)charge_enabled : EB521_PROBE_CONTROL;
     uint32_t ticket = stop ? s_gimbal.charge_off_ticket : 0;
     if (control == EB521_PROBE_CONTROL) {
         s_gimbal.pending_probe = false;
@@ -461,7 +479,7 @@ static void service_charge(gimbal_io_t *io, uint32_t now)
         io->probe_echo = false;
         io->probe_rx_bytes = 0;
     } else {
-        s_gimbal.charge_changed = false;
+        s_gimbal.charge_changed = control != (uint8_t)charge_enabled;
         io->charge_due = now + CHARGE_PERIOD_MS;
     }
 
@@ -614,6 +632,11 @@ static uint32_t next_sample(bk7259_gimbal_scene_t scene, uint32_t time)
 
 static void service_home(gimbal_io_t *io, uint32_t now)
 {
+    /* E1 does not identify its request. Drain replies to the one-shot home
+     * before sending a new home that can unlock motion on re-enable. */
+    if (io->disable_home_sent && now - io->home_sent_at <= HOME_RESPONSE_MS)
+        return;
+    io->disable_home_sent = false;
     if (!due(now, io->home_due) || !bk_uart_is_tx_over(GIMBAL_UART))
         return;
     io->home_due = now + HOME_PERIOD_MS;
@@ -621,7 +644,7 @@ static void service_home(gimbal_io_t *io, uint32_t now)
      * fragments because a charge reply can arrive in parallel with motion. */
     if (io->used >= 2 && io->rx[1] == EB521_MOVE_REPLY)
         io->used = 0;
-    if (send_move(0, 0, 1000, 1000)) {
+    if (send_home()) {
         io->home_waiting = true;
         io->home_sent_at = now;
         io->home_accepts_short_reply = !io->home_needs_fence || io->home_has_fence || io->home_sent;
@@ -828,17 +851,25 @@ static void worker(void *arg)
         uint32_t now = rtos_get_time();
         sync_home(&io, now);
         drain_frames(&io, now);
+        if (s_gimbal.disable_home_pending && bk_uart_is_tx_over(GIMBAL_UART)) {
+            s_gimbal.disable_home_pending = false;
+            if (send_home()) {
+                io.disable_home_sent = true;
+                io.home_sent_at = now;
+                MYBOT_LOGI(TAG, "servo control disabled: center command sent");
+            }
+        }
         service_charge(&io, now);
         if (s_gimbal.ready && now - io.last_link_rx_at >= LINK_LOSS_MS) {
             MYBOT_LOGW(TAG, "EB521 replies lost, centering again");
             start_home();
         }
         sync_home(&io, now);
-        if (s_gimbal.stopping && !s_gimbal.charge_off_pending) {
+        if (s_gimbal.stopping && !s_gimbal.charge_off_pending && !s_gimbal.settings.pending) {
             unlock();
             break;
         }
-        if (!s_gimbal.stopping) {
+        if (!s_gimbal.stopping && s_gimbal.settings.motion_enabled) {
             if (s_gimbal.ready) {
                 service_motion(&io, now);
             } else {
@@ -846,9 +877,25 @@ static void worker(void *arg)
                 service_home(&io, now);
             }
         }
-        unsigned wait = io.charge_waiting || !s_gimbal.ready || s_gimbal.motion.kind != MOTION_NONE
-                        ? RX_POLL_MS : IDLE_WAIT_MS;
+        bool motion_work = s_gimbal.settings.motion_enabled &&
+                           (!s_gimbal.ready || s_gimbal.motion.kind != MOTION_NONE);
+        unsigned wait = io.charge_waiting || motion_work ? RX_POLL_MS : IDLE_WAIT_MS;
+        bk7259_gimbal_settings_t settings = s_gimbal.settings;
+        uint32_t settings_revision = s_gimbal.settings_revision;
         unlock();
+        if (settings.pending) {
+            int result = bk7259_gimbal_prefs_save(settings.motion_enabled, settings.charge_enabled);
+            if (rtos_lock_mutex(&s_lock) != BK_OK)
+                break;
+            if (settings_revision == s_gimbal.settings_revision) {
+                s_gimbal.settings.pending = false;
+                s_gimbal.settings.save_failed = result < 0;
+            }
+            unlock();
+            if (result < 0)
+                MYBOT_LOGW(TAG, "gimbal settings save failed");
+            continue;
+        }
         bk_err_t ret = rtos_get_semaphore(&s_wake, wait);
         if (ret != BK_OK && ret != kTimeoutErr)
             break;
@@ -859,6 +906,10 @@ static void worker(void *arg)
         s_gimbal.pending_probe = false;
         s_gimbal.probe_running = false;
         bk7259_audio_dialogue_set_speaking(false);
+        if (s_gimbal.settings.pending) {
+            s_gimbal.settings.pending = false;
+            s_gimbal.settings.save_failed = true;
+        }
         if (s_gimbal.charge_off_pending)
             finish_charge_off(s_gimbal.charge_off_ticket, -1);
         unlock();
@@ -889,8 +940,13 @@ static int release_uart(void)
 
 int bk7259_gimbal_prepare(void)
 {
-    if (!s_lock && rtos_init_mutex(&s_lock) != BK_OK)
-        return -1;
+    if (!mailbox_initialized()) {
+        beken_mutex_t lock = NULL;
+        if (rtos_init_mutex(&lock) != BK_OK)
+            return -1;
+        /* Settings reads may come from the UI before platform preparation. */
+        __atomic_store_n(&s_lock, lock, __ATOMIC_RELEASE);
+    }
     if ((!s_wake && rtos_init_semaphore(&s_wake, 1) != BK_OK) ||
         (!s_done && rtos_init_semaphore(&s_done, 1) != BK_OK) ||
         (!s_centered && rtos_init_semaphore(&s_centered, 1) != BK_OK))
@@ -908,7 +964,13 @@ int bk7259_gimbal_prepare(void)
         return -1;
     if (s_gimbal.aosl_owned)
         aosl_dtor();
+    if (rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
     memset(&s_gimbal, 0, sizeof(s_gimbal));
+    unlock();
+    bk7259_gimbal_settings_t settings = {0};
+    settings.save_failed = bk7259_gimbal_prefs_load(&settings.motion_enabled,
+                                                   &settings.charge_enabled) < 0;
     while (rtos_get_semaphore(&s_done, 0) == BK_OK) { }
     while (rtos_get_semaphore(&s_wake, 0) == BK_OK) { }
     while (rtos_get_semaphore(&s_centered, 0) == BK_OK) { }
@@ -930,10 +992,10 @@ int bk7259_gimbal_prepare(void)
     s_gimbal.aosl_owned = true;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         goto failed;
+    s_gimbal.home_ticket = 1;
+    s_gimbal.settings = settings;
     bk_err_t created = rtos_create_psram_thread(&s_gimbal.worker, BEKEN_APPLICATION_PRIORITY,
                                                 "eb521", worker, STACK_BYTES, NULL);
-    s_gimbal.home_ticket = 1;
-    s_gimbal.charge_enabled = true;
     s_gimbal.prepared = created == BK_OK;
     s_gimbal.accepting = created == BK_OK;
     unlock();
@@ -955,7 +1017,7 @@ int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
 {
     if (phase < BK7259_GIMBAL_PHASE_NEUTRAL || phase > BK7259_GIMBAL_PHASE_SPEAKING)
         return -1;
-    if (!s_lock)
+    if (!mailbox_initialized())
         return active ? -1 : 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
@@ -970,7 +1032,8 @@ int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
         s_gimbal.conversation = active;
         s_gimbal.phase = phase;
         s_gimbal.phase_at = rtos_get_time();
-        bk7259_audio_dialogue_set_speaking(active && phase == BK7259_GIMBAL_PHASE_SPEAKING);
+        bk7259_audio_dialogue_set_speaking(active && s_gimbal.settings.motion_enabled &&
+                                           phase == BK7259_GIMBAL_PHASE_SPEAKING);
         if (ended) {
             if (s_gimbal.ready) {
                 start_home();
@@ -987,7 +1050,11 @@ int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
         }
         notify(&s_wake);
     }
-    int result = active && !s_gimbal.ready ? BK7259_GIMBAL_NOT_READY : 0;
+    int result = 0;
+    if (!s_gimbal.settings.motion_enabled)
+        result = BK7259_GIMBAL_MOTION_DISABLED;
+    else if (active && !s_gimbal.ready)
+        result = BK7259_GIMBAL_NOT_READY;
     unlock();
     return result;
 }
@@ -997,13 +1064,15 @@ static int admit_motion(void)
 {
     if (!s_gimbal.prepared || !s_gimbal.accepting || s_gimbal.charge_locked || s_gimbal.stopping)
         return -1;
+    if (!s_gimbal.settings.motion_enabled)
+        return BK7259_GIMBAL_MOTION_DISABLED;
     return s_gimbal.ready ? 0 : BK7259_GIMBAL_NOT_READY;
 }
 
 int bk7259_gimbal_send_next_command(void)
 {
     static const int16_t positions[][2] = {{-300, 0}, {0, 100}, {0, -200}, {100, 0}};
-    if (!s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
     int result = admit_motion();
     if (result == 0) {
@@ -1024,7 +1093,7 @@ int bk7259_gimbal_send_next_command(void)
 int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 {
     if (scene < BK7259_GIMBAL_SCENE_HAPPY || scene >= BK7259_GIMBAL_SCENE_COUNT ||
-        !s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+        !mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
     int result = admit_motion();
     if (result == 0) {
@@ -1041,7 +1110,7 @@ int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 
 int bk7259_gimbal_request_probe(void)
 {
-    if (!s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
     int result = 0;
     if (!s_gimbal.prepared || !s_gimbal.accepting || s_gimbal.stopping || s_gimbal.charge_locked) {
@@ -1078,8 +1147,9 @@ static int wait_for_center(uint32_t ticket, uint32_t timeout_ms)
             return -1;
         bool done = (int32_t)(s_gimbal.centered_ticket - ticket) >= 0;
         bool stopped = s_gimbal.stopping;
+        bool disabled = !s_gimbal.settings.motion_enabled;
         unlock();
-        if (done)
+        if (done || disabled)
             return 0;
         uint32_t elapsed = rtos_get_time() - start;
         if (stopped || elapsed >= timeout_ms)
@@ -1092,11 +1162,11 @@ static int wait_for_center(uint32_t ticket, uint32_t timeout_ms)
 
 int bk7259_gimbal_center_wait(uint32_t timeout_ms)
 {
-    if (!s_lock)
+    if (!mailbox_initialized())
         return 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
-    if (!s_gimbal.prepared) {
+    if (!s_gimbal.prepared || !s_gimbal.settings.motion_enabled) {
         unlock();
         return 0;
     }
@@ -1107,7 +1177,6 @@ int bk7259_gimbal_center_wait(uint32_t timeout_ms)
 
 static uint32_t request_charge_off(void)
 {
-    s_gimbal.charge_enabled = false;
     if (!s_gimbal.charge_off_pending) {
         s_gimbal.charge_off_pending = true;
         ++s_gimbal.charge_off_ticket;
@@ -1116,26 +1185,73 @@ static uint32_t request_charge_off(void)
     return s_gimbal.charge_off_ticket;
 }
 
-int bk7259_gimbal_set_charging(bool enabled)
+/* The caller holds the mailbox lock. */
+static bool settings_available(void)
 {
-    if (!s_lock || rtos_lock_mutex(&s_lock) != BK_OK)
+    return s_gimbal.prepared && s_gimbal.accepting && !s_gimbal.stopping && !s_gimbal.charge_locked;
+}
+
+static void schedule_settings_save(void)
+{
+    s_gimbal.settings.pending = true;
+    s_gimbal.settings.save_failed = false;
+    ++s_gimbal.settings_revision;
+    notify(&s_wake);
+}
+
+int bk7259_gimbal_request_motion_enabled(bool enabled)
+{
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
-    int result = 0;
-    if (!s_gimbal.prepared || !s_gimbal.accepting || s_gimbal.stopping || s_gimbal.charge_locked) {
-        result = -1;
-    } else if (enabled && s_gimbal.charge_off_pending) {
-        result = -2;
-    } else if (enabled) {
-        if (!s_gimbal.charge_enabled) {
-            s_gimbal.charge_enabled = true;
-            s_gimbal.charge_changed = true;
-            notify(&s_wake);
-        }
-    } else {
-        (void)request_charge_off();
+    if (!settings_available()) {
+        unlock();
+        return -1;
+    }
+    if (enabled != s_gimbal.settings.motion_enabled) {
+        s_gimbal.settings.motion_enabled = enabled;
+        s_gimbal.disable_home_pending = !enabled;
+        start_home();
+        bk7259_audio_dialogue_set_speaking(enabled && s_gimbal.conversation &&
+                                           s_gimbal.phase == BK7259_GIMBAL_PHASE_SPEAKING);
+        notify(&s_centered);
+        schedule_settings_save();
+    } else if (s_gimbal.settings.save_failed) {
+        schedule_settings_save();
     }
     unlock();
-    return result;
+    return 0;
+}
+
+int bk7259_gimbal_set_charging(bool enabled)
+{
+    if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    if (!settings_available()) {
+        unlock();
+        return -1;
+    }
+    if (enabled != s_gimbal.settings.charge_enabled) {
+        s_gimbal.settings.charge_enabled = enabled;
+        s_gimbal.charge_changed = true;
+        if (!enabled)
+            (void)request_charge_off();
+        schedule_settings_save();
+    } else if (s_gimbal.settings.save_failed) {
+        schedule_settings_save();
+    }
+    unlock();
+    return 0;
+}
+
+int bk7259_gimbal_get_settings(bk7259_gimbal_settings_t *settings)
+{
+    if (!settings || !mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
+        return -1;
+    bool available = settings_available();
+    if (available)
+        *settings = s_gimbal.settings;
+    unlock();
+    return available ? 0 : -1;
 }
 
 static int wait_for_charge_off(uint32_t ticket, uint32_t timeout_ms)
@@ -1144,7 +1260,8 @@ static int wait_for_charge_off(uint32_t ticket, uint32_t timeout_ms)
     for (;;) {
         if (rtos_lock_mutex(&s_lock) != BK_OK)
             return -1;
-        bool done = (int32_t)(s_gimbal.charge_off_completed - ticket) >= 0;
+        bool done = (int32_t)(s_gimbal.charge_off_completed - ticket) >= 0 &&
+                    !s_gimbal.settings.pending && !s_gimbal.disable_home_pending;
         int result = s_gimbal.charge_off_result;
         unlock();
         if (done)
@@ -1160,7 +1277,7 @@ static int wait_for_charge_off(uint32_t ticket, uint32_t timeout_ms)
 
 int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
 {
-    if (!s_lock)
+    if (!mailbox_initialized())
         return 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
@@ -1186,7 +1303,7 @@ int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
 
 int bk7259_gimbal_shutdown(void)
 {
-    if (!s_lock)
+    if (!mailbox_initialized())
         return 0;
     if (rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;

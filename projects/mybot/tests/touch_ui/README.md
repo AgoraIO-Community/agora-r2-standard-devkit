@@ -9,13 +9,15 @@ TOUCH_UI_TEST_SANITIZERS=ON bash projects/mybot/tests/touch_ui/run.sh
 
 The native CMake build uses the pinned official AVDK LVGL sources, the product
 LVGL configuration, and the actual `lvgl_view.cc`, fonts and expression mapping.
-Only BK allocation/assert helpers and the reset-request sink are substituted.
+Board helpers and product action handlers are substituted.
 The test delivers pointer samples through a real LVGL input device; it does not
 implement a substitute UI or call private button handlers.
 
-Chinese, English and disabled-animation variants check:
+The suite runs Chinese, English, disabled-animation and disabled-gimbal variants. Checks include:
 
 - Settings on every SDK workflow page and cancel revealing the latest page.
+- Independent servo and power controls, pending saves, retry after a failed save,
+  external setting changes during a touch, and unavailable controls.
 - Power-off action reaches the product reboot sink exactly once.
 - Release-only actions, one touch opening only one layer, repeated confirmation
   posting once, dragging away and back, and dragging from background onto buttons.
@@ -33,7 +35,7 @@ Chinese, English and disabled-animation variants check:
   coverage, text bounds, fixed widget/timer counts, and destroy/recreate cleanup.
 
 The run prints its temporary native build path and writes RGB PPM previews into
-`output/{zh,en,noanim}`. Set `TOUCH_UI_BUILD_DIR` to reuse a build, or
+`output/{zh,en,noanim,nogimbal}`. Set `TOUCH_UI_BUILD_DIR` to reuse a build, or
 `TOUCH_UI_OUTPUT_DIR` to choose the preview destination. Native ASan/UBSan builds
 disable leak detection by default for environments using `ptrace`; override
 `ASAN_OPTIONS` where LeakSanitizer is supported.

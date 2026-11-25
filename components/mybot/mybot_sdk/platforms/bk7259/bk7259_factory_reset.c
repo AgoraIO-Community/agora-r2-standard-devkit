@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_factory_reset.h"
+#include "bk7259_gimbal_prefs.h"
 #include "bk7259_wifi_internal.h"
 #include "bk7259_platform_log.h"
 
@@ -107,6 +108,10 @@ static int write_intent(void) {
 }
 
 int bk7259_factory_reset_begin(void) {
+    if (bk7259_gimbal_prefs_block_writes() < 0) {
+        MYBOT_LOGE(TAG, "could not close gimbal settings writer for reset");
+        return -1;
+    }
     if (easyflash_init() != EF_NO_ERR) {
         MYBOT_LOGE(TAG, "reset storage initialization failed");
         return -1;
@@ -153,6 +158,7 @@ int bk7259_factory_reset_clear(void) {
         "mybot.device_auth",
         "mybot.wifi.v1",
         "mybot.volume.v1",
+        BK7259_GIMBAL_PREFS_KEY,
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
         if (delete_record(keys[i], true) < 0) {

@@ -49,10 +49,13 @@ typedef struct {
     motion_response_t motion_response;
     int16_t pan, pitch, target_pan, target_pitch;
     uint32_t completes_at;
-    bool online, active;
+    bool online, active, tx_paused;
     bool drop_next_move, drop_next_home;
     bool charging, drop_charge_on_ack, drop_charge_stop;
     uint32_t charge_expires;
+    bool saved_motion_enabled, saved_charge_enabled;
+    bool prefs_load_fails, prefs_save_fails, hold_prefs_save;
+    unsigned prefs_save_calls;
 } controller_model_t;
 
 static controller_model_t controller = {.mutex = PTHREAD_MUTEX_INITIALIZER};
@@ -94,6 +97,34 @@ static void host_sleep_us(unsigned microseconds)
 {
     struct timespec duration = {microseconds / 1000000U, (microseconds % 1000000U) * 1000U};
     nanosleep(&duration, NULL);
+}
+
+int bk7259_gimbal_prefs_load(bool *motion, bool *charge)
+{
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    bool fail = controller.prefs_load_fails;
+    *motion = !fail && controller.saved_motion_enabled;
+    *charge = !fail && controller.saved_charge_enabled;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    return fail ? -1 : 0;
+}
+
+int bk7259_gimbal_prefs_save(bool motion, bool charge)
+{
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    ++controller.prefs_save_calls;
+    while (controller.hold_prefs_save) {
+        assert(pthread_mutex_unlock(&controller.mutex) == 0);
+        host_sleep_us(100);
+        assert(pthread_mutex_lock(&controller.mutex) == 0);
+    }
+    bool fail = controller.prefs_save_fails;
+    if (!fail) {
+        controller.saved_motion_enabled = motion;
+        controller.saved_charge_enabled = charge;
+    }
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    return fail ? -1 : 0;
 }
 
 uint32_t rtos_get_time(void)
@@ -280,7 +311,13 @@ bk_err_t bk_uart_disable_sw_fifo(uart_id_t id)
 }
 
 bool bk_uart_is_tx_over(uart_id_t id)
-{ assert(id == UART_ID_2); return true; }
+{
+    assert(id == UART_ID_2);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    bool ready = !controller.tx_paused;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    return ready;
+}
 bk_err_t gpio_dev_map_by_func(int function)
 {
     if (function == GPIO_DEV_UART2_TXD) controller.tx_mapped = true;
@@ -472,6 +509,8 @@ static void reset_controller(void)
     memset((uint8_t *)&controller + offsetof(controller_model_t, uart_open), 0,
            sizeof(controller) - offsetof(controller_model_t, uart_open));
     controller.online = true;
+    controller.saved_motion_enabled = true;
+    controller.saved_charge_enabled = true;
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
     log_calls = 0;
 }
@@ -1063,6 +1102,7 @@ static void test_probe_and_charge_policy(void)
     assert(motion_count() == 1);
     assert(bk7259_gimbal_set_charging(false) == 0);
     rtos_delay_milliseconds(2450);
+    assert(motion_count() == 1);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     assert(controller.stop_attempts >= 2 && !controller.charging);
     unsigned first_off = 0;
@@ -1123,6 +1163,247 @@ static void test_worker_lifecycle(void)
     assert(aosl_references == 1 && !controller.uart_open);
 }
 
+static bk7259_gimbal_settings_t wait_for_settings_save(void)
+{
+    uint64_t deadline = monotonic_ns() + 1000000000ULL;
+    for (;;) {
+        bk7259_gimbal_settings_t settings;
+        assert(bk7259_gimbal_get_settings(&settings) == 0);
+        if (!settings.pending)
+            return settings;
+        assert(monotonic_ns() < deadline);
+        host_sleep_us(100);
+    }
+}
+
+static void test_independent_settings_survive_reprepare(void)
+{
+    reset_controller();
+    controller.saved_motion_enabled = false;
+    assert(bk7259_gimbal_prepare() == 0);
+    wait_for_count(&controller.charge_count, 2);
+    assert(motion_count() == 0 && bk7259_gimbal_send_next_command() == BK7259_GIMBAL_MOTION_DISABLED);
+    assert(!memcmp(controller.charge[0].bytes, charge_on_frame, sizeof(charge_on_frame)));
+    assert(bk7259_gimbal_set_charging(false) == 0);
+    bk7259_gimbal_settings_t settings = wait_for_settings_save();
+    assert(!settings.motion_enabled && !settings.charge_enabled && !settings.save_failed);
+    shutdown_and_join();
+    assert(controller.motion_count == 0 && controller.prefs_save_calls == 1);
+
+    unsigned prior_charge = controller.charge_count;
+    assert(bk7259_gimbal_prepare() == 0);
+    wait_for_count(&controller.charge_count, prior_charge + 2);
+    assert(motion_count() == 0);
+    assert(!memcmp(controller.charge[prior_charge].bytes, charge_off_frame, sizeof(charge_off_frame)));
+    assert(bk7259_gimbal_request_motion_enabled(true) == 0);
+    wait_for_count(&controller.motion_count, 1);
+    settings = wait_for_settings_save();
+    assert(settings.motion_enabled && !settings.charge_enabled && !settings.save_failed);
+    assert(home_frame(0));
+    assert(bk7259_gimbal_set_charging(true) == 0);
+    settings = wait_for_settings_save();
+    assert(settings.motion_enabled && settings.charge_enabled && !settings.save_failed);
+    shutdown_and_join();
+    assert(controller.saved_motion_enabled && controller.saved_charge_enabled);
+}
+
+static void test_failed_save_keeps_off_and_can_retry(void)
+{
+    reset_controller();
+    controller.prefs_load_fails = true;
+    assert(bk7259_gimbal_prepare() == 0);
+    wait_for_count(&controller.charge_count, 1);
+    bk7259_gimbal_settings_t settings = wait_for_settings_save();
+    assert(!settings.motion_enabled && !settings.charge_enabled && settings.save_failed);
+    assert(!memcmp(controller.charge[0].bytes, charge_off_frame, sizeof(charge_off_frame)));
+    assert(motion_count() == 0);
+
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.prefs_save_fails = true;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    settings = wait_for_settings_save();
+    assert(!settings.motion_enabled && !settings.charge_enabled && settings.save_failed);
+    assert(bk7259_gimbal_center_wait(500) == 0 && motion_count() == 0);
+
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.prefs_save_fails = false;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    settings = wait_for_settings_save();
+    assert(!settings.motion_enabled && !settings.charge_enabled && !settings.save_failed);
+    shutdown_and_join();
+    assert(controller.prefs_save_calls == 2 && controller.motion_count == 0);
+}
+
+static void test_policy_change_during_save_retains_latest_selection(void)
+{
+    reset_controller();
+    start_and_wait_for_home();
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.hold_prefs_save = true;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+
+    assert(bk7259_gimbal_set_charging(false) == 0);
+    wait_for_count(&controller.prefs_save_calls, 1);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    bk7259_gimbal_settings_t settings;
+    assert(bk7259_gimbal_get_settings(&settings) == 0);
+    assert(!settings.motion_enabled && !settings.charge_enabled && settings.pending);
+
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.hold_prefs_save = false;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    settings = wait_for_settings_save();
+    assert(!settings.motion_enabled && !settings.charge_enabled && !settings.save_failed);
+    shutdown_and_join();
+    assert(!controller.saved_motion_enabled && !controller.saved_charge_enabled);
+    assert(controller.prefs_save_calls == 2);
+}
+
+static void test_motion_enable_keeps_only_live_dialogue_phase(void)
+{
+    reset_controller();
+    start_and_wait_for_home();
+    assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_HAPPY) == 0);
+    wait_for_count(&controller.motion_count, 4);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    unsigned before_disable = controller.motion_count;
+    controller.drop_next_home = true;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    bk7259_gimbal_settings_t settings = wait_for_settings_save();
+    assert(!settings.motion_enabled && settings.charge_enabled);
+    unsigned stopped = wait_for_home(before_disable);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_LISTENING) ==
+           BK7259_GIMBAL_MOTION_DISABLED);
+    assert(bk7259_gimbal_update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL) ==
+           BK7259_GIMBAL_MOTION_DISABLED);
+    assert(bk7259_gimbal_center_wait(500) == 0);
+    assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING) ==
+           BK7259_GIMBAL_MOTION_DISABLED);
+    assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_SAD) == BK7259_GIMBAL_MOTION_DISABLED);
+    rtos_delay_milliseconds(1200);
+    assert(motion_count() == stopped);
+
+    assert(bk7259_gimbal_request_motion_enabled(true) == 0);
+    unsigned first_after_home = wait_for_home(stopped);
+    assert(first_after_home == stopped + 1);
+    unsigned cursor = first_after_home;
+    (void)wait_for_target(&cursor, 150, 150);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    for (unsigned i = first_after_home; i < cursor; ++i) {
+        assert(motion_pan(i) >= 0 && motion_pitch(i) == 0);
+    }
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    shutdown_and_join();
+}
+
+static void test_motion_disable_before_ready_and_charge_independence(void)
+{
+    reset_controller();
+    controller.online = false;
+    assert(bk7259_gimbal_prepare() == 0);
+    assert(wait_for_home(0) == 1);
+    assert(bk7259_gimbal_send_next_command() == BK7259_GIMBAL_NOT_READY);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    assert(wait_for_home(1) == 2);
+
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.online = true;
+    unsigned prior_charge = controller.charge_count;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_set_charging(false) == 0);
+    wait_for_count(&controller.charge_count, prior_charge + 2);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    assert(!memcmp(controller.charge[prior_charge].bytes, charge_off_frame, sizeof(charge_off_frame)));
+    assert(!controller.charging && controller.motion_count == 2);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    shutdown_and_join();
+    assert(controller.motion_count == 2);
+
+    prior_charge = controller.charge_count;
+    assert(bk7259_gimbal_prepare() == 0);
+    wait_for_count(&controller.charge_count, prior_charge + 2);
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    assert(bk7259_gimbal_update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL) ==
+           BK7259_GIMBAL_MOTION_DISABLED);
+    assert(bk7259_gimbal_center_wait(500) == 0 && motion_count() == 2);
+    shutdown_and_join();
+    assert(controller.motion_count == 2);
+}
+
+static void test_fast_motion_reenable_requires_confirmed_home(void)
+{
+    reset_controller();
+    start_and_wait_for_home();
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.tx_paused = true;
+    controller.motion_response = RESPONSE_ACCEPT_ONLY;
+    unsigned stopped = controller.motion_count;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    assert(bk7259_gimbal_request_motion_enabled(true) == 0);
+    assert(bk7259_gimbal_send_next_command() == BK7259_GIMBAL_NOT_READY);
+    assert(motion_count() == stopped);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.tx_paused = false;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+
+    /* Only the ordinary homing path retries after E1/00. Its second frame is
+     * still insufficient to open the gate without a matching completion. */
+    unsigned first_home = wait_for_home(stopped);
+    (void)wait_for_home(first_home);
+    assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_HAPPY) == BK7259_GIMBAL_NOT_READY);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    complete_locked(0, 0);
+    controller.motion_response = RESPONSE_NORMAL;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(80);
+    assert(bk7259_gimbal_send_next_command() == 0);
+    shutdown_and_join();
+}
+
+static void test_reenable_discards_late_disable_home_completion(void)
+{
+    reset_controller();
+    start_and_wait_for_home();
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.drop_next_home = true;
+    controller.motion_response = RESPONSE_ACCEPT_ONLY;
+    unsigned before_disable = controller.motion_count;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+
+    assert(bk7259_gimbal_request_motion_enabled(false) == 0);
+    unsigned after_disable_home = wait_for_home(before_disable);
+    assert(after_disable_home == before_disable + 1);
+    assert(bk7259_gimbal_request_motion_enabled(true) == 0);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    complete_locked(0, 0);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(120);
+    assert(motion_count() == after_disable_home);
+    assert(bk7259_gimbal_send_next_command() == BK7259_GIMBAL_NOT_READY);
+
+    unsigned after_new_home = wait_for_home(after_disable_home);
+    assert(after_new_home == after_disable_home + 1);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    uint32_t interval = controller.motion[after_disable_home].at -
+                        controller.motion[before_disable].at;
+    assert(interval > HOME_RESPONSE_MS);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_send_next_command() == BK7259_GIMBAL_NOT_READY);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    complete_locked(0, 0);
+    controller.motion_response = RESPONSE_NORMAL;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(80);
+    assert(bk7259_gimbal_send_next_command() == 0);
+    shutdown_and_join();
+}
+
 int main(void)
 {
     clock_origin = monotonic_ns();
@@ -1143,6 +1424,13 @@ int main(void)
     test_probe_and_charge_policy();
     test_shutdown_unconfirmed_off_stops_renewals();
     test_worker_lifecycle();
+    test_independent_settings_survive_reprepare();
+    test_failed_save_keeps_off_and_can_retry();
+    test_policy_change_during_save_retains_latest_selection();
+    test_motion_enable_keeps_only_live_dialogue_phase();
+    test_motion_disable_before_ready_and_charge_independence();
+    test_fast_motion_reenable_requires_confirmed_home();
+    test_reenable_discards_late_disable_home_completion();
     beken_semaphore_t *events[] = {&s_wake, &s_done, &s_centered};
     for (size_t i = 0; i < ARRAY_COUNT(events); ++i) {
         pthread_mutex_destroy(&(*events[i])->mutex);
