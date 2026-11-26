@@ -40,6 +40,8 @@ Patches are applied only to generated vendor workspaces.
 | `patches/bk_avdk_smp/0002-r2-gc9503cv-panel.patch` | GC9503CV MIPI panel support |
 | `patches/bk_avdk_smp/0003-r2-trimic-aec.patch` | Three-input AEC integration and matching library |
 | `patches/bk_avdk_smp/0004-r2-cst7xx-touch.patch` | CST7XX touch and bounded lifecycle |
+| `patches/bk_avdk_smp/0005-r2-dsi-suppress-dpi-payload-full-log.patch` | Suppress the repeated DSI DPI payload FIFO full message |
+| `patches/mybot/0001-quiet-binding-status-poll.patch` | Suppress the two routine binding-status GET notices in the SDK build copy |
 | `patches/bk_solution_ai/0001-mybot-camera-helper.patch` | Camera helper, XCLK, and low-frame-rate integration |
 
 Patch SHA256 values are stored in `vendor.lock.json`. The AEC archive is

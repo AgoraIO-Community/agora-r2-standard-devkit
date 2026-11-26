@@ -35,7 +35,7 @@ The suite covers:
 - CRC vectors, fragmented frames, glued frames, invalid lengths, and bad CRCs.
 - Boot with a missing or uninitialized board, hot unplug and reconnection,
   and confirmed homing at 1000 pps.
-- Tracking the latest absolute target when intermediate replies are lost.
+- Ordinary moves waiting for a matching ACK or a 250 ms deadline, with charging and homing serviced independently.
 - Default charging, heartbeats during motion, stop acknowledgement and timeout.
 - Shared voice and CLI motion admission, dialogue phases, and CLI argument validation.
 - Worker start/stop, AOSL references, retained resources, and cleanup retry.

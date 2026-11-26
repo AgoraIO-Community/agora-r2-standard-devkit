@@ -1,0 +1,12 @@
+diff --git a/ap/components/avdk_driver/src/dpu/mipi_dsi_core.c b/ap/components/avdk_driver/src/dpu/mipi_dsi_core.c
+index e04690d..4cb0377 100644
+--- a/ap/components/avdk_driver/src/dpu/mipi_dsi_core.c
++++ b/ap/components/avdk_driver/src/dpu/mipi_dsi_core.c
+@@ -132,7 +132,6 @@
+     if(status1 & mipi_int1_gen_pld_empy   )  LOGI("DSI ERR gen_pld_empy\n");
+     if(status1 & mipi_int1_gen_pld_wr_full)  LOGI("DSI ERR gen_pld_wr_full\n");
+     if(status1 & mipi_int1_gen_cmd_wr_full)  LOGI("DSI ERR gen_cmd_wr_full\n");
+-    if(status1 & mipi_int1_dpi_pld_full   )  LOGI("DSI ERR dpi_pld_full\n");
+     if(status1 & mipi_int1_eotp_rece_err  )  LOGI("DSI ERR eotp_rece_err\n");
+     if(status1 & mipi_int1_pkt_rece_err   )  LOGI("DSI ERR pkt_rece_err\n");
+     if(status1 & mipi_int1_crc_rece_err   )  LOGI("DSI ERR crc_rece_err\n");

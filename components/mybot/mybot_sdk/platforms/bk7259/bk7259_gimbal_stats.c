@@ -20,6 +20,20 @@ static bk7259_gimbal_test_counts_t *test_counts_for(bk7259_gimbal_stats_t *stats
     return &stats->snapshot.test_counts[stage];
 }
 
+static void expire_motion_request(bk7259_gimbal_stats_t *stats,
+                                  bk7259_gimbal_stats_request_t *request)
+{
+    if (!request->previous_run) {
+        bk7259_gimbal_stats_counts_t *counts = &stats->snapshot.groups[request->group];
+        --counts->pending;
+        ++counts->expired;
+        bk7259_gimbal_test_counts_t *test_counts = test_counts_for(stats, request->test_stage);
+        if (test_counts)
+            ++test_counts->expired;
+    }
+    request->state = BK7259_GIMBAL_STATS_EXPIRED;
+}
+
 static void expire_power_request(bk7259_gimbal_stats_t *stats)
 {
     bk7259_gimbal_stats_power_request_t *request = &stats->power_request;
@@ -55,15 +69,8 @@ void bk7259_gimbal_stats_tick(bk7259_gimbal_stats_t *stats, uint32_t now)
     for (size_t i = 0; i < stats->used; ++i) {
         bk7259_gimbal_stats_request_t request = stats->requests[i];
         uint32_t age = now - request.sent_at;
-        if (request.state == BK7259_GIMBAL_STATS_PENDING && age > response_window(request.group)) {
-            bk7259_gimbal_stats_counts_t *counts = &stats->snapshot.groups[request.group];
-            --counts->pending;
-            ++counts->expired;
-            bk7259_gimbal_test_counts_t *test_counts = test_counts_for(stats, request.test_stage);
-            if (test_counts)
-                ++test_counts->expired;
-            request.state = BK7259_GIMBAL_STATS_EXPIRED;
-        }
+        if (request.state == BK7259_GIMBAL_STATS_PENDING && age > response_window(request.group))
+            expire_motion_request(stats, &request);
         /* Keep completed/expired targets for one bounded UART reply horizon.
          * A matching old target could otherwise masquerade as a new 06. */
         if (age <= BK7259_GIMBAL_STATS_HOME_WINDOW_MS)
@@ -79,8 +86,6 @@ void bk7259_gimbal_stats_reset(bk7259_gimbal_stats_t *stats, uint32_t now)
         bk7259_gimbal_stats_request_t *request = &stats->requests[i];
         request->previous_run = true;
         request->test_stage = BK7259_GIMBAL_TEST_NONE;
-        if (request->state == BK7259_GIMBAL_STATS_PENDING)
-            request->state = BK7259_GIMBAL_STATS_EXPIRED;
     }
     memset(&stats->snapshot, 0, sizeof(stats->snapshot));
     memset(stats->latency_histogram, 0, sizeof(stats->latency_histogram));
@@ -127,6 +132,26 @@ void bk7259_gimbal_stats_tx(bk7259_gimbal_stats_t *stats, uint32_t now,
     if (test_counts)
         ++test_counts->tx;
     record_test_motion_gap(stats, test_counts, group, now);
+    bool overlapping = stats->overflow_guard;
+    for (size_t i = 0; i < stats->used; ++i) {
+        bk7259_gimbal_stats_request_t *previous = &stats->requests[i];
+        uint32_t age = now - previous->sent_at;
+        /* RX is processed before the next ordinary submission. Settlement
+         * can include the deadline tick, but the next send closes that window. */
+        if (group == BK7259_GIMBAL_STATS_NORMAL && previous->group == group &&
+            previous->state == BK7259_GIMBAL_STATS_PENDING &&
+            age == BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS) {
+            expire_motion_request(stats, previous);
+        }
+        bool awaits_short_reply = previous->state == BK7259_GIMBAL_STATS_PENDING ||
+                                  (previous->state == BK7259_GIMBAL_STATS_ACCEPTED_BY_COMPLETION &&
+                                   !previous->short_uncertain);
+        if (!previous->previous_run && awaits_short_reply &&
+            age <= response_window(previous->group)) {
+            previous->overlapping = true;
+            overlapping = true;
+        }
+    }
     if (stats->used == BK7259_GIMBAL_STATS_CAPACITY) {
         ++counts->overflow;
         if (test_counts)
@@ -134,19 +159,6 @@ void bk7259_gimbal_stats_tx(bk7259_gimbal_stats_t *stats, uint32_t now,
         stats->overflow_guard = true;
         stats->overflow_at = now;
         return;
-    }
-
-    bool overlapping = stats->overflow_guard;
-    for (size_t i = 0; i < stats->used; ++i) {
-        bk7259_gimbal_stats_request_t *previous = &stats->requests[i];
-        bool awaits_short_reply = previous->state == BK7259_GIMBAL_STATS_PENDING ||
-                                  (previous->state == BK7259_GIMBAL_STATS_ACCEPTED_BY_COMPLETION &&
-                                   !previous->short_uncertain);
-        if (!previous->previous_run && awaits_short_reply &&
-            now - previous->sent_at <= response_window(previous->group)) {
-            previous->overlapping = true;
-            overlapping = true;
-        }
     }
     stats->requests[stats->used++] = (bk7259_gimbal_stats_request_t){
         .sent_at = now,
@@ -227,7 +239,7 @@ static bk7259_gimbal_stats_request_t *match_completion(bk7259_gimbal_stats_t *st
         ++stats->snapshot.unmatched;
         return NULL;
     }
-    if (match->previous_run) {
+    if (match->previous_run && match->state != BK7259_GIMBAL_STATS_PENDING) {
         ++stats->snapshot.suppressed;
         return NULL;
     }
@@ -255,8 +267,8 @@ static void record_latency(bk7259_gimbal_stats_t *stats, uint32_t elapsed)
     ++stats->latency_histogram[elapsed];
 }
 
-void bk7259_gimbal_stats_reply(bk7259_gimbal_stats_t *stats, uint32_t now,
-                              uint8_t code, int16_t pan, int16_t pitch)
+const bk7259_gimbal_stats_request_t *bk7259_gimbal_stats_reply(
+    bk7259_gimbal_stats_t *stats, uint32_t now, uint8_t code, int16_t pan, int16_t pitch)
 {
     bk7259_gimbal_stats_tick(stats, now);
     switch (code) {
@@ -267,18 +279,28 @@ void bk7259_gimbal_stats_reply(bk7259_gimbal_stats_t *stats, uint32_t now,
     case 6: ++stats->snapshot.e1_06; break;
     default:
         bk7259_gimbal_stats_bad_reply(stats);
-        return;
+        return NULL;
     }
 
     bk7259_gimbal_stats_request_t *request =
         code == 6 ? match_completion(stats, pan, pitch) : match_short_reply(stats);
     if (!request)
-        return;
+        return NULL;
 
+    bool rejected = code == 1 || code == 2;
+    if (rejected)
+        request->state = BK7259_GIMBAL_STATS_REJECTED;
+    else if (code == 6)
+        request->state = BK7259_GIMBAL_STATS_ACCEPTED_BY_COMPLETION;
+    else
+        request->state = BK7259_GIMBAL_STATS_ACCEPTED;
+    if (request->previous_run) {
+        ++stats->snapshot.suppressed;
+        return request;
+    }
     bk7259_gimbal_stats_counts_t *counts = &stats->snapshot.groups[request->group];
     bk7259_gimbal_test_counts_t *test_counts = test_counts_for(stats, request->test_stage);
     --counts->pending;
-    bool rejected = code == 1 || code == 2;
     if (test_counts) {
         if (rejected)
             ++test_counts->rejected;
@@ -286,24 +308,22 @@ void bk7259_gimbal_stats_reply(bk7259_gimbal_stats_t *stats, uint32_t now,
             ++test_counts->accepted;
     }
     if (rejected) {
-        request->state = BK7259_GIMBAL_STATS_REJECTED;
         ++counts->rejected;
     } else if (code == 6) {
-        request->state = BK7259_GIMBAL_STATS_ACCEPTED_BY_COMPLETION;
         ++counts->accepted;
         ++counts->completion_fallback;
     } else {
-        request->state = BK7259_GIMBAL_STATS_ACCEPTED;
         ++counts->accepted;
     }
     /* A unique completion can attribute success by its coordinates even
      * when short responses from overlapping requests cannot be separated. */
     if (code == 6)
-        return;
+        return request;
     if (request->overlapping || request->short_uncertain)
         ++counts->estimated;
     else
         record_latency(stats, now - request->sent_at);
+    return request;
 }
 
 void bk7259_gimbal_stats_bad_reply(bk7259_gimbal_stats_t *stats)
