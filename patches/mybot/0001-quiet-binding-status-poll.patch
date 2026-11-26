@@ -1,0 +1,18 @@
+diff --git a/mybot_sdk/src/service/mybot_device_client.c b/mybot_sdk/src/service/mybot_device_client.c
+--- a/mybot_sdk/src/service/mybot_device_client.c
++++ b/mybot_sdk/src/service/mybot_device_client.c
+@@ -394,14 +394,10 @@
+         goto done;
+     }
+ 
+-    AOSL_LOG_NTC("GET %s", url);
+-
+     if (mybot_http_client_get_ex(url, extra_hdrs, &raw) < 0) {
+         AOSL_LOG_ERR("GET %s failed (http)", url);
+         goto done;
+     }
+-
+-    AOSL_LOG_NTC("GET %s -> status=%d", url, raw.status_code);
+ 
+     if (!http_response_ok(&raw)) {
+         int status = raw.status_code;

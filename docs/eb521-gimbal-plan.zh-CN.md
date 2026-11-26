@@ -45,16 +45,18 @@ CRC 初值为 `FFFF`，多项式为 `A001`，覆盖帧头到 payload 末尾。�
 舵机控制保存为关闭后，下次开机不发送运动帧。
 
 已确认中位后，按轨迹发送最新的绝对目标。切换动作时从获得发送时隙时估计的双轴角度缓动衔接，大角度移动会延长过渡。
-普通运动相邻两次 UART 提交尝试至少相隔 100 ms，从前一帧写入返回的时刻重新计时。回中继续按上文的速度、
-周期和应答规则执行。
+普通运动相邻两次 UART 提交尝试至少相隔 100 ms。成功提交一条普通 `0x61` 后，先等该帧有效应答，
+再在轨迹允许的时刻发下一步。`E1/00`、`E1/04` 或坐标可归属到当前目标的 `E1/06` 可放行。
+从 UART 写入成功返回起满 250 ms 仍无有效应答，就继续下一步。阶段切换复用同一次等待，
+供电心跳独立调度，挂断等显式回中请求优先走上文的回中流程。
 每个计划采样点只尝试提交一条普通 `0x61` 帧。UART 提交失败也会消费这个采样点。
 下一时隙按上一条成功提交的目标和速度，以及已经过去的时间，估算两轴当前位置，并为新的绝对目标重算 PPS。
 如果需要超过速度上限才能到达，就延长本段。最后一个普通目标提交失败时仅计入 `tx_failed`，
-该目标没有完成确认，也不会单独重发。独立回中继续等待确认。已提交的中间帧漏应答时继续后续采样。
+该目标没有完成确认，也不会单独重发。独立回中继续等待确认。
 开心摆动有幅度渐入和渐出。愤怒依次转到 +8°（300 ms）、−8°（500 ms）、+10°（500 ms），保持 350 ms 后用
 410 ms 回到中位。惊讶先转到 +30°（800 ms），再转到 +25°（300 ms），保持 300 ms 后用 650 ms 回到中位。
-挂断会清除未发送的动作，并以同样的速度和周期回中直到确认。底板返回开机演示、连续约 3.25 秒收不到有效运动或充电应答，
-或持续发送运动约 1 秒都没有运动应答时，上板清除旧位置和旧动作，再次确认中位。重新就绪后按当前阶段执行。
+挂断会清除未发送的动作，并以同样的速度和周期回中直到确认。底板返回开机演示，或连续约 3.25 秒收不到有效运动或充电应答时，
+上板清除旧位置和旧动作，再次确认中位。重新就绪后按当前阶段执行。
 协议没有独立的拔插通知，极短的断开可能落在两次通信之间。
 
 ## 设置菜单
@@ -69,33 +71,31 @@ CRC 初值为 `FFFF`，多项式为 `A001`，覆盖帧头到 payload 末尾。�
 
 ## CLI
 
-在日志控制台可执行以下命令。正常使用时短按 GPIO47 开聊即可。
+在设备待机、舵机控制已开启并出现 `gimbal center confirmed` 后开始测试。每次只输入一行命令，省略串口提示符 `$`。运动命令返回 `gimbal motion queued` 表示请求已受理。
 
-```text
-ap_cmd gimbal_cmd
-ap_cmd gimbal_scene happy
-ap_cmd gimbal_dialogue start
-ap_cmd gimbal_dialogue listening
-ap_cmd gimbal_dialogue thinking
-ap_cmd gimbal_dialogue speaking
-ap_cmd gimbal_dialogue end
-ap_cmd gimbal_charge off
-ap_cmd gimbal_charge on
-ap_cmd gimbal_probe
-ap_cmd gimbal_test
-ap_cmd gimbal_stats
-ap_cmd gimbal_stats reset
-```
+| 测试项目 | 串口命令 | 操作和观察 |
+|---|---|---|
+| 全部动作 | `ap_cmd gimbal_test` | 受理后倒计时 10 秒，设备继续供电时可拔 Type-C。依次测试六个对话阶段和四个表情场景，结束后用 `gimbal_stats` 读取本轮报表。 |
+| 查询统计 | `ap_cmd gimbal_stats` | 查看普通动作、回中、供电的应答成功率和耗时。自检完成或中断后读取冻结结果。 |
+| 清零统计 | `ap_cmd gimbal_stats reset` | 单测前执行。自检在正式开始时自动清零，倒计时和运行期间手动清零会返回 `busy`。 |
+| 开场 | `ap_cmd gimbal_dialogue start` | 从空闲进入模拟对话。中位起步时小幅摆头后回正，约 0.7 秒。 |
+| 聆听 | `ap_cmd gimbal_dialogue listening` | 保持约 5 秒，观察俯仰轴连续轻点两次。 |
+| 思考、处理中 | `ap_cmd gimbal_dialogue thinking` | 向右转约 15° 并停留。保持 4～6 秒可看到后续小幅慢摆。 |
+| 回答 | `ap_cmd gimbal_dialogue speaking` | 随实际播放的语音能量摆动，静音时收回。需要稳定复现弱声、强声和静音时使用一键自检。 |
+| 中性 | `ap_cmd gimbal_dialogue neutral` | 模拟对话中切到中性，云台平滑回正。空闲时直接进入中性阶段也会触发开场。 |
+| 挂断回中 | `ap_cmd gimbal_dialogue end` | 结束云台侧模拟对话，并等待日志 `gimbal center confirmed`。 |
+| 开心 | `ap_cmd gimbal_scene happy` | 左右轻摆约 ±6°，结束后回中。 |
+| 悲伤 | `ap_cmd gimbal_scene sad` | 约 3 秒缓慢低头至 10°，随后回正。 |
+| 愤怒 | `ap_cmd gimbal_scene angry` | 水平轴依次经过 +8°、−8°、+10° 后回中。 |
+| 惊讶 | `ap_cmd gimbal_scene surprised` | 向右到 +30°、回摆至 +25°，停留后回中。 |
+| 轮换表情 | `ap_cmd gimbal_scene` | 每次受理播放一个场景，顺序为开心、悲伤、愤怒、惊讶，随后循环。 |
+| 方向校验 | `ap_cmd gimbal_cmd` | 每次受理切换到下一个绝对目标，依次为左 30°、下 10°、上 20°、右 10°。每次等到位再发下一条，测完用 `gimbal_dialogue end` 回中。 |
+| UART 链路探测 | `ap_cmd gimbal_probe` | 可选。查看日志 `UART probe E6/02 verified` 确认底板回应。 |
+| 开启供电请求 | `ap_cmd gimbal_charge on` | 开启底板给上板充电的请求，稳定时每 2 秒续期。此选择会保存到下次启动。 |
+| 关闭供电请求 | `ap_cmd gimbal_charge off` | 请求底板停止给上板充电，稳定时每 2 秒维持停充。此选择会保存到下次启动。 |
 
-- `gimbal_cmd` 循环选择四个绝对目标：向左 30°、向下 10°、向上 20°、向右 10°。
-- `gimbal_scene [happy|sad|angry|surprised]` 提交一组动作，不带参数时依次循环。等待回中时显示 `not ready`。
-- `gimbal_dialogue start|listening|thinking|speaking|neutral|end` 调用语音对话使用的阶段接口，仅驱动云台。
-  回答摆幅取自实际播放的声音，静音时回中。CLI 和语音共用运动入口，新的运动请求可以覆盖旧请求。
-- `gimbal_charge off|on` 和设置菜单共用供电许可，并保存到下次启动。启用后每 2 秒发送充电控制帧；
-  关闭时停止续期并发送停充控制帧。重启前尝试确认停充，底板断链后按协议在最后一次有效续期的 3 秒后停充。
-- `gimbal_probe` 是可选的 UART 诊断。有效的 `E6/02` 表示底板收到了诊断帧。
-- `gimbal_stats` 查询 UART 运动统计，运行一键测试后可读取该轮结果。需要为单独操作重新计数时，先执行
-  `gimbal_stats reset`。清零只作用于统计。测试已排定或运行中时，重置返回 `busy`。
+对话阶段命令只驱动云台。测单个动作时，先清零，执行选定动作，结束后等约 1 秒再查统计。
+四个表情场景会自动回中。模拟对话会保持当前阶段，手动发送 `ap_cmd gimbal_dialogue end` 并等回中确认后再查报表，这轮总数包含挂断回中。
 
 `normal` 统计普通动作，`home` 统计回中。应答匹配窗口分别为 250 ms 和 900 ms。
 `tx` 是送入 UART 的帧数，`tx_failed` 是提交失败数。成功率为
@@ -121,8 +121,8 @@ ap_cmd gimbal_stats reset
 
 输出还显示原始 E1 结果码、无效应答 `bad`、未匹配应答 `unmatched`、归属不明的应答
 `ambiguous`，以及过滤掉的重置前应答 `suppressed`。短应答不带事务编号，
-多条命令同时等待短应答时，按发送顺序归属的结果计入 `estimated`。上一条命令已经收到短应答时，
-下一条可以独立计时。`latency` 从上板成功提交 UART 帧算到上板处理可单独匹配的首个短应答。
+前一帧超时后的迟到应答可能与新帧回包混淆，归属含估算的结果计入 `estimated`。
+`latency` 从上板成功提交 UART 帧算到上板处理可单独匹配的首个短应答。
 其中 `n` 是本轮采样数，`min`、`max`、`avg` 和 `median` 分别为最短、最长、平均和中位耗时（ms）。
 中位数覆盖自启动或上次清零以来的全部有效样本，样本数为偶数时取中间两项的均值。
 若单独验证回中，可在待机且已确认中位后静置 1 秒，依次执行 `ap_cmd gimbal_stats reset`、
