@@ -66,6 +66,20 @@ class VendorWorkspaceTests(unittest.TestCase):
             self.assertEqual(Path(vendor.git(stage / name, "rev-parse", "--show-toplevel")
                                   .decode().strip()), stage / name)
 
+    def test_product_patch_is_reapplied_to_a_fresh_copy(self):
+        relative = Path("patches/mybot/0001-test.patch")
+        patch = self.root / relative
+        patch.parent.mkdir(parents=True)
+        patch.write_text("--- a/product.c\n+++ b/product.c\n@@ -1 +1 @@\n-version one\n+patched\n")
+        self.manifest["product_patches"] = [
+            {"path": str(relative), "sha256": vendor.digest(patch.read_bytes())}]
+        self.save_lock()
+        for _ in range(2):
+            stage = self.prepare()
+            self.assertEqual((stage / "bk_solution_ai/components/mybot/product.c").read_text(),
+                             "patched\n")
+            self.assertEqual((self.product / "product.c").read_text(), "version one\n")
+
     def test_rejects_wrong_baseline_before_creating_build_tree(self):
         self.manifest["repositories"]["bk_avdk_smp"]["commit"] = "a" * 40
         self.save_lock()

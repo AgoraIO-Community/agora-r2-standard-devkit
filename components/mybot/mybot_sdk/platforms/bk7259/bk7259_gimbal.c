@@ -34,8 +34,6 @@
 #define CHARGE_ACK_TIMEOUT_MS BK7259_GIMBAL_STATS_POWER_WINDOW_MS
 #define CHARGE_EXPIRY_MS 3000U
 #define LINK_LOSS_MS (CHARGE_EXPIRY_MS + CHARGE_ACK_TIMEOUT_MS)
-#define MOVE_REPLY_LOSS_MS 1000U
-#define MOVE_ACTIVE_GAP_MS 200U
 #define CONTROL_PERIOD_MS BK7259_GIMBAL_MOTION_PERIOD_MS
 #define CENTER_TIME_MS 280U
 #define PAN_LIMIT 800
@@ -170,9 +168,7 @@ typedef struct {
     uint32_t motion_attempt_at;
     int16_t planned_pan;
     int16_t planned_pitch;
-    bool motion_unanswered;
-    uint32_t first_unanswered_at;
-    uint32_t ordinary_sent_at;
+    bool waiting_motion_ack;
     pose_axis_t pose_pan;
     pose_axis_t pose_pitch;
     uint32_t pose_started_at;
@@ -435,7 +431,7 @@ static void sync_home(gimbal_io_t *io, uint32_t now)
      * later round trip before trusting an untagged immediate response. */
     io->home_fence_at = now + (io->home_needs_fence ? HOME_GUARD_MS : 0);
     io->home_due = io->home_fence_at;
-    io->motion_unanswered = false;
+    io->waiting_motion_ack = false;
 }
 
 static int16_t estimate_axis(const pose_axis_t *axis, uint32_t elapsed)
@@ -481,7 +477,7 @@ static void confirm_home(gimbal_io_t *io)
     io->pose_pan = (pose_axis_t){0};
     io->pose_pitch = (pose_axis_t){0};
     io->has_motion_attempt = false;
-    io->ordinary_sent_at = 0;
+    io->waiting_motion_ack = false;
     io->speaking_amplitude = 0;
     /* Timing starts here after returning from an offline interval. */
     s_gimbal.phase_at = rtos_get_time();
@@ -499,8 +495,10 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
         bk7259_gimbal_stats_bad_reply(&s_gimbal.stats);
         return;
     }
-    bk7259_gimbal_stats_reply(&s_gimbal.stats, now, code, complete ? read_i16(frame + 5) : 0,
-                              complete ? read_i16(frame + 7) : 0);
+    int16_t pan = complete ? read_i16(frame + 5) : 0;
+    int16_t pitch = complete ? read_i16(frame + 7) : 0;
+    const bk7259_gimbal_stats_request_t *matched =
+        bk7259_gimbal_stats_reply(&s_gimbal.stats, now, code, pan, pitch);
     if (!s_gimbal.settings.motion_enabled)
         return;
     if (code == 1) {
@@ -512,7 +510,9 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
         return;
     }
     io->last_link_rx_at = now;
-    io->motion_unanswered = false;
+    if (io->waiting_motion_ack && matched && matched->group == BK7259_GIMBAL_STATS_NORMAL &&
+        matched->sent_at == io->motion_attempt_at && (code == 0 || code == 4 || complete))
+        io->waiting_motion_ack = false;
     if (s_gimbal.ready || io->home_ticket != s_gimbal.home_ticket ||
         !io->home_waiting || now - io->home_sent_at > HOME_RESPONSE_MS)
         return;
@@ -520,7 +520,7 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
      * payloads. A late completion in their overlapping windows cannot
      * unlock the next conversation. */
     if ((size == 7 && code == 4 && io->home_accepts_short_reply) ||
-        (complete && !io->recent_ordinary_zero && read_i16(frame + 5) == 0 && read_i16(frame + 7) == 0))
+        (complete && !io->recent_ordinary_zero && pan == 0 && pitch == 0))
         confirm_home(io);
 }
 
@@ -999,6 +999,13 @@ static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32
 
 static void service_motion(gimbal_io_t *io, uint32_t now)
 {
+    /* RX has already been drained this turn. On expiry the trajectory
+     * continues from its next sample; the previous frame is never retried. */
+    if (io->waiting_motion_ack) {
+        if (now - io->motion_attempt_at < BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS)
+            return;
+        io->waiting_motion_ack = false;
+    }
     const motion_request_t *request = &s_gimbal.motion;
     bool changed = io->motion_revision != request->revision;
     if (request->kind == MOTION_NONE ||
@@ -1105,13 +1112,6 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
     if (!terminal_target && same_point && (io->attempted_point || last_goal_matches))
         return;
 
-    if (io->motion_unanswered && now - io->ordinary_sent_at <= MOVE_ACTIVE_GAP_MS &&
-        now - io->first_unanswered_at >= MOVE_REPLY_LOSS_MS) {
-        MYBOT_LOGW(TAG, "EB521 movement replies lost, centering again");
-        recover_home(now);
-        return;
-    }
-
     unsigned int pan_distance = (unsigned int)abs(pan - estimated_pan);
     unsigned int pitch_distance = (unsigned int)abs(pitch - estimated_pitch);
     unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
@@ -1139,10 +1139,7 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
     }
 
     record_pose_command(io, attempted_at, pan, pitch, pan_speed, pitch_speed);
-    if (!io->motion_unanswered || attempted_at - io->ordinary_sent_at > MOVE_ACTIVE_GAP_MS)
-        io->first_unanswered_at = attempted_at;
-    io->motion_unanswered = true;
-    io->ordinary_sent_at = attempted_at;
+    io->waiting_motion_ack = true;
     io->sent_ordinary_motion = true;
     if (pan == 0 && pitch == 0) {
         io->recent_ordinary_zero = true;

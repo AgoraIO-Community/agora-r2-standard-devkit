@@ -42,7 +42,10 @@ def load_lock(root=ROOT):
             raise RuntimeError(f"invalid pinned commit for {name}")
         if repository.get("url") != f"https://github.com/bekencorp/{name}.git":
             raise RuntimeError(f"{name} must use its BK official repository")
-        for patch in repository.get("patches", []):
+    patch_groups = [(name, repo.get("patches", [])) for name, repo in manifest["repositories"].items()]
+    patch_groups.append(("mybot", manifest.get("product_patches", [])))
+    for name, patches in patch_groups:
+        for patch in patches:
             relative = Path(patch["path"])
             if relative.is_absolute() or ".." in relative.parts or \
                     not relative.is_relative_to(Path("patches") / name):
@@ -89,7 +92,7 @@ def validate_stage(stage, manifest, fingerprint):
                                "choose a new --build-root to rebuild safely")
 
 
-def sync_product(source, destination):
+def sync_product(source, destination, patches):
     """Replace only the product overlay owned by this prepared workspace."""
     if not source.is_dir() or source.is_symlink():
         raise RuntimeError(f"MyBot component sources are unavailable: {source}")
@@ -99,6 +102,10 @@ def sync_product(source, destination):
     try:
         shutil.copytree(source, temporary, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("build", "__pycache__", "*.pyc"))
+        # Apply BK-specific SDK changes to the fresh overlay before publishing it.
+        checkout = destination.parents[1]
+        for patch in patches:
+            git(checkout, "apply", f"--directory={temporary.relative_to(checkout)}", str(patch))
         if destination.exists():
             shutil.rmtree(destination)
         os.replace(temporary, destination)
@@ -144,5 +151,6 @@ def prepare_vendor(build_root, root=ROOT, dry_run=False):
             if temporary.exists():
                 shutil.rmtree(temporary)
     validate_stage(stage, manifest, fingerprint)
-    sync_product(root / "components/mybot", stage / "bk_solution_ai/components/mybot")
+    product_patches = [root / patch["path"] for patch in manifest.get("product_patches", [])]
+    sync_product(root / "components/mybot", stage / "bk_solution_ai/components/mybot", product_patches)
     return stage

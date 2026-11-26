@@ -20,6 +20,10 @@
         {
           "path": "patches/bk_avdk_smp/0004-r2-cst7xx-touch.patch",
           "sha256": "063652b91ede12521b1bdda96f3b8bd49a36e4a61f927ddfbd11af2a2d017709"
+        },
+        {
+          "path": "patches/bk_avdk_smp/0005-r2-dsi-suppress-dpi-payload-full-log.patch",
+          "sha256": "4bcacd79c81949f0ab6ce9d3dc49c075b595097321187ac77f4b882e55eefee0"
         }
       ]
     },
@@ -33,5 +37,11 @@
         }
       ]
     }
-  }
+  },
+  "product_patches": [
+    {
+      "path": "patches/mybot/0001-quiet-binding-status-poll.patch",
+      "sha256": "453dc7d9c5967dd292e778b572b15a1b1f6d0ae08a198b14f96e4d0bb443d364"
+    }
+  ]
 }

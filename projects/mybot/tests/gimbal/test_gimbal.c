@@ -12,6 +12,7 @@
 #define HOST_CLOCK_SCALE 10U
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof((array)[0]))
 #define EXPECTED_MOTION_PERIOD_MS 100U
+#define EXPECTED_MOTION_REPLY_MS 250U
 #define EXPECTED_CHARGE_PERIOD_MS 2000U
 #define MODEL_CHARGE_EXPIRY_MS 3000U
 
@@ -822,11 +823,220 @@ static void test_due_motion_waits_for_charge_tail(void)
     fixed_test_time = 0;
 }
 
+static void poll_fixed_uart(gimbal_io_t *io, uint32_t now)
+{
+    fixed_test_time = now;
+    sync_home(io, now);
+    drain_frames(io, now);
+    service_charge(io, now);
+    sync_home(io, now);
+    if (s_gimbal.ready)
+        service_motion(io, now);
+    else
+        service_home(io, now);
+}
+
+static void test_ordinary_motion_acknowledgement(void)
+{
+    const struct {
+        uint8_t code;
+        uint32_t ack_after;
+        uint32_t send_after;
+    } cases[] = {{0, 80, 100}, {4, 140, 140}, {6, 180, 180}, {0, 250, 250}};
+    for (unsigned i = 0; i < ARRAY_COUNT(cases); ++i) {
+        reset_controller();
+        controller.uart_open = true;
+        controller.drop_next_move = true;
+        gimbal_io_t io = {.charge_due = 10000U};
+        s_gimbal = (gimbal_context_t){
+            .ready = true,
+            .settings = {.motion_enabled = true, .charge_enabled = true},
+        };
+        const uint32_t started = 1000U;
+        bk7259_gimbal_stats_reset(&s_gimbal.stats, started);
+        queue_scene(BK7259_GIMBAL_SCENE_ANGRY, started);
+        poll_fixed_uart(&io, started);
+        assert(controller.motion_count == 1 && motion_pan(0) == 17);
+
+        poll_fixed_uart(&io, started + cases[i].ack_after - 1U);
+        assert(controller.motion_count == 1);
+        uint8_t code = cases[i].code;
+        if (code == 6)
+            complete_locked(motion_pan(0), motion_pitch(0));
+        else
+            inject_result_locked(code);
+        poll_fixed_uart(&io, started + cases[i].ack_after);
+        if (cases[i].ack_after < cases[i].send_after) {
+            assert(controller.motion_count == 1);
+            poll_fixed_uart(&io, started + cases[i].send_after - 1U);
+            assert(controller.motion_count == 1);
+            poll_fixed_uart(&io, started + cases[i].send_after);
+        }
+        assert(controller.motion_count == 2 && motion_pan(1) == 63);
+        assert(controller.motion[1].at - controller.motion[0].at == cases[i].send_after);
+        const bk7259_gimbal_stats_counts_t *normal = &s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
+        assert(normal->tx == 2 && normal->accepted == 1 && normal->expired == 0);
+
+        controller.uart_open = false;
+        s_gimbal = (gimbal_context_t){0};
+        fixed_test_time = 0;
+    }
+}
+
+static void test_ordinary_motion_ack_timeout(void)
+{
+    reset_controller();
+    controller.uart_open = true;
+    controller.drop_next_move = true;
+    const uint32_t started = 1000U;
+    gimbal_io_t io = {.charge_due = started + 150U};
+    s_gimbal = (gimbal_context_t){
+        .ready = true,
+        .settings = {.motion_enabled = true, .charge_enabled = true},
+    };
+    bk7259_gimbal_stats_reset(&s_gimbal.stats, started);
+    queue_scene(BK7259_GIMBAL_SCENE_ANGRY, started);
+    poll_fixed_uart(&io, started);
+    assert(controller.motion_count == 1 && motion_pan(0) == 17);
+
+    complete_locked(motion_pan(0), motion_pitch(0) + 1);
+    inject_result_locked(3);
+    uint8_t damaged_reply[sizeof(accepted_frame)];
+    memcpy(damaged_reply, accepted_frame, sizeof(damaged_reply));
+    damaged_reply[sizeof(damaged_reply) - 1U] ^= 1U;
+    deliver_reply_locked(damaged_reply, sizeof(damaged_reply));
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS);
+    assert(controller.motion_count == 1);
+
+    poll_fixed_uart(&io, started + 150U);
+    assert(controller.charge_count == 1 && controller.motion_count == 1);
+    poll_fixed_uart(&io, started + 192U);
+    assert(s_gimbal.stats.snapshot.power.e6_00 == 1);
+    assert(controller.motion_count == 1);
+
+    inject_result_locked(2);
+    poll_fixed_uart(&io, started + 200U);
+    assert(s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].rejected == 1);
+    assert(controller.motion_count == 1);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS - 1U);
+    assert(controller.motion_count == 1);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS);
+    assert(controller.motion_count == 2 && motion_pan(1) == 63);
+    assert(controller.motion[1].at - controller.motion[0].at == EXPECTED_MOTION_REPLY_MS);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS + EXPECTED_MOTION_PERIOD_MS - 1U);
+    assert(controller.motion_count == 2);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS + EXPECTED_MOTION_PERIOD_MS);
+    assert(controller.motion_count == 3 && motion_pan(2) == 80);
+
+    controller.uart_open = false;
+    s_gimbal = (gimbal_context_t){0};
+    fixed_test_time = 0;
+}
+
+static void test_ordinary_ack_attribution_across_reset(uint8_t current_ack)
+{
+    reset_controller();
+    assert(mailbox_initialized() && s_wake);
+    controller.uart_open = true;
+    controller.drop_next_move = true;
+    const uint32_t started = 1000U;
+    const uint32_t acknowledged = started + 150U;
+    const uint32_t timed_out = acknowledged + EXPECTED_MOTION_REPLY_MS;
+    gimbal_io_t io = {.charge_due = 10000U};
+    s_gimbal = (gimbal_context_t){
+        .prepared = true, .accepting = true, .ready = true,
+        .settings = {.motion_enabled = true, .charge_enabled = true},
+    };
+    bk7259_gimbal_stats_reset(&s_gimbal.stats, started);
+    assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_ANGRY) == 0);
+    poll_fixed_uart(&io, started);
+    assert(controller.motion_count == 1 && motion_pan(0) == 17);
+
+    fixed_test_time = started + 50U;
+    assert(bk7259_gimbal_reset_stats() == 0);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS);
+    assert(controller.motion_count == 1);
+    controller.drop_next_move = true;
+    inject_result_locked(0);
+    poll_fixed_uart(&io, acknowledged);
+    assert(controller.motion_count == 2 && motion_pan(1) == 63);
+    const bk7259_gimbal_stats_snapshot_t *stats = &s_gimbal.stats.snapshot;
+    const bk7259_gimbal_stats_counts_t *normal = &stats->groups[BK7259_GIMBAL_STATS_NORMAL];
+    assert(stats->suppressed == 1 && normal->tx == 1 && normal->accepted == 0);
+
+    controller.drop_next_move = true;
+    poll_fixed_uart(&io, timed_out);
+    assert(controller.motion_count == 3 && motion_pan(2) == 80);
+    /* A short reply from the expired 6.3-degree frame is ambiguous. Its
+     * coordinate-bearing completion also cannot acknowledge the 8-degree frame. */
+    inject_result_locked(0);
+    poll_fixed_uart(&io, timed_out + EXPECTED_MOTION_PERIOD_MS);
+    assert(controller.motion_count == 3 && stats->ambiguous == 1);
+    complete_locked(motion_pan(1), motion_pitch(1));
+    poll_fixed_uart(&io, timed_out + EXPECTED_MOTION_PERIOD_MS + 10U);
+    assert(controller.motion_count == 3);
+
+    if (current_ack == 6)
+        complete_locked(motion_pan(2), motion_pitch(2));
+    else
+        inject_result_locked(current_ack);
+    poll_fixed_uart(&io, timed_out + EXPECTED_MOTION_PERIOD_MS + 20U);
+    assert(controller.motion_count == 4 && motion_pan(3) == 71);
+    assert(normal->tx == 3 && normal->accepted == 1 && normal->expired == 1);
+
+    controller.uart_open = false;
+    s_gimbal = (gimbal_context_t){0};
+    fixed_test_time = 0;
+}
+
+static void test_pending_motion_rehomes(bool boot_demo)
+{
+    reset_controller();
+    assert(mailbox_initialized() && s_wake);
+    controller.uart_open = true;
+    controller.drop_next_move = true;
+    const uint32_t started = 1000U;
+    const uint32_t hangup_at = started + 50U;
+    const uint32_t charge_at = hangup_at + HOME_GUARD_MS - 10U;
+    gimbal_io_t io = {.charge_due = charge_at};
+    s_gimbal = (gimbal_context_t){
+        .prepared = true, .accepting = true, .ready = true,
+        .settings = {.motion_enabled = true, .charge_enabled = true},
+    };
+    bk7259_gimbal_stats_reset(&s_gimbal.stats, started);
+    queue_scene(BK7259_GIMBAL_SCENE_ANGRY, started);
+    poll_fixed_uart(&io, started);
+    assert(controller.motion_count == 1 && motion_pan(0) == 17);
+
+    fixed_test_time = hangup_at;
+    if (boot_demo)
+        inject_result_locked(1);
+    else
+        assert(bk7259_gimbal_update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL) == 0);
+    poll_fixed_uart(&io, hangup_at);
+    assert(!s_gimbal.ready && controller.motion_count == 1);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS);
+    assert(controller.motion_count == 1);
+    poll_fixed_uart(&io, charge_at);
+    assert(controller.charge_count == 1 && controller.motion_count == 1);
+    poll_fixed_uart(&io, charge_at + 41U);
+    assert(controller.motion_count == 1);
+    poll_fixed_uart(&io, charge_at + 42U);
+    assert(controller.motion_count == 2 && home_frame(1));
+    assert(controller.motion[1].at - controller.charge[0].at == 42U);
+    assert(s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].tx == 1);
+
+    controller.uart_open = false;
+    s_gimbal = (gimbal_context_t){0};
+    fixed_test_time = 0;
+}
+
 static void test_phase_takeover_uses_pose_at_transmit_slot(void)
 {
     reset_controller();
     assert(mailbox_initialized() && s_wake);
     controller.uart_open = true;
+    controller.drop_next_move = true;
     fixed_test_time = 1000U;
     gimbal_io_t io = {.charge_due = fixed_test_time};
     s_gimbal = (gimbal_context_t){
@@ -862,6 +1072,10 @@ static void test_phase_takeover_uses_pose_at_transmit_slot(void)
     service_motion(&io, fixed_test_time);
     assert(controller.motion_count == 1);
     ++fixed_test_time;
+    service_motion(&io, fixed_test_time);
+    assert(controller.motion_count == 1);
+    inject_result_locked(0);
+    drain_frames(&io, fixed_test_time);
     service_motion(&io, fixed_test_time);
     assert(controller.motion_count == 2 && controller.motion[1].at == opening_at + 132U);
     assert(motion_pan(1) == 18 && motion_pitch(1) == 0);
@@ -2150,29 +2364,35 @@ static void test_heartbeat_loss_reestablishes_center(void)
     shutdown_and_join();
 }
 
-static void test_sustained_invalid_motion_replies_close_gate(void)
+static void test_sustained_invalid_motion_replies_continue_with_charge_ack(void)
 {
     reset_controller();
     start_and_wait_for_home();
-    /* Start motion shortly before the next heartbeat so noisy RX and the
-     * renewals overlap before the movement reply deadline. */
+    /* Start motion shortly before the next heartbeat so charging replies
+     * are interleaved with the corrupt movement stream. */
     rtos_delay_milliseconds(1600);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     controller.motion_response = RESPONSE_CONTINUOUS_NOISE;
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    uint32_t started = rtos_get_time();
     assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_HAPPY) == 0);
     wait_for_count(&controller.motion_count, 3);
-    unsigned lost_home = wait_for_home(1);
+    unsigned scene_home = wait_for_home(1);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
-    uint32_t elapsed = controller.motion[lost_home - 1].at - controller.motion[1].at;
-    assert(elapsed >= 900 && elapsed <= 1600 && controller.charging);
+    uint32_t elapsed = controller.motion[scene_home - 1U].at - started;
+    assert(elapsed >= 2000U && controller.charging && scene_home >= 7U);
+    for (unsigned frame = 2; frame < scene_home - 1U; ++frame) {
+        assert(controller.motion[frame].at - controller.motion[frame - 1U].at >= EXPECTED_MOTION_REPLY_MS);
+        assert(motion_pan(frame) != motion_pan(frame - 1U));
+    }
     assert(controller.rx_bytes > 600);
     assert(controller.charge_count > 1);
     assert(controller.charge[1].at > controller.motion[1].at &&
-           controller.charge[1].at < controller.motion[lost_home - 1].at);
+           controller.charge[1].at < controller.motion[scene_home - 1U].at);
     controller.next_noise_at = 0;
     controller.motion_response = RESPONSE_NORMAL;
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(gimbal_stats().power.e6_00 >= 2);
     assert(bk7259_gimbal_center_wait(3000) == 0);
     shutdown_and_join();
     assert(controller.pan == 0 && controller.pitch == 0 && log_calls < 60);
@@ -2501,10 +2721,16 @@ int main(void)
     aosl_ctor();
     test_crc_vectors();
     test_due_motion_waits_for_charge_tail();
+    test_ordinary_motion_acknowledgement();
+    test_ordinary_motion_ack_timeout();
     test_path_write_failure(false);
     test_path_write_failure(true);
     test_terminal_target_write_failure();
     test_uart_stats_motion_and_reset();
+    test_ordinary_ack_attribution_across_reset(0);
+    test_ordinary_ack_attribution_across_reset(6);
+    test_pending_motion_rehomes(false);
+    test_pending_motion_rehomes(true);
     test_phase_takeover_uses_pose_at_transmit_slot();
     test_previous_zero_reply_during_hangup();
     test_uart_stats_disable_home_and_tx_error();
@@ -2529,7 +2755,7 @@ int main(void)
     test_cli_and_dialogue_share_motion();
     test_explicit_end_interrupts_scene_while_dialogue_inactive();
     test_heartbeat_loss_reestablishes_center();
-    test_sustained_invalid_motion_replies_close_gate();
+    test_sustained_invalid_motion_replies_continue_with_charge_ack();
     test_probe_and_charge_policy();
     test_shutdown_unconfirmed_off_stops_renewals();
     test_worker_lifecycle();

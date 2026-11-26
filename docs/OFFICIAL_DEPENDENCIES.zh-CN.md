@@ -39,6 +39,8 @@ AOSL 基线为 `84e086084ebcd0ae2455a0ce5721950c5fe2e656`，内容摘要和 BK72
 | `patches/bk_avdk_smp/0002-r2-gc9503cv-panel.patch` | GC9503CV MIPI 屏支持 |
 | `patches/bk_avdk_smp/0003-r2-trimic-aec.patch` | 三路输入 AEC 集成和配套库 |
 | `patches/bk_avdk_smp/0004-r2-cst7xx-touch.patch` | CST7XX 触摸及有界生命周期 |
+| `patches/bk_avdk_smp/0005-r2-dsi-suppress-dpi-payload-full-log.patch` | 屏蔽 DSI DPI 载荷 FIFO 满的重复日志 |
+| `patches/mybot/0001-quiet-binding-status-poll.patch` | 在 SDK 构建副本中屏蔽绑定状态 GET 请求和状态码的例行日志 |
 | `patches/bk_solution_ai/0001-mybot-camera-helper.patch` | 摄像头辅助组件、XCLK 和低帧率适配 |
 
 补丁 SHA256 保存在 `vendor.lock.json`。AEC 算法库大小为 591224 字节，SHA256：
