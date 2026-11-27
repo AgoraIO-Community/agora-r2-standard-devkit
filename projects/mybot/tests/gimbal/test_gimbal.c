@@ -1140,15 +1140,9 @@ static void test_phase_takeover_uses_pose_at_transmit_slot(void)
     assert(controller.motion_count == 1);
     ++fixed_test_time;
     service_motion(&io, fixed_test_time);
-    assert(controller.motion_count == 1);
-    assert(io.blend_pan == 11 && io.blend_at == opening_at + 132U);
-
-    fixed_test_time += EXPECTED_MOTION_PERIOD_MS;
-    drain_frames(&io, fixed_test_time);
-    service_motion(&io, fixed_test_time);
-    assert(controller.motion_count == 2 && motion_pan(1) == 7 && motion_pitch(1) == 0);
-    /* A 0.4-degree move in 100 ms needs at least 20 PPS. */
-    assert(wire_u16(controller.motion[1].bytes + 8) == 20U);
+    assert(controller.motion_count == 2 && controller.motion[1].at == opening_at + 132U);
+    assert(motion_pan(1) == 0 && motion_pitch(1) == 0 && !home_frame(1));
+    assert(io.pose_pan.start == 11 && io.pose_pan.target == 0);
     controller.uart_open = false;
     s_gimbal = (gimbal_context_t){0};
     fixed_test_time = 0;
@@ -1523,8 +1517,12 @@ static void assert_test_stage_motion(const bk7259_gimbal_stats_snapshot_t *stats
         case BK7259_GIMBAL_TEST_OPENING:
             assert_pan_key_sequence(first, end, opening_keys, ARRAY_COUNT(opening_keys));
             break;
-        case BK7259_GIMBAL_TEST_LISTENING: assert(maximum_pitch > 0); break;
-        case BK7259_GIMBAL_TEST_THINKING: assert(maximum_pan == 120 && motion_pan(end - 1) == 120); break;
+        case BK7259_GIMBAL_TEST_LISTENING:
+            assert(count == 2 && maximum_pitch == 30 && motion_pitch(first) == 30 && motion_pitch(end - 1U) == 0);
+            break;
+        case BK7259_GIMBAL_TEST_THINKING:
+            assert(count == 1 && maximum_pan == 120 && motion_pitch(first) == 0);
+            break;
         case BK7259_GIMBAL_TEST_SPEAKING:
             assert_speaking_swing(first, end);
             assert_test_stage_motion_gap(&stats->test_counts[stage], first, end, "speaking");
@@ -1580,7 +1578,9 @@ static void test_scheduled_uart_motion_sequence(void)
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
     assert(bk7259_gimbal_reset_stats() == BK7259_GIMBAL_BUSY);
 
-    (void)wait_for_test_state(BK7259_GIMBAL_TEST_RUNNING, BK7259_GIMBAL_TEST_THINKING);
+    (void)wait_for_test_state(BK7259_GIMBAL_TEST_RUNNING, BK7259_GIMBAL_TEST_LISTENING);
+    /* Arm the fault after the nod return so the sole thinking frame loses its reply. */
+    wait_for_count(&controller.motion_count, motion_count() + 2U);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     controller.drop_next_move = true;
     controller.pause_after_next_move = true;
@@ -1588,7 +1588,7 @@ static void test_scheduled_uart_motion_sequence(void)
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
     wait_for_count(&controller.motion_count, before_dropped_reply + 1U);
     rtos_delay_milliseconds(320);
-    assert(gimbal_stats().test_counts[BK7259_GIMBAL_TEST_THINKING].expired >= 1);
+    assert(gimbal_stats().test_counts[BK7259_GIMBAL_TEST_THINKING].expired == 1);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     controller.tx_paused = false;
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
@@ -1609,7 +1609,7 @@ static void test_scheduled_uart_motion_sequence(void)
 
     bk7259_gimbal_stats_snapshot_t complete = wait_for_test_state(BK7259_GIMBAL_TEST_COMPLETED,
                                                                 BK7259_GIMBAL_TEST_NONE);
-    assert(complete.test_counts[BK7259_GIMBAL_TEST_THINKING].expired >= 1);
+    assert(complete.test_counts[BK7259_GIMBAL_TEST_THINKING].expired == 1);
     assert_test_stage_motion(&complete, initial_moves);
     assert(complete.move_to_charge_pairs > 0 && complete.charge_to_move_pairs > 0);
     assert_trace_tx_gaps(&complete, true);
@@ -1646,6 +1646,115 @@ static void test_scheduled_uart_motion_sequence(void)
     assert(later.move_to_charge_pairs == 0 && later.charge_to_move_pairs == 0);
     assert(later.min_move_to_charge_idle_ms == 0 && later.min_charge_to_move_idle_ms == 0);
     assert(later.power.e6_00 == 0 && later.power.latency_samples == 0);
+    shutdown_and_join();
+}
+
+static void test_limit_sequence(void)
+{
+    static const int16_t targets[][2] = {
+        {0, -300}, {0, 0}, {0, 150}, {0, 0},
+        {-900, 0}, {0, 0}, {900, 0}, {0, 0},
+        {-900, -300}, {900, 150}, {900, -300}, {-900, 150},
+        {900, 150}, {-900, -300}, {-900, 150}, {900, -300}, {0, 0},
+    };
+    reset_controller();
+    /* Only the limit diagnostic may submit the four physical extremes. */
+    gimbal_io_t io = {0};
+    for (unsigned i = 0; i < 8U; i += 2U)
+        assert(!send_move(&io, BK7259_GIMBAL_STATS_NORMAL, targets[i][0], targets[i][1],
+                          1000, 1000, 1000));
+    assert(motion_count() == 0);
+    start_and_wait_for_home();
+    unsigned first = motion_count();
+    uint32_t scheduled = rtos_get_time();
+    assert(bk7259_gimbal_schedule_limit_test() == 0);
+    assert(bk7259_gimbal_schedule_test() == BK7259_GIMBAL_BUSY);
+    assert(bk7259_gimbal_reset_stats() == BK7259_GIMBAL_BUSY);
+    assert(gimbal_stats().limit_test);
+    bk7259_gimbal_stats_snapshot_t stats =
+        wait_for_test_state(BK7259_GIMBAL_TEST_COMPLETED, BK7259_GIMBAL_TEST_NONE);
+    const bk7259_gimbal_stats_counts_t *normal = &stats.groups[BK7259_GIMBAL_STATS_NORMAL];
+    assert(stats.limit_test && ARRAY_COUNT(targets) == BK7259_GIMBAL_LIMIT_STEP_COUNT);
+    assert(normal->tx == ARRAY_COUNT(targets) && normal->arrival.reached == ARRAY_COUNT(targets));
+    assert(stats.groups[BK7259_GIMBAL_STATS_HOME].tx == 0);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    assert(controller.motion_count == first + ARRAY_COUNT(targets));
+    assert(controller.motion[first].at - scheduled >= 10000U);
+    int16_t from_pan = 0, from_pitch = 0;
+    for (unsigned i = 0; i < ARRAY_COUNT(targets); ++i) {
+        const wire_record_t *frame = &controller.motion[first + i];
+        const bk7259_gimbal_limit_step_t *step = &stats.limit_steps[i];
+        int16_t pan = targets[i][0], pitch = targets[i][1];
+        unsigned step_number = i + 1;
+        bool diagonal = step_number == 10 || step_number == 12 || step_number == 14 || step_number == 16;
+        uint16_t pan_pps = wire_u16(frame->bytes + 8);
+        uint16_t pitch_pps = wire_u16(frame->bytes + 10);
+        assert(motion_pan(first + i) == pan && motion_pitch(first + i) == pitch);
+        assert(pan_pps == 1000 && pitch_pps == (diagonal ? 250 : 1000));
+        assert(step->pan_pps == pan_pps && step->pitch_pps == pitch_pps);
+        assert(step->tx == 1 && step->result == BK7259_GIMBAL_LIMIT_REACHED);
+        assert(step->pan == pan && step->pitch == pitch && step->has_ack && step->has_arrival);
+        uint32_t pan_ms = controller_axis_ms(from_pan, pan, pan_pps);
+        uint32_t pitch_ms = controller_axis_ms(from_pitch, pitch, pitch_pps);
+        if (diagonal)
+            assert(pan_ms == 900 && pitch_ms == 900);
+        uint32_t travel = pan_ms > pitch_ms ? pan_ms : pitch_ms;
+        assert(step->ack_ms <= step->arrival_ms && step->arrival_ms > 0);
+        if (i + 1 < ARRAY_COUNT(targets)) {
+            uint32_t gap = controller.motion[first + i + 1].at - frame->at;
+            assert(gap >= travel + 500U && gap >= step->arrival_ms + 500U);
+        }
+        from_pan = pan;
+        from_pitch = pitch;
+    }
+    assert(controller.pan == 0 && controller.pitch == 0 && controller.charge_expirations == 0);
+    assert_charge_periods_locked(0, controller.charge_count, true);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(100);
+    bk7259_gimbal_stats_snapshot_t frozen = gimbal_stats();
+    assert(frozen.window_ms == stats.window_ms);
+    assert(!memcmp(frozen.limit_steps, stats.limit_steps, sizeof(stats.limit_steps)));
+    assert(bk7259_gimbal_reset_stats() == 0 && !gimbal_stats().limit_test);
+    shutdown_and_join();
+}
+
+static void test_limit_interruption(bool live_dialogue)
+{
+    reset_controller();
+    start_and_wait_for_home();
+    unsigned first = motion_count();
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.motion_response = RESPONSE_DROP_COMPLETION;
+    controller.hold_home_reply = true;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_schedule_limit_test() == 0);
+    wait_for_count(&controller.motion_count, first + 1);
+    if (live_dialogue) {
+        int result = bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING);
+        assert(result == 0 || result == BK7259_GIMBAL_NOT_READY);
+    }
+    bk7259_gimbal_stats_snapshot_t stats =
+        wait_for_test_state(BK7259_GIMBAL_TEST_INTERRUPTED, BK7259_GIMBAL_TEST_NONE);
+    const bk7259_gimbal_limit_step_t *step = &stats.limit_steps[0];
+    assert(stats.limit_test && step->tx == 1 && !step->has_arrival);
+    assert(step->result == (live_dialogue ? BK7259_GIMBAL_LIMIT_CANCELLED : BK7259_GIMBAL_LIMIT_TIMEOUT));
+    if (!live_dialogue)
+        assert(step->has_ack);
+    for (unsigned i = 1; i < BK7259_GIMBAL_LIMIT_STEP_COUNT; ++i)
+        assert(stats.limit_steps[i].tx == 0 && stats.limit_steps[i].result == BK7259_GIMBAL_LIMIT_NOT_RUN);
+    assert(wait_for_home(first + 1) == first + 2);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    /* The abandoned extremum completes after a recovery home has been sent. */
+    complete_locked(0, -300);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(100);
+    assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_SAD) == BK7259_GIMBAL_NOT_READY);
+    assert(motion_count() == first + 2);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.motion_response = RESPONSE_NORMAL;
+    controller.hold_home_reply = false;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_center_wait(3500) == 0);
     shutdown_and_join();
 }
 
@@ -1884,44 +1993,29 @@ static void test_listening_nods_use_pitch(uint32_t phase_offset_ms)
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_LISTENING) == 0);
     rtos_delay_milliseconds(1800);
     assert(motion_count() == before_nods);
-    wait_for_count(&controller.motion_count, before_nods + 1);
-    rtos_delay_milliseconds(1250);
+    /* Observe two complete cycles, including the quiet interval in between. */
+    wait_for_count(&controller.motion_count, before_nods + 4U);
+    rtos_delay_milliseconds(750);
     unsigned after_nods = motion_count();
+    assert(after_nods == before_nods + 4U);
     assert(bk7259_gimbal_update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL) == 0);
     assert(bk7259_gimbal_center_wait(3000) == 0);
     shutdown_and_join();
 
-    assert(after_nods > before_nods + 1U);
-    assert_motion_pacing(before_nods, after_nods);
     uint32_t first_nod_at = controller.motion[before_nods].at;
-    uint32_t last_nod_at = controller.motion[after_nods - 1U].at;
     assert(first_nod_at - started >= 3450 && first_nod_at - started <= 3800);
-    bool heartbeat_between_nod_frames = false;
-    for (unsigned i = 0; i < controller.charge_count; ++i) {
-        uint32_t at = controller.charge[i].at;
-        if (controller.charge[i].bytes[4] == 1 && at > first_nod_at && at < last_nod_at)
-            heartbeat_between_nod_frames = true;
+    uint32_t between_nods = controller.motion[before_nods + 2U].at - first_nod_at;
+    assert(between_nods >= 3350 && between_nods <= 3650);
+    for (unsigned down = before_nods; down < after_nods; down += 2U) {
+        unsigned up = down + 1U;
+        assert(motion_pan(down) == 0 && motion_pitch(down) == 30);
+        assert(motion_pan(up) == 0 && motion_pitch(up) == 0 && !home_frame(up));
+        assert(wire_u16(controller.motion[down].bytes + 10) == 27);
+        assert(wire_u16(controller.motion[up].bytes + 10) == 27);
+        assert(controller.motion[up].at - controller.motion[down].at >= 555U);
     }
-    assert(heartbeat_between_nod_frames == (phase_offset_ms == 0));
-
-    int previous_pitch = 0, peak = 0;
-    bool returning = false;
-    for (unsigned i = before_nods; i < after_nods; ++i) {
-        int pitch = motion_pitch(i);
-        assert(motion_pan(i) == 0 && pitch >= 0 && pitch <= 30);
-        assert(abs(pitch - previous_pitch) <= DIALOGUE_MAX_STEP);
-        if (pitch < previous_pitch)
-            returning = true;
-        if (returning)
-            assert(pitch <= previous_pitch);
-        else
-            peak = pitch;
-        previous_pitch = pitch;
-    }
-    assert(peak >= 27 && returning && previous_pitch == 0);
     assert(controller.pan == 0 && controller.pitch == 0);
-    printf("EB521 listening offset %u ms recorded one nod reaching %d tenths of a degree\n",
-           phase_offset_ms, peak);
+    printf("EB521 listening offset %u ms: two nods, four endpoint frames at 27 PPS\n", phase_offset_ms);
 }
 
 static void assert_delayed_motion_gap(const char *motion, uint32_t delay_ms)
@@ -2011,7 +2105,7 @@ static void test_live_phase_replaces_opening(void)
     resume_motion();
     unsigned cursor = first_thinking;
     uint32_t reached = wait_for_target(&cursor, 120, 120);
-    assert(reached - started <= 1100U);
+    assert(cursor == first_thinking + 1U && reached - started <= 300U);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     for (unsigned frame = first_thinking; frame < cursor; ++frame) {
         assert(motion_pan(frame) > 15 && motion_pitch(frame) == 0);
@@ -2019,6 +2113,43 @@ static void test_live_phase_replaces_opening(void)
     assert_motion_pacing(first_thinking - 1U, cursor);
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
     shutdown_and_join();
+}
+
+static void test_thinking_preempts_nod(bool fail_thinking_write)
+{
+    reset_controller();
+    fixed_test_time = 1000U;
+    const uint32_t nod_at = fixed_test_time + 3500U;
+    controller.uart_open = true;
+    controller.motion_response = RESPONSE_ACCEPT_ONLY;
+    gimbal_io_t io = {.charge_due = 20000U};
+    s_gimbal = (gimbal_context_t){
+        .prepared = true, .accepting = true, .ready = true,
+        .settings = {.motion_enabled = true},
+    };
+    assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_LISTENING) == 0);
+    poll_fixed_uart(&io, fixed_test_time);
+    poll_fixed_uart(&io, nod_at);
+    assert(controller.motion_count == 1 && motion_pitch(0) == 30);
+
+    poll_fixed_uart(&io, nod_at + 5U);
+    assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING) == 0);
+    controller.fail_next_move_write = fail_thinking_write;
+    poll_fixed_uart(&io, nod_at + EXPECTED_MOTION_PERIOD_MS);
+    assert(controller.motion_count == 2 && motion_pan(1) == 120 && motion_pitch(1) == 0);
+    complete_locked(0, 30); /* The old nod completion cannot advance the new phase. */
+    poll_fixed_uart(&io, nod_at + 105U);
+    assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING) == 0);
+    for (uint32_t elapsed = 110U; elapsed < 5000U; elapsed += 10U)
+        poll_fixed_uart(&io, nod_at + elapsed);
+
+    const bk7259_gimbal_stats_counts_t *normal = &s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
+    assert(controller.motion_count == 2 && normal->arrival.cancelled == 1);
+    assert(normal->tx_failed == (fail_thinking_write ? 1U : 0U));
+    assert(normal->arrival.expired == (fail_thinking_write ? 0U : 1U));
+    controller.uart_open = false;
+    s_gimbal = (gimbal_context_t){0};
+    fixed_test_time = 0;
 }
 
 static void test_motion_write_pacing(void)
@@ -2070,20 +2201,23 @@ static void test_motion_write_pacing(void)
     shutdown_and_join();
 }
 
-static void test_thinking_and_speaking_are_eased(void)
+static void test_thinking_endpoint_and_speaking_swing(void)
 {
     reset_controller();
     start_and_wait_for_home();
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_NEUTRAL) == 0);
     rtos_delay_milliseconds(900);
     unsigned cursor = motion_count();
-    uint32_t thinking_at = rtos_get_time();
+    unsigned first_thinking = cursor;
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING) == 0);
-    uint32_t peak_at = wait_for_target(&cursor, 120, 120);
-    assert(peak_at - thinking_at >= 600 && peak_at - thinking_at <= 1050);
-    unsigned held = motion_count();
+    (void)wait_for_target(&cursor, 120, 120);
+    assert(cursor == first_thinking + 1U);
+    assert(wire_u16(controller.motion[first_thinking].bytes + 8) == 85);
     rtos_delay_milliseconds(4500);
-    assert(motion_count() == held);
+    assert(motion_count() == cursor);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    assert(controller.pan == 120 && controller.pitch == 0);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
 
     unsigned first = motion_count();
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_SPEAKING) == 0);
@@ -2330,14 +2464,14 @@ static void test_cli_and_dialogue_share_motion(void)
     (void)wait_for_target(&cursor, -300, -300);
     /* A new request for the same dialogue phase supersedes the CLI target. */
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING) == 0);
-    unsigned first_bridge = cursor;
+    unsigned first_thinking = cursor;
     (void)wait_for_target(&cursor, 120, 120);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
-    assert(motion_pan(first_bridge) > -300 && motion_pan(first_bridge) <= -200);
-    for (unsigned i = first_bridge; i < cursor; ++i) {
-        assert(motion_pitch(i) == 0 && abs(motion_pan(i) - motion_pan(i - 1)) <= 130);
-    }
-    assert(controller.motion[cursor - 1].at - controller.motion[first_bridge].at >= 240);
+    assert(cursor == first_thinking + 1U);
+    /* Even when taking over from the far left, the direct endpoint obeys
+     * the dialogue speed bound of 40 degrees/s (25 ms per degree). */
+    uint16_t speed = wire_u16(controller.motion[first_thinking].bytes + 8);
+    assert(speed && 5000U / speed >= 25U);
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
 
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_SPEAKING) == 0);
@@ -2772,6 +2906,9 @@ int main(void)
     test_periodic_charge_spacing();
     test_uart_power_stats_and_diagnostic_exclusion();
     test_scheduled_uart_motion_sequence();
+    test_limit_sequence();
+    test_limit_interruption(false);
+    test_limit_interruption(true);
     test_scheduled_uart_motion_interruption();
     test_scheduled_uart_motion_requires_home_ack();
     test_speed_fits_motion_deadline();
@@ -2779,8 +2916,10 @@ int main(void)
     test_listening_nods_use_pitch(650U);
     test_real_dialogue_interrupts_test_opening();
     test_live_phase_replaces_opening();
+    test_thinking_preempts_nod(false);
+    test_thinking_preempts_nod(true);
     test_motion_write_pacing();
-    test_thinking_and_speaking_are_eased();
+    test_thinking_endpoint_and_speaking_swing();
     test_boot_wait_and_latest_dialogue();
     test_boot_demo_and_stream_recovery();
     test_scene_skips_missing_replies_and_confirms_home();
