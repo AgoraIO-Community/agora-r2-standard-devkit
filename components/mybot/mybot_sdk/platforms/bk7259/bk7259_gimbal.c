@@ -44,9 +44,7 @@
 #define LISTENING_INTERVAL_MS 3500U
 #define LISTENING_NOD_MS 1120U
 #define THINKING_TURN_MS 700U
-#define THINKING_HOLD_MS 3000U
 #define SPEAKING_PERIOD_MS 1250U
-#define PROCESSING_PERIOD_MS 3000U
 #define EB521_MOVE 0x61
 #define EB521_CHARGE 0x66
 #define EB521_MOVE_REPLY 0xe1
@@ -734,26 +732,14 @@ static void dialogue_target(uint32_t now, int16_t *pan, int16_t *pitch, uint32_t
     case BK7259_GIMBAL_PHASE_LISTENING: {
         uint32_t cycle = elapsed % LISTENING_INTERVAL_MS;
         if (elapsed >= LISTENING_INTERVAL_MS && cycle < LISTENING_NOD_MS) {
-            float fade_in = smooth((float)cycle / CONTROL_PERIOD_MS);
-            float fade_out = smooth((float)(LISTENING_NOD_MS - cycle) / CONTROL_PERIOD_MS);
-            *pitch = angle_units(3.0f * fade_in * fade_out * sinf(2.0f * turn * cycle / LISTENING_NOD_MS));
-            *wait = CONTROL_PERIOD_MS;
+            *pitch = angle_units(1.5f * (1.0f - cosf(turn * cycle / LISTENING_NOD_MS)));
         } else {
             *wait = LISTENING_INTERVAL_MS - cycle;
         }
         break;
     }
     case BK7259_GIMBAL_PHASE_THINKING:
-        if (elapsed < THINKING_HOLD_MS) {
-            *pan = angle_units(15.0f * smooth((float)elapsed / THINKING_TURN_MS));
-            if (elapsed >= THINKING_TURN_MS)
-                *wait = THINKING_HOLD_MS - elapsed;
-        } else {
-            uint32_t processing = elapsed - THINKING_HOLD_MS;
-            float blend = smooth((float)processing / MOTION_BLEND_MS);
-            float sway = 3.0f * sinf(turn * (processing % PROCESSING_PERIOD_MS) / PROCESSING_PERIOD_MS);
-            *pan = angle_units(15.0f * (1.0f - blend) + sway * blend);
-        }
+        *pan = angle_units(12.0f * smooth((float)elapsed / THINKING_TURN_MS));
         break;
     case BK7259_GIMBAL_PHASE_SPEAKING:
         *pan = angle_units(6.0f * sinf(turn * (elapsed % SPEAKING_PERIOD_MS) / SPEAKING_PERIOD_MS));
@@ -773,13 +759,13 @@ typedef struct {
 } path_point_t;
 
 static const path_point_t k_opening_path[] = {
-    {20, 0, 140}, {35, 0, 140}, {15, 0, 140}, {-12, 0, 140}, {0, 0, 140},
+    {35, 0, 250}, {0, 0, 250},
 };
 static const path_point_t k_angry_path[] = {
-    {80, 0, 300}, {-80, 0, 500}, {100, 0, 500}, {100, 0, 350}, {0, 0, 410},
+    {80, 0, 300}, {-80, 0, 500}, {0, 0, 410},
 };
 static const path_point_t k_surprised_path[] = {
-    {300, 0, 800}, {250, 0, 300}, {250, 0, 300}, {0, 0, 650},
+    {300, 0, 800}, {300, 0, 300}, {0, 0, 650},
 };
 
 static const path_point_t *path_points(path_kind_t kind, size_t *count)
