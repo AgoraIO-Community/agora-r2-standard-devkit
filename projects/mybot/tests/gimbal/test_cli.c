@@ -15,7 +15,7 @@ static bk7259_gimbal_phase_t requested_phase;
 static bool requested_charging;
 static bool requested_dialogue;
 static bk7259_gimbal_stats_snapshot_t stats;
-static int stats_result, stats_queries, stats_resets, test_requests;
+static int stats_result, stats_queries, stats_resets, test_requests, limit_requests;
 static char console_output[4096];
 static size_t console_length;
 static unsigned console_chunks, console_delays;
@@ -68,6 +68,12 @@ int bk7259_gimbal_request_probe(void)
 int bk7259_gimbal_schedule_test(void)
 {
     ++test_requests;
+    return request_result;
+}
+
+int bk7259_gimbal_schedule_limit_test(void)
+{
+    ++limit_requests;
     return request_result;
 }
 
@@ -378,13 +384,52 @@ static void expect_scene(const char *argument, int result,
     assert(scene_calls == before + 1 && requested_scene == expected);
 }
 
+static void test_limit_test_command_and_report(void)
+{
+    invoke("gimbal_limit_test", "extra", NULL, "Usage: gimbal_limit_test");
+    assert(limit_requests == 0);
+    request_result = 0;
+    invoke("gimbal_limit_test", NULL, NULL, "gimbal_limit_test scheduled in 10s");
+    request_result = BK7259_GIMBAL_BUSY;
+    invoke("gimbal_limit_test", NULL, NULL, "gimbal busy");
+    assert(limit_requests == 2);
+
+    reset_console();
+    stats = (bk7259_gimbal_stats_snapshot_t){.test_state = BK7259_GIMBAL_TEST_INTERRUPTED,
+                                            .limit_test = true};
+    stats.limit_steps[0] = (bk7259_gimbal_limit_step_t){
+        .pitch = -300, .result = BK7259_GIMBAL_LIMIT_REACHED, .tx = 1,
+        .pan_pps = 1000, .pitch_pps = 1000,
+        .has_ack = true, .ack_ms = 0, .has_arrival = true, .arrival_ms = 150,
+    };
+    stats.limit_steps[1] = (bk7259_gimbal_limit_step_t){
+        .result = BK7259_GIMBAL_LIMIT_TIMEOUT, .tx = 1, .has_ack = true, .ack_ms = 5,
+        .pan_pps = 1000, .pitch_pps = 1000,
+    };
+    stats.limit_steps[9] = (bk7259_gimbal_limit_step_t){
+        .pan = 900, .pitch = 150, .pan_pps = 1000, .pitch_pps = 250,
+    };
+    stats.limit_steps[16] = (bk7259_gimbal_limit_step_t){.pan_pps = 1000, .pitch_pps = 1000};
+    invoke("gimbal_stats", NULL, NULL, "gimbal_stats report sent");
+    assert(strstr(console_output, "test=interrupted mode=limit\r\n"));
+    assert(strstr(console_output, "limit step=1 pan_deg=0 pitch_deg=-30 tx=1 result=reached "
+                                  "ack_ms=0 arrival_ms=150 pan_pps=1000 pitch_pps=1000\r\n"));
+    assert(strstr(console_output, "limit step=2 pan_deg=0 pitch_deg=0 tx=1 result=timeout "
+                                  "ack_ms=5 arrival_ms=n/a pan_pps=1000 pitch_pps=1000\r\n"));
+    assert(strstr(console_output, "limit step=10 pan_deg=90 pitch_deg=15 tx=0 result=not_run "
+                                  "ack_ms=n/a arrival_ms=n/a pan_pps=1000 pitch_pps=250\r\n"));
+    assert(strstr(console_output, "limit step=17 pan_deg=0 pitch_deg=0 tx=0 result=not_run "
+                                  "ack_ms=n/a arrival_ms=n/a pan_pps=1000 pitch_pps=1000\r\n"));
+    assert(!strstr(console_output, "stage speaking ") && strstr(console_output, "arrival_latency "));
+}
+
 int main(void)
 {
     assert(bk7259_gimbal_cli_init() == -4 && register_calls == 1);
     register_result = 0;
     assert(bk7259_gimbal_cli_init() == 0 && register_calls == 2);
     assert(bk7259_gimbal_cli_init() == 0 && register_calls == 2);
-    assert(registered_count == 7);
+    assert(registered_count == 8);
 
     invoke("gimbal_cmd", "happy", NULL, "Usage:");
     assert(raw_calls == 0 && scene_calls == 0);
@@ -472,6 +517,7 @@ int main(void)
 
     test_stats_output();
     test_scheduled_test_output();
+    test_limit_test_command_and_report();
     puts("PASS: CLI registration, motion, charging, and UART statistics output");
     return 0;
 }

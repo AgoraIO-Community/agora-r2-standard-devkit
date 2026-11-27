@@ -151,6 +151,20 @@ static void gimbal_test_command(char *buffer, int length, int argc, char **argv)
     }
 }
 
+static void gimbal_limit_test_command(char *buffer, int length, int argc, char **argv)
+{
+    (void)argv;
+    if (argc != 1) {
+        command_reply(buffer, length, "Usage: gimbal_limit_test");
+        return;
+    }
+    int result = bk7259_gimbal_schedule_limit_test();
+    if (result == 0)
+        command_reply(buffer, length, "gimbal_limit_test scheduled in 10s. You can unplug Type-C now.");
+    else
+        motion_reply(buffer, length, result);
+}
+
 typedef struct {
     char chunk[136];
     size_t used;
@@ -239,6 +253,32 @@ static void stats_group(stats_output_t *output, const char *name, const bk7259_g
     stats_arrival(output, name, &counts->arrival, counts->overflow);
 }
 
+static void stats_limit_steps(stats_output_t *output, const bk7259_gimbal_stats_snapshot_t *stats)
+{
+    static const char *const results[] = {
+        [BK7259_GIMBAL_LIMIT_NOT_RUN] = "not_run",
+        [BK7259_GIMBAL_LIMIT_PENDING] = "pending",
+        [BK7259_GIMBAL_LIMIT_REACHED] = "reached",
+        [BK7259_GIMBAL_LIMIT_TIMEOUT] = "timeout",
+        [BK7259_GIMBAL_LIMIT_REJECTED] = "rejected",
+        [BK7259_GIMBAL_LIMIT_TX_FAILED] = "tx_failed",
+        [BK7259_GIMBAL_LIMIT_CANCELLED] = "cancelled",
+    };
+    for (unsigned i = 0; i < BK7259_GIMBAL_LIMIT_STEP_COUNT; ++i) {
+        const bk7259_gimbal_limit_step_t *step = &stats->limit_steps[i];
+        char ack[6] = "n/a", arrival[6] = "n/a";
+        if (step->has_ack)
+            (void)snprintf(ack, sizeof(ack), "%u", (unsigned)step->ack_ms);
+        if (step->has_arrival)
+            (void)snprintf(arrival, sizeof(arrival), "%u", (unsigned)step->arrival_ms);
+        stats_line(output, "limit step=%u pan_deg=%d pitch_deg=%d tx=%u result=%s ack_ms=%s arrival_ms=%s"
+                   " pan_pps=%u pitch_pps=%u\r\n",
+                   i + 1U, step->pan / 10, step->pitch / 10, (unsigned)step->tx,
+                   step->result < sizeof(results) / sizeof(results[0]) ? results[step->result] : "unknown",
+                   ack, arrival, (unsigned)step->pan_pps, (unsigned)step->pitch_pps);
+    }
+}
+
 static void stats_test(stats_output_t *output, const bk7259_gimbal_stats_snapshot_t *stats)
 {
     static const char *const states[] = {
@@ -262,9 +302,14 @@ static void stats_test(stats_output_t *output, const bk7259_gimbal_stats_snapsho
         [BK7259_GIMBAL_TEST_SURPRISED] = "surprised",
     };
     unsigned state = (unsigned)stats->test_state;
+    const char *state_name = state < sizeof(states) / sizeof(states[0]) ? states[state] : "unknown";
+    if (stats->limit_test) {
+        stats_line(output, "test=%s mode=limit\r\n", state_name);
+        stats_limit_steps(output, stats);
+        return;
+    }
     unsigned stage = (unsigned)stats->test_stage;
-    stats_line(output, "test=%s stage=%s\r\n",
-               state < sizeof(states) / sizeof(states[0]) ? states[state] : "unknown",
+    stats_line(output, "test=%s stage=%s\r\n", state_name,
                stage < BK7259_GIMBAL_TEST_STAGE_COUNT ? stages[stage] : "unknown");
     if (state == BK7259_GIMBAL_TEST_IDLE) {
         return;
@@ -406,6 +451,7 @@ static const struct cli_command k_commands[] = {
     {"gimbal_charge", "gimbal_charge on|off: control EB521 charging heartbeat", gimbal_charge_command},
     {"gimbal_probe", "gimbal_probe: check the EB521 UART link", gimbal_probe_command},
     {"gimbal_test", "gimbal_test: schedule one motion test in 10 seconds", gimbal_test_command},
+    {"gimbal_limit_test", "gimbal_limit_test: test gimbal travel limits at 1000 PPS in 10 seconds", gimbal_limit_test_command},
     {"gimbal_stats", "gimbal_stats [reset]: read or clear UART motion statistics", gimbal_stats_command},
 };
 
@@ -417,7 +463,7 @@ int bk7259_gimbal_cli_init(void)
     int result = cli_register_commands(k_commands, sizeof(k_commands) / sizeof(k_commands[0]));
     if (result == 0) {
         s_registered = true;
-        BK_LOGI(TAG, "EB521 V1.2 commands: gimbal_dialogue, gimbal_scene, gimbal_cmd, gimbal_probe, gimbal_charge, gimbal_test, gimbal_stats\r\n");
+        BK_LOGI(TAG, "EB521 V1.2 commands: gimbal_dialogue, gimbal_scene, gimbal_cmd, gimbal_probe, gimbal_charge, gimbal_test, gimbal_limit_test, gimbal_stats\r\n");
     }
     return result;
 }

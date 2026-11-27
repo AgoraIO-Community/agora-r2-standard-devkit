@@ -1649,6 +1649,115 @@ static void test_scheduled_uart_motion_sequence(void)
     shutdown_and_join();
 }
 
+static void test_limit_sequence(void)
+{
+    static const int16_t targets[][2] = {
+        {0, -300}, {0, 0}, {0, 150}, {0, 0},
+        {-900, 0}, {0, 0}, {900, 0}, {0, 0},
+        {-900, -300}, {900, 150}, {900, -300}, {-900, 150},
+        {900, 150}, {-900, -300}, {-900, 150}, {900, -300}, {0, 0},
+    };
+    reset_controller();
+    /* Only the limit diagnostic may submit the four physical extremes. */
+    gimbal_io_t io = {0};
+    for (unsigned i = 0; i < 8U; i += 2U)
+        assert(!send_move(&io, BK7259_GIMBAL_STATS_NORMAL, targets[i][0], targets[i][1],
+                          1000, 1000, 1000));
+    assert(motion_count() == 0);
+    start_and_wait_for_home();
+    unsigned first = motion_count();
+    uint32_t scheduled = rtos_get_time();
+    assert(bk7259_gimbal_schedule_limit_test() == 0);
+    assert(bk7259_gimbal_schedule_test() == BK7259_GIMBAL_BUSY);
+    assert(bk7259_gimbal_reset_stats() == BK7259_GIMBAL_BUSY);
+    assert(gimbal_stats().limit_test);
+    bk7259_gimbal_stats_snapshot_t stats =
+        wait_for_test_state(BK7259_GIMBAL_TEST_COMPLETED, BK7259_GIMBAL_TEST_NONE);
+    const bk7259_gimbal_stats_counts_t *normal = &stats.groups[BK7259_GIMBAL_STATS_NORMAL];
+    assert(stats.limit_test && ARRAY_COUNT(targets) == BK7259_GIMBAL_LIMIT_STEP_COUNT);
+    assert(normal->tx == ARRAY_COUNT(targets) && normal->arrival.reached == ARRAY_COUNT(targets));
+    assert(stats.groups[BK7259_GIMBAL_STATS_HOME].tx == 0);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    assert(controller.motion_count == first + ARRAY_COUNT(targets));
+    assert(controller.motion[first].at - scheduled >= 10000U);
+    int16_t from_pan = 0, from_pitch = 0;
+    for (unsigned i = 0; i < ARRAY_COUNT(targets); ++i) {
+        const wire_record_t *frame = &controller.motion[first + i];
+        const bk7259_gimbal_limit_step_t *step = &stats.limit_steps[i];
+        int16_t pan = targets[i][0], pitch = targets[i][1];
+        unsigned step_number = i + 1;
+        bool diagonal = step_number == 10 || step_number == 12 || step_number == 14 || step_number == 16;
+        uint16_t pan_pps = wire_u16(frame->bytes + 8);
+        uint16_t pitch_pps = wire_u16(frame->bytes + 10);
+        assert(motion_pan(first + i) == pan && motion_pitch(first + i) == pitch);
+        assert(pan_pps == 1000 && pitch_pps == (diagonal ? 250 : 1000));
+        assert(step->pan_pps == pan_pps && step->pitch_pps == pitch_pps);
+        assert(step->tx == 1 && step->result == BK7259_GIMBAL_LIMIT_REACHED);
+        assert(step->pan == pan && step->pitch == pitch && step->has_ack && step->has_arrival);
+        uint32_t pan_ms = controller_axis_ms(from_pan, pan, pan_pps);
+        uint32_t pitch_ms = controller_axis_ms(from_pitch, pitch, pitch_pps);
+        if (diagonal)
+            assert(pan_ms == 900 && pitch_ms == 900);
+        uint32_t travel = pan_ms > pitch_ms ? pan_ms : pitch_ms;
+        assert(step->ack_ms <= step->arrival_ms && step->arrival_ms > 0);
+        if (i + 1 < ARRAY_COUNT(targets)) {
+            uint32_t gap = controller.motion[first + i + 1].at - frame->at;
+            assert(gap >= travel + 500U && gap >= step->arrival_ms + 500U);
+        }
+        from_pan = pan;
+        from_pitch = pitch;
+    }
+    assert(controller.pan == 0 && controller.pitch == 0 && controller.charge_expirations == 0);
+    assert_charge_periods_locked(0, controller.charge_count, true);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(100);
+    bk7259_gimbal_stats_snapshot_t frozen = gimbal_stats();
+    assert(frozen.window_ms == stats.window_ms);
+    assert(!memcmp(frozen.limit_steps, stats.limit_steps, sizeof(stats.limit_steps)));
+    assert(bk7259_gimbal_reset_stats() == 0 && !gimbal_stats().limit_test);
+    shutdown_and_join();
+}
+
+static void test_limit_interruption(bool live_dialogue)
+{
+    reset_controller();
+    start_and_wait_for_home();
+    unsigned first = motion_count();
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.motion_response = RESPONSE_DROP_COMPLETION;
+    controller.hold_home_reply = true;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_schedule_limit_test() == 0);
+    wait_for_count(&controller.motion_count, first + 1);
+    if (live_dialogue) {
+        int result = bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_THINKING);
+        assert(result == 0 || result == BK7259_GIMBAL_NOT_READY);
+    }
+    bk7259_gimbal_stats_snapshot_t stats =
+        wait_for_test_state(BK7259_GIMBAL_TEST_INTERRUPTED, BK7259_GIMBAL_TEST_NONE);
+    const bk7259_gimbal_limit_step_t *step = &stats.limit_steps[0];
+    assert(stats.limit_test && step->tx == 1 && !step->has_arrival);
+    assert(step->result == (live_dialogue ? BK7259_GIMBAL_LIMIT_CANCELLED : BK7259_GIMBAL_LIMIT_TIMEOUT));
+    if (!live_dialogue)
+        assert(step->has_ack);
+    for (unsigned i = 1; i < BK7259_GIMBAL_LIMIT_STEP_COUNT; ++i)
+        assert(stats.limit_steps[i].tx == 0 && stats.limit_steps[i].result == BK7259_GIMBAL_LIMIT_NOT_RUN);
+    assert(wait_for_home(first + 1) == first + 2);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    /* The abandoned extremum completes after a recovery home has been sent. */
+    complete_locked(0, -300);
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    rtos_delay_milliseconds(100);
+    assert(bk7259_gimbal_request(BK7259_GIMBAL_SCENE_SAD) == BK7259_GIMBAL_NOT_READY);
+    assert(motion_count() == first + 2);
+    assert(pthread_mutex_lock(&controller.mutex) == 0);
+    controller.motion_response = RESPONSE_NORMAL;
+    controller.hold_home_reply = false;
+    assert(pthread_mutex_unlock(&controller.mutex) == 0);
+    assert(bk7259_gimbal_center_wait(3500) == 0);
+    shutdown_and_join();
+}
+
 static void test_scheduled_uart_motion_interruption(void)
 {
     reset_controller();
@@ -2772,6 +2881,9 @@ int main(void)
     test_periodic_charge_spacing();
     test_uart_power_stats_and_diagnostic_exclusion();
     test_scheduled_uart_motion_sequence();
+    test_limit_sequence();
+    test_limit_interruption(false);
+    test_limit_interruption(true);
     test_scheduled_uart_motion_interruption();
     test_scheduled_uart_motion_requires_home_ack();
     test_speed_fits_motion_deadline();
