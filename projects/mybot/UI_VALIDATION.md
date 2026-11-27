@@ -38,13 +38,13 @@ The build script verified the generated configuration and service endpoint for e
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,959,504 B | 1,959,496 B |
+| AP Flash | 1,959,344 B | 1,959,336 B |
 | AP RAM | 164,708 B | 164,708 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,466,848 B | 3,466,848 B |
-| OTA package | 2,076,080 B | 2,075,728 B |
-| OTA headroom | 21,072 B | 21,424 B |
+| Combined image | 3,466,688 B | 3,466,688 B |
+| OTA package | 2,075,968 B | 2,075,568 B |
+| OTA headroom | 21,184 B | 21,584 B |
 
 ## Host Test Matrix
 
@@ -75,7 +75,7 @@ Coverage includes:
 - EB521 V1.2 probing, four motion scenes, motion ACK matching and the 250 ms timeout, charging
   heartbeats during motion, charge-stop fencing, and worker cleanup.
 
-All eight product host suites passed in a serial run. An earlier gimbal run recorded fewer than six alternating peaks in the four-second speaking test. All 21 build-tool tests passed.
+All eight product host suites passed in a serial run. A gimbal test on the previous firmware revision recorded fewer than six alternating peaks in the four-second speaking test. All 21 build-tool tests passed.
 
 ## Release Blockers
 
