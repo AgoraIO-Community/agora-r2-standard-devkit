@@ -34,6 +34,7 @@
 #define CHARGE_EXPIRY_MS 3000U
 #define LINK_LOSS_MS (CHARGE_EXPIRY_MS + CHARGE_ACK_TIMEOUT_MS)
 #define CONTROL_PERIOD_MS BK7259_GIMBAL_MOTION_PERIOD_MS
+#define ARRIVAL_MARGIN_MS 100U
 #define CENTER_TIME_MS 280U
 #define PAN_LIMIT 800
 #define PITCH_UP_LIMIT (-200)
@@ -165,6 +166,7 @@ typedef struct {
     int16_t planned_pan;
     int16_t planned_pitch;
     bool waiting_motion_ack;
+    uint32_t motion_arrival_window_ms;
     pose_axis_t pose_pan;
     pose_axis_t pose_pitch;
     uint32_t pose_started_at;
@@ -304,7 +306,7 @@ static bool send_frame(gimbal_io_t *io, uint8_t command, const uint8_t *payload,
 }
 
 static bool send_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch,
-                      uint16_t pan_speed, uint16_t pitch_speed)
+                      uint16_t pan_speed, uint16_t pitch_speed, uint32_t arrival_window_ms)
 {
     if (pan < -PAN_LIMIT || pan > PAN_LIMIT || pitch < PITCH_UP_LIMIT || pitch > PITCH_DOWN_LIMIT)
         return false;
@@ -317,13 +319,13 @@ static bool send_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_
         bk7259_gimbal_stats_tx_failed(&s_gimbal.stats, group);
         return false;
     }
-    bk7259_gimbal_stats_tx(&s_gimbal.stats, io->last_tx_return_at, group, pan, pitch);
+    bk7259_gimbal_stats_tx(&s_gimbal.stats, io->last_tx_return_at, group, pan, pitch, arrival_window_ms);
     return true;
 }
 
 static bool send_home(gimbal_io_t *io)
 {
-    return send_move(io, BK7259_GIMBAL_STATS_HOME, 0, 0, 1000, 1000);
+    return send_move(io, BK7259_GIMBAL_STATS_HOME, 0, 0, 1000, 1000, HOME_RESPONSE_MS);
 }
 
 /* Drop expired explicit actions at every gate transition. The phase remains
@@ -349,6 +351,8 @@ static void finish_test(bk7259_gimbal_test_state_t state, uint32_t now)
     if (!test_active())
         return;
     if (s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING) {
+        if (state == BK7259_GIMBAL_TEST_INTERRUPTED)
+            bk7259_gimbal_stats_cancel_test_arrivals(&s_gimbal.stats, now);
         bk7259_gimbal_stats_snapshot(&s_gimbal.stats, now, &s_gimbal.test.result);
         bk7259_gimbal_stats_stage(&s_gimbal.stats, BK7259_GIMBAL_TEST_NONE);
         s_gimbal.conversation = false;
@@ -409,10 +413,24 @@ static void queue_scene(bk7259_gimbal_scene_t scene, uint32_t now)
     ++s_gimbal.motion.revision;
 }
 
+static void cancel_superseded_motion(gimbal_io_t *io, uint32_t now)
+{
+    if (io->waiting_motion_ack && io->motion_revision != s_gimbal.motion.revision) {
+        bk7259_gimbal_stats_tick(&s_gimbal.stats, now);
+        bk7259_gimbal_stats_cancel_arrival(&s_gimbal.stats, io->motion_attempt_at);
+        io->waiting_motion_ack = false;
+    }
+}
+
 static void sync_home(gimbal_io_t *io, uint32_t now)
 {
+    cancel_superseded_motion(io, now);
     if (io->home_ticket == s_gimbal.home_ticket)
         return;
+    if (io->home_waiting) {
+        bk7259_gimbal_stats_tick(&s_gimbal.stats, now);
+        bk7259_gimbal_stats_cancel_arrival(&s_gimbal.stats, io->home_sent_at);
+    }
     io->home_ticket = s_gimbal.home_ticket;
     io->home_waiting = false;
     io->home_sent = false;
@@ -487,8 +505,11 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
     }
     int16_t pan = complete ? read_i16(frame + 5) : 0;
     int16_t pitch = complete ? read_i16(frame + 7) : 0;
+    bool allow_home_arrival = io->disable_home_sent ||
+        (io->home_waiting && io->home_ticket == s_gimbal.home_ticket &&
+         (complete ? !io->recent_ordinary_zero : io->home_accepts_short_reply));
     const bk7259_gimbal_stats_request_t *matched =
-        bk7259_gimbal_stats_reply(&s_gimbal.stats, now, code, pan, pitch);
+        bk7259_gimbal_stats_reply(&s_gimbal.stats, now, code, pan, pitch, allow_home_arrival);
     if (!s_gimbal.settings.motion_enabled)
         return;
     if (code == 1) {
@@ -500,18 +521,24 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
         return;
     }
     io->last_link_rx_at = now;
-    if (io->waiting_motion_ack && matched && matched->group == BK7259_GIMBAL_STATS_NORMAL &&
-        matched->sent_at == io->motion_attempt_at && (code == 0 || code == 4 || complete))
-        io->waiting_motion_ack = false;
-    if (s_gimbal.ready || io->home_ticket != s_gimbal.home_ticket ||
-        !io->home_waiting || now - io->home_sent_at > HOME_RESPONSE_MS)
+    if (!matched)
         return;
-    /* An earlier ordinary (0,0) and a home have identical E1/06
-     * payloads. A late completion in their overlapping windows cannot
-     * unlock the next conversation. */
-    if ((size == 7 && code == 4 && io->home_accepts_short_reply) ||
-        (complete && !io->recent_ordinary_zero && pan == 0 && pitch == 0))
+    if (matched->group == BK7259_GIMBAL_STATS_NORMAL && io->waiting_motion_ack &&
+        matched->sent_at == io->motion_attempt_at) {
+        if (matched->arrived && (code == 4 || complete)) {
+            io->waiting_motion_ack = false;
+            io->pose_pan = (pose_axis_t){.start = matched->pan, .target = matched->pan};
+            io->pose_pitch = (pose_axis_t){.start = matched->pitch, .target = matched->pitch};
+        } else if (code == 2 && !matched->overlapping && !matched->short_uncertain) {
+            io->waiting_motion_ack = false;
+            io->pose_pan.target = io->pose_pan.start;
+            io->pose_pitch.target = io->pose_pitch.start;
+        }
+    } else if (matched->group == BK7259_GIMBAL_STATS_HOME && matched->arrived &&
+               matched->sent_at == io->home_sent_at && allow_home_arrival &&
+               !s_gimbal.ready && io->home_waiting && (code == 4 || complete)) {
         confirm_home(io);
+    }
 }
 
 static void finish_charge_off(uint32_t ticket, int result)
@@ -962,11 +989,13 @@ static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32
 
 static void service_motion(gimbal_io_t *io, uint32_t now)
 {
+    cancel_superseded_motion(io, now);
     /* RX has already been drained this turn. On expiry the trajectory
      * continues from its next sample; the previous frame is never retried. */
     if (io->waiting_motion_ack) {
-        if (now - io->motion_attempt_at < BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS)
+        if (now - io->motion_attempt_at < io->motion_arrival_window_ms)
             return;
+        bk7259_gimbal_stats_expire_arrival(&s_gimbal.stats, io->motion_attempt_at);
         io->waiting_motion_ack = false;
     }
     const motion_request_t *request = &s_gimbal.motion;
@@ -1086,9 +1115,16 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
         travel_ms = interval;
     uint16_t pan_speed = choose_speed(pan_distance, travel_ms);
     uint16_t pitch_speed = choose_speed(pitch_distance, travel_ms);
+    uint32_t pan_ms = (pan_distance * (5000U / pan_speed) + 9U) / 10U;
+    uint32_t pitch_ms = (pitch_distance * (5000U / pitch_speed) + 9U) / 10U;
+    uint32_t window = (pan_ms > pitch_ms ? pan_ms : pitch_ms) + ARRIVAL_MARGIN_MS;
+    if (window < BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS)
+        window = BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS;
+    if (window > BK7259_GIMBAL_ARRIVAL_MAX_MS)
+        window = BK7259_GIMBAL_ARRIVAL_MAX_MS;
     io->attempted_point = true;
     io->target_attempted = terminal_target;
-    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed);
+    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed, window);
     uint32_t attempted_at = submitted ? io->last_tx_return_at : rtos_get_time();
     io->has_motion_attempt = true;
     io->motion_attempt_at = attempted_at;
@@ -1100,6 +1136,7 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
     }
 
     record_pose_command(io, attempted_at, pan, pitch, pan_speed, pitch_speed);
+    io->motion_arrival_window_ms = window;
     io->waiting_motion_ack = true;
     io->sent_ordinary_motion = true;
     if (pan == 0 && pitch == 0) {
@@ -1190,7 +1227,9 @@ static void service_test(uint32_t now)
     if (stage == BK7259_GIMBAL_TEST_SURPRISED) {
         bk7259_gimbal_stats_tick(&s_gimbal.stats, now);
         if (!s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].pending &&
+            !s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].arrival.pending &&
             !s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_HOME].pending &&
+            !s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_HOME].arrival.pending &&
             !s_gimbal.stats.snapshot.power.groups[BK7259_GIMBAL_POWER_STOP].pending &&
             !s_gimbal.stats.snapshot.power.groups[BK7259_GIMBAL_POWER_REQUEST].pending)
             finish_test(BK7259_GIMBAL_TEST_COMPLETED, now);

@@ -44,6 +44,11 @@ typedef enum {
 } bk7259_gimbal_stats_group_t;
 
 typedef struct {
+    uint32_t reached, rejected, expired, cancelled, pending;
+} bk7259_gimbal_arrival_counts_t;
+
+typedef struct {
+    bk7259_gimbal_arrival_counts_t arrival;
     uint32_t tx;
     uint32_t tx_failed;
     uint32_t accepted;
@@ -80,11 +85,13 @@ typedef enum {
 
 typedef struct {
     uint32_t tx, accepted, rejected, expired, overflow, tx_failed;
+    bk7259_gimbal_arrival_counts_t arrival;
     uint32_t motion_pairs;
     uint32_t min_motion_gap_ms;
 } bk7259_gimbal_test_counts_t;
 
 #define BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS 250U
+#define BK7259_GIMBAL_ARRIVAL_MAX_MS 2000U
 #define BK7259_GIMBAL_STATS_HOME_WINDOW_MS 900U
 #define BK7259_GIMBAL_TX_GUARD_MS 40U
 #define BK7259_GIMBAL_MOTION_PERIOD_MS 100U
@@ -121,6 +128,11 @@ typedef struct {
     bk7259_gimbal_test_counts_t test_counts[BK7259_GIMBAL_TEST_STAGE_COUNT];
     bk7259_gimbal_stats_counts_t groups[BK7259_GIMBAL_STATS_GROUP_COUNT];
     bk7259_gimbal_power_stats_t power;
+    uint32_t arrival_latency_samples;
+    uint32_t arrival_latency_min_ms;
+    uint32_t arrival_latency_max_ms;
+    uint32_t arrival_latency_median_twice_ms;
+    uint64_t arrival_latency_total_ms;
     uint32_t window_ms;
     uint32_t center_confirmed;
     uint32_t move_to_charge_pairs;

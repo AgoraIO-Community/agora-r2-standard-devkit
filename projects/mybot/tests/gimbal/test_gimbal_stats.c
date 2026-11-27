@@ -9,21 +9,21 @@ static void test_ack_codes_and_fallback(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 110, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_reply(&stats, 112, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 120, 6, 20, 0);
-    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 21, 1);
-    bk7259_gimbal_stats_reply(&stats, 146, 6, 21, 1);
-    bk7259_gimbal_stats_reply(&stats, 147, 0, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 160, BK7259_GIMBAL_STATS_NORMAL, 40, 0);
-    bk7259_gimbal_stats_reply(&stats, 167, 1, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 180, BK7259_GIMBAL_STATS_NORMAL, 50, 0);
-    bk7259_gimbal_stats_reply(&stats, 186, 2, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 210, BK7259_GIMBAL_STATS_HOME, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 218, 4, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 110, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 112, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 120, 6, 20, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 21, 1, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 146, 6, 21, 1, true);
+    bk7259_gimbal_stats_reply(&stats, 147, 0, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 160, BK7259_GIMBAL_STATS_NORMAL, 40, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 167, 1, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 180, BK7259_GIMBAL_STATS_NORMAL, 50, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 186, 2, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 210, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 218, 4, 0, 0, true);
     bk7259_gimbal_stats_tx_failed(&stats, BK7259_GIMBAL_STATS_HOME);
     bk7259_gimbal_stats_bad_reply(&stats);
-    bk7259_gimbal_stats_reply(&stats, 220, 0xff, 0, 0);
+    bk7259_gimbal_stats_reply(&stats, 220, 0xff, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 225, &snapshot);
 
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
@@ -44,13 +44,13 @@ static void test_repeated_target_and_fifo_estimate(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 50, 0);
-    bk7259_gimbal_stats_reply(&stats, 101, 0, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 400, BK7259_GIMBAL_STATS_NORMAL, 50, 0);
-    bk7259_gimbal_stats_reply(&stats, 401, 6, 50, 0);
-    bk7259_gimbal_stats_tx(&stats, 405, BK7259_GIMBAL_STATS_HOME, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 406, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 407, 6, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 50, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 101, 0, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 400, BK7259_GIMBAL_STATS_NORMAL, 50, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 401, 6, 50, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 405, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 406, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 407, 6, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 407, &snapshot);
 
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
@@ -67,8 +67,8 @@ static void test_serial_stream_is_not_estimated(void)
     bk7259_gimbal_stats_reset(&stats, 100);
     for (int16_t i = 0; i < 45; ++i) {
         uint32_t sent_at = 100U + (uint32_t)i * 40U;
-        bk7259_gimbal_stats_tx(&stats, sent_at, BK7259_GIMBAL_STATS_NORMAL, i, 0);
-        bk7259_gimbal_stats_reply(&stats, sent_at + 8, 0, 0, 0);
+        bk7259_gimbal_stats_tx(&stats, sent_at, BK7259_GIMBAL_STATS_NORMAL, i, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+        bk7259_gimbal_stats_reply(&stats, sent_at + 8, 0, 0, 0, true);
     }
     bk7259_gimbal_stats_snapshot(&stats, 2200, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
@@ -84,10 +84,10 @@ static void test_two_pending_short_replies_are_estimated(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 40, 0);
-    bk7259_gimbal_stats_reply(&stats, 145, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 150, 4, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 40, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 145, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 150, 4, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 151, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
     assert(normal->accepted == 2 && normal->estimated == 2 && normal->pending == 0);
@@ -99,14 +99,14 @@ static void test_completion_fallback_preserves_late_short_ambiguity(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_reply(&stats, 120, 6, 20, 0);
-    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 40, 0);
-    bk7259_gimbal_stats_reply(&stats, 145, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 120, 6, 20, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 40, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 145, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 146, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
     assert(normal->accepted == 1 && normal->pending == 1 && snapshot.ambiguous == 1);
-    bk7259_gimbal_stats_reply(&stats, 150, 6, 40, 0);
+    bk7259_gimbal_stats_reply(&stats, 150, 6, 40, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 151, &snapshot);
     assert(normal->accepted == 2 && normal->completion_fallback == 2 && normal->estimated == 0);
     assert(normal->pending == 0 && snapshot.latency_samples == 0);
@@ -119,9 +119,9 @@ static void test_expired_short_reply_keeps_new_request_pending(void)
         bk7259_gimbal_stats_t stats = {0};
         bk7259_gimbal_stats_snapshot_t snapshot;
         bk7259_gimbal_stats_reset(&stats, 100);
-        bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-        bk7259_gimbal_stats_tx(&stats, 400, BK7259_GIMBAL_STATS_HOME, 0, 0);
-        bk7259_gimbal_stats_reply(&stats, 405, 0, 0, 0);
+        bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+        bk7259_gimbal_stats_tx(&stats, 400, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+        bk7259_gimbal_stats_reply(&stats, 405, 0, 0, 0, true);
         bk7259_gimbal_stats_snapshot(&stats, 406, &snapshot);
         const bk7259_gimbal_stats_counts_t *home = &snapshot.groups[BK7259_GIMBAL_STATS_HOME];
         assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].expired == 1);
@@ -129,7 +129,7 @@ static void test_expired_short_reply_keeps_new_request_pending(void)
         assert(snapshot.ambiguous == 1 && snapshot.latency_samples == 0);
 
         uint8_t code = replies[i];
-        bk7259_gimbal_stats_reply(&stats, 410, code, 0, 0);
+        bk7259_gimbal_stats_reply(&stats, 410, code, 0, 0, true);
         bk7259_gimbal_stats_snapshot(&stats, 411, &snapshot);
         bool rejected = code == 1 || code == 2;
         assert(home->accepted == !rejected && home->rejected == rejected);
@@ -142,11 +142,11 @@ static void test_ambiguous_pending_expiry_does_not_absorb_again(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_tx(&stats, 400, BK7259_GIMBAL_STATS_NORMAL, 40, 0);
-    bk7259_gimbal_stats_reply(&stats, 405, 0, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 700, BK7259_GIMBAL_STATS_NORMAL, 60, 0);
-    bk7259_gimbal_stats_reply(&stats, 705, 4, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, 400, BK7259_GIMBAL_STATS_NORMAL, 40, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 405, 0, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 700, BK7259_GIMBAL_STATS_NORMAL, 60, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 705, 4, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 706, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
     assert(normal->accepted == 1 && normal->expired == 2 && normal->pending == 0);
@@ -160,13 +160,13 @@ static void test_timeout_and_timer_wrap(void)
     bk7259_gimbal_stats_snapshot_t snapshot;
     const uint32_t start = UINT32_MAX - 100U;
     bk7259_gimbal_stats_reset(&stats, start);
-    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_NORMAL, 30, 0);
-    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_HOME, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_NORMAL, 30, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
     bk7259_gimbal_stats_snapshot(&stats, start + 250U, &snapshot);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].pending == 1);
 
-    bk7259_gimbal_stats_reply(&stats, start + 251U, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, start + 900U, 6, 0, 0);
+    bk7259_gimbal_stats_reply(&stats, start + 251U, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, start + 900U, 6, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, start + 900U, &snapshot);
     assert(snapshot.window_ms == 900U && snapshot.ambiguous == 1);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].expired == 1);
@@ -179,27 +179,27 @@ static void test_reset_excludes_old_replies(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 101, BK7259_GIMBAL_STATS_HOME, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 101, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
     bk7259_gimbal_stats_reset(&stats, 110);
-    bk7259_gimbal_stats_tx(&stats, 111, BK7259_GIMBAL_STATS_NORMAL, 10, 0);
-    bk7259_gimbal_stats_reply(&stats, 112, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 113, 6, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 111, BK7259_GIMBAL_STATS_NORMAL, 10, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 112, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 113, 6, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 113, &snapshot);
     assert(snapshot.suppressed == 2 && snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].pending == 1);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].accepted == 0);
-    bk7259_gimbal_stats_reply(&stats, 114, 4, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 150, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_reply(&stats, 153, 0, 0, 0);
+    bk7259_gimbal_stats_reply(&stats, 114, 4, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 150, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 153, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 154, &snapshot);
     assert(snapshot.suppressed == 2 && snapshot.e1_06 == 1 && snapshot.e1_00 == 2);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_HOME].tx == 0);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].accepted == 2);
-    assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].estimated == 0);
-    assert(snapshot.latency_samples == 2 && snapshot.latency_total_ms == 6);
+    assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].estimated == 1);
+    assert(snapshot.latency_samples == 1 && snapshot.latency_total_ms == 3);
 
     bk7259_gimbal_stats_reset(&stats, 155);
-    bk7259_gimbal_stats_tx(&stats, 156, BK7259_GIMBAL_STATS_NORMAL, 30, 0);
-    bk7259_gimbal_stats_reply(&stats, 159, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 156, BK7259_GIMBAL_STATS_NORMAL, 30, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 159, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 159, &snapshot);
     assert(snapshot.suppressed == 0 && snapshot.latency_samples == 1);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].accepted == 1);
@@ -210,17 +210,17 @@ static void test_pending_motion_matches_across_reset(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 110, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
+    bk7259_gimbal_stats_tx(&stats, 110, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_reset(&stats, 140);
-    assert(bk7259_gimbal_stats_reply(&stats, 160, 6, 21, 0) == NULL);
+    assert(bk7259_gimbal_stats_reply(&stats, 160, 6, 21, 0, true) == NULL);
 
     const bk7259_gimbal_stats_request_t *match =
-        bk7259_gimbal_stats_reply(&stats, 360, 6, 20, 0);
+        bk7259_gimbal_stats_reply(&stats, 360, 6, 20, 0, true);
     assert(match && match->group == BK7259_GIMBAL_STATS_NORMAL && match->sent_at == 110);
     assert(match->previous_run);
-    assert(bk7259_gimbal_stats_reply(&stats, 361, 6, 20, 0) == NULL);
+    assert(bk7259_gimbal_stats_reply(&stats, 361, 6, 20, 0, true) == NULL);
 
-    bk7259_gimbal_stats_tx(&stats, 500, BK7259_GIMBAL_STATS_NORMAL, 30, 0);
+    bk7259_gimbal_stats_tx(&stats, 500, BK7259_GIMBAL_STATS_NORMAL, 30, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_reset(&stats, 510);
     bk7259_gimbal_stats_snapshot(&stats, 751, &snapshot);
     assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].tx == 0);
@@ -234,11 +234,11 @@ static void test_new_normal_tx_closes_an_exact_deadline(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_tx(&stats, 350, BK7259_GIMBAL_STATS_NORMAL, 40, 0);
-    assert(bk7259_gimbal_stats_reply(&stats, 350, 0, 0, 0) == NULL);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, 350, BK7259_GIMBAL_STATS_NORMAL, 40, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    assert(bk7259_gimbal_stats_reply(&stats, 350, 0, 0, 0, true) == NULL);
     const bk7259_gimbal_stats_request_t *match =
-        bk7259_gimbal_stats_reply(&stats, 355, 4, 0, 0);
+        bk7259_gimbal_stats_reply(&stats, 355, 4, 0, 0, true);
     assert(match && match->group == BK7259_GIMBAL_STATS_NORMAL && match->sent_at == 350);
     bk7259_gimbal_stats_snapshot(&stats, 355, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
@@ -251,12 +251,12 @@ static void test_fast_stream_recovers_after_expiry(void)
     bk7259_gimbal_stats_t stats = {0};
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 0, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_tick(&stats, 400);
     for (unsigned int i = 0; i < 25; ++i) {
         uint32_t sent_at = 400U + i * 40U;
-        bk7259_gimbal_stats_tx(&stats, sent_at, BK7259_GIMBAL_STATS_NORMAL, (int16_t)i, 1);
-        bk7259_gimbal_stats_reply(&stats, sent_at + 2, 0, 0, 0);
+        bk7259_gimbal_stats_tx(&stats, sent_at, BK7259_GIMBAL_STATS_NORMAL, (int16_t)i, 1, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+        bk7259_gimbal_stats_reply(&stats, sent_at + 2, 0, 0, 0, true);
     }
     bk7259_gimbal_stats_snapshot(&stats, 1700, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
@@ -271,11 +271,11 @@ static void test_capacity_conservatively_rejects_matches(void)
     bk7259_gimbal_stats_reset(&stats, 100);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_SAD);
     for (unsigned int i = 0; i < BK7259_GIMBAL_STATS_CAPACITY; ++i)
-        bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, (int16_t)i, 0);
+        bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, (int16_t)i, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_ANGRY);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, BK7259_GIMBAL_STATS_CAPACITY, 0);
-    bk7259_gimbal_stats_reply(&stats, 120, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 130, 6, 4, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, BK7259_GIMBAL_STATS_CAPACITY, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 120, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 130, 6, 4, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 131, &snapshot);
     const bk7259_gimbal_stats_counts_t *normal = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
     assert(normal->tx == BK7259_GIMBAL_STATS_CAPACITY + 1U);
@@ -286,8 +286,8 @@ static void test_capacity_conservatively_rejects_matches(void)
     assert(snapshot.test_counts[BK7259_GIMBAL_TEST_ANGRY].tx == 1);
     assert(snapshot.test_counts[BK7259_GIMBAL_TEST_ANGRY].overflow == 1);
 
-    bk7259_gimbal_stats_tx(&stats, 1001, BK7259_GIMBAL_STATS_NORMAL, 1, 0);
-    bk7259_gimbal_stats_reply(&stats, 1006, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 1001, BK7259_GIMBAL_STATS_NORMAL, 1, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 1006, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 1006, &snapshot);
     assert(normal->pending == 0 && normal->expired == BK7259_GIMBAL_STATS_CAPACITY);
     assert(normal->accepted == 1 && snapshot.latency_samples == 1);
@@ -301,19 +301,19 @@ static void test_results_follow_transmit_stage(void)
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 10, 0);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 10, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_HAPPY);
-    bk7259_gimbal_stats_tx(&stats, 114, BK7259_GIMBAL_STATS_HOME, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 115, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 125, 2, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 130, BK7259_GIMBAL_STATS_HOME, 1, 0);
-    bk7259_gimbal_stats_tx(&stats, 131, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
+    bk7259_gimbal_stats_tx(&stats, 114, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 115, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 125, 2, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 130, BK7259_GIMBAL_STATS_HOME, 1, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, 131, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_tx_failed(&stats, BK7259_GIMBAL_STATS_HOME);
 
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_NONE);
-    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 30, 0);
-    bk7259_gimbal_stats_reply(&stats, 150, 6, 1, 0);
-    bk7259_gimbal_stats_reply(&stats, 160, 6, 30, 0);
+    bk7259_gimbal_stats_tx(&stats, 140, BK7259_GIMBAL_STATS_NORMAL, 30, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 150, 6, 1, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 160, 6, 30, 0, true);
     bk7259_gimbal_stats_tx_failed(&stats, BK7259_GIMBAL_STATS_NORMAL);
     bk7259_gimbal_stats_snapshot(&stats, 400, &snapshot);
 
@@ -335,14 +335,14 @@ static void test_stage_reset_excludes_previous_requests(void)
     bk7259_gimbal_stats_snapshot_t snapshot;
     bk7259_gimbal_stats_reset(&stats, 100);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, 101, BK7259_GIMBAL_STATS_HOME, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 101, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
     bk7259_gimbal_stats_reset(&stats, 102);
     bk7259_gimbal_stats_tx_failed(&stats, BK7259_GIMBAL_STATS_NORMAL);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, 103, BK7259_GIMBAL_STATS_NORMAL, 50, 0);
-    bk7259_gimbal_stats_reply(&stats, 104, 6, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 105, 0, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 106, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 103, BK7259_GIMBAL_STATS_NORMAL, 50, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 104, 6, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 105, 0, 0, 0, true);
+    bk7259_gimbal_stats_reply(&stats, 106, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 400, &snapshot);
 
     const bk7259_gimbal_test_counts_t *opening = &snapshot.test_counts[BK7259_GIMBAL_TEST_OPENING];
@@ -358,17 +358,17 @@ static void test_stage_motion_gap_uses_consecutive_successful_motion(void)
     const uint32_t start = UINT32_MAX - 20U;
     bk7259_gimbal_stats_reset(&stats, start);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_NORMAL, 10, 0);
+    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_NORMAL, 10, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_power_tx(&stats, start + 3, 1, true);
     bk7259_gimbal_stats_tx_failed(&stats, BK7259_GIMBAL_STATS_NORMAL);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, start + 10, BK7259_GIMBAL_STATS_NORMAL, 20, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 15, BK7259_GIMBAL_STATS_NORMAL, 25, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 20, BK7259_GIMBAL_STATS_HOME, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 22, BK7259_GIMBAL_STATS_NORMAL, 30, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 10, BK7259_GIMBAL_STATS_NORMAL, 20, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start + 15, BK7259_GIMBAL_STATS_NORMAL, 25, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start + 20, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start + 22, BK7259_GIMBAL_STATS_NORMAL, 30, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_tx_failed(&stats, BK7259_GIMBAL_STATS_HOME);
     bk7259_gimbal_stats_power_reply(&stats, start + 25, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 32, BK7259_GIMBAL_STATS_NORMAL, 35, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 32, BK7259_GIMBAL_STATS_NORMAL, 35, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_snapshot(&stats, start + 32, &snapshot);
     const bk7259_gimbal_test_counts_t *opening = &snapshot.test_counts[BK7259_GIMBAL_TEST_OPENING];
     const bk7259_gimbal_test_counts_t *listening = &snapshot.test_counts[BK7259_GIMBAL_TEST_LISTENING];
@@ -376,13 +376,13 @@ static void test_stage_motion_gap_uses_consecutive_successful_motion(void)
     assert(opening->motion_pairs == 3 && opening->min_motion_gap_ms == 5);
 
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_LISTENING);
-    bk7259_gimbal_stats_tx(&stats, start + 35, BK7259_GIMBAL_STATS_NORMAL, 40, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 42, BK7259_GIMBAL_STATS_NORMAL, 45, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 35, BK7259_GIMBAL_STATS_NORMAL, 40, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start + 42, BK7259_GIMBAL_STATS_NORMAL, 45, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, start + 48, BK7259_GIMBAL_STATS_NORMAL, 50, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 49, BK7259_GIMBAL_STATS_NORMAL, 51, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 48, BK7259_GIMBAL_STATS_NORMAL, 50, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start + 49, BK7259_GIMBAL_STATS_NORMAL, 51, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_NONE);
-    bk7259_gimbal_stats_tx(&stats, start + 50, BK7259_GIMBAL_STATS_NORMAL, 52, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 50, BK7259_GIMBAL_STATS_NORMAL, 52, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_snapshot(&stats, start + 50, &snapshot);
     assert(opening->motion_pairs == 4 && opening->min_motion_gap_ms == 1);
     assert(listening->motion_pairs == 1 && listening->min_motion_gap_ms == 7);
@@ -390,11 +390,11 @@ static void test_stage_motion_gap_uses_consecutive_successful_motion(void)
 
     bk7259_gimbal_stats_reset(&stats, start + 52);
     bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_OPENING);
-    bk7259_gimbal_stats_tx(&stats, start + 53, BK7259_GIMBAL_STATS_NORMAL, 60, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 53, BK7259_GIMBAL_STATS_NORMAL, 60, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_snapshot(&stats, start + 53, &snapshot);
     assert(opening->motion_pairs == 0 && opening->min_motion_gap_ms == 0);
-    bk7259_gimbal_stats_tx(&stats, start + 53, BK7259_GIMBAL_STATS_NORMAL, 61, 0);
-    bk7259_gimbal_stats_tx(&stats, start + 55, BK7259_GIMBAL_STATS_NORMAL, 62, 0);
+    bk7259_gimbal_stats_tx(&stats, start + 53, BK7259_GIMBAL_STATS_NORMAL, 61, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_tx(&stats, start + 55, BK7259_GIMBAL_STATS_NORMAL, 62, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
     bk7259_gimbal_stats_snapshot(&stats, start + 55, &snapshot);
     assert(opening->motion_pairs == 2 && opening->min_motion_gap_ms == 0);
 }
@@ -407,30 +407,30 @@ static void test_latency_median_uses_only_isolated_short_replies(void)
     bk7259_gimbal_stats_snapshot(&stats, 100, &snapshot);
     assert(snapshot.latency_samples == 0 && snapshot.latency_median_twice_ms == 0);
 
-    bk7259_gimbal_stats_tx(&stats, 101, BK7259_GIMBAL_STATS_NORMAL, 1, 0);
-    bk7259_gimbal_stats_reply(&stats, 109, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 101, BK7259_GIMBAL_STATS_NORMAL, 1, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 109, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 109, &snapshot);
     assert(snapshot.latency_median_twice_ms == 16);
 
-    bk7259_gimbal_stats_tx(&stats, 1100, BK7259_GIMBAL_STATS_NORMAL, 2, 0);
-    bk7259_gimbal_stats_reply(&stats, 1103, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 1100, BK7259_GIMBAL_STATS_NORMAL, 2, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 1103, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 1103, &snapshot);
     assert(snapshot.latency_median_twice_ms == 11);
 
-    bk7259_gimbal_stats_tx(&stats, 2100, BK7259_GIMBAL_STATS_NORMAL, 3, 0);
-    bk7259_gimbal_stats_reply(&stats, 2108, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 2100, BK7259_GIMBAL_STATS_NORMAL, 3, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 2108, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 2108, &snapshot);
     assert(snapshot.latency_median_twice_ms == 16);
 
-    bk7259_gimbal_stats_tx(&stats, 3100, BK7259_GIMBAL_STATS_NORMAL, 4, 0);
-    bk7259_gimbal_stats_reply(&stats, 3100, 4, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 3100, BK7259_GIMBAL_STATS_NORMAL, 4, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 3100, 4, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 3100, &snapshot);
     assert(snapshot.latency_median_twice_ms == 11);
 
-    bk7259_gimbal_stats_tx(&stats, 4100, BK7259_GIMBAL_STATS_HOME, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 4100 + BK7259_GIMBAL_STATS_HOME_WINDOW_MS, 4, 0, 0);
-    bk7259_gimbal_stats_tx(&stats, 5100, BK7259_GIMBAL_STATS_NORMAL, 5, 0);
-    bk7259_gimbal_stats_reply(&stats, 5100 + BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS + 1U, 0, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 4100, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 4100 + BK7259_GIMBAL_STATS_HOME_WINDOW_MS, 4, 0, 0, true);
+    bk7259_gimbal_stats_tx(&stats, 5100, BK7259_GIMBAL_STATS_NORMAL, 5, 0, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 5100 + BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS + 1U, 0, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 5400, &snapshot);
     assert(snapshot.latency_samples == 5 && snapshot.latency_min_ms == 0);
     assert(snapshot.latency_max_ms == 900 && snapshot.latency_total_ms == 919);
@@ -440,10 +440,102 @@ static void test_latency_median_uses_only_isolated_short_replies(void)
     bk7259_gimbal_stats_reset(&stats, 5400);
     bk7259_gimbal_stats_snapshot(&stats, 5400, &snapshot);
     assert(snapshot.latency_samples == 0 && snapshot.latency_median_twice_ms == 0);
-    bk7259_gimbal_stats_tx(&stats, 6100, BK7259_GIMBAL_STATS_HOME, 0, 0);
-    bk7259_gimbal_stats_reply(&stats, 6100 + BK7259_GIMBAL_STATS_HOME_WINDOW_MS, 4, 0, 0);
+    bk7259_gimbal_stats_tx(&stats, 6100, BK7259_GIMBAL_STATS_HOME, 0, 0, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
+    bk7259_gimbal_stats_reply(&stats, 6100 + BK7259_GIMBAL_STATS_HOME_WINDOW_MS, 4, 0, 0, true);
     bk7259_gimbal_stats_snapshot(&stats, 7000, &snapshot);
     assert(snapshot.latency_samples == 1 && snapshot.latency_median_twice_ms == 1800);
+}
+
+static void test_arrivals_and_latency(void)
+{
+    bk7259_gimbal_stats_t stats = {0};
+    bk7259_gimbal_stats_snapshot_t snapshot;
+    const bk7259_gimbal_arrival_counts_t *arrival = &snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].arrival;
+    const uint32_t start = UINT32_MAX - 22U;
+
+    bk7259_gimbal_stats_reset(&stats, start);
+    bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_SPEAKING);
+    bk7259_gimbal_stats_tx(&stats, start, BK7259_GIMBAL_STATS_NORMAL, 30, 0, 505U);
+    const bk7259_gimbal_stats_request_t *match =
+        bk7259_gimbal_stats_reply(&stats, start + 5U, 0, 0, 0, true);
+    assert(match && !match->arrived && match->arrival_pending);
+    assert(!bk7259_gimbal_stats_reply(&stats, start + 480U, 6, 30, 1, true));
+    match = bk7259_gimbal_stats_reply(&stats, start + 505U, 6, 30, 0, true);
+    assert(match && match->arrived);
+    assert(!bk7259_gimbal_stats_reply(&stats, start + 506U, 6, 30, 0, true));
+    bk7259_gimbal_stats_snapshot(&stats, start + 506U, &snapshot);
+    assert(arrival->reached == 1 && arrival->pending == 0);
+    assert(snapshot.latency_samples == 1 && snapshot.latency_total_ms == 5);
+    assert(snapshot.arrival_latency_samples == 1 && snapshot.arrival_latency_total_ms == 505);
+
+    /* Re-visiting a previously confirmed coordinate allows its new completion.
+     * A short response can time out even though arrival is later confirmed. */
+    bk7259_gimbal_stats_tx(&stats, start + 600U, BK7259_GIMBAL_STATS_NORMAL, 30, 0, 600U);
+    match = bk7259_gimbal_stats_reply(&stats, start + 1000U, 6, 30, 0, true);
+    assert(match && match->arrived && match->sent_at == start + 600U);
+    bk7259_gimbal_stats_snapshot(&stats, start + 1000U, &snapshot);
+    assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].expired == 1 && arrival->reached == 2);
+    assert(snapshot.arrival_latency_median_twice_ms == 905);
+    assert(snapshot.arrival_latency_min_ms == 400 && snapshot.arrival_latency_max_ms == 505);
+
+    bk7259_gimbal_stats_tx(&stats, start + 1600U, BK7259_GIMBAL_STATS_NORMAL, 12, 1, 600U);
+    match = bk7259_gimbal_stats_reply(&stats, start + 1900U, 4, 0, 0, true);
+    assert(match && match->arrived && match->state == BK7259_GIMBAL_STATS_EXPIRED);
+    bk7259_gimbal_stats_snapshot(&stats, start + 1901U, &snapshot);
+    assert(snapshot.arrival_latency_median_twice_ms == 800 && arrival->reached == 3);
+    assert(snapshot.test_counts[BK7259_GIMBAL_TEST_SPEAKING].arrival.reached == 3);
+}
+
+static void test_cancelled_and_fenced_arrivals(void)
+{
+    bk7259_gimbal_stats_t stats = {0};
+    bk7259_gimbal_stats_snapshot_t snapshot;
+    bk7259_gimbal_stats_reset(&stats, 100);
+    bk7259_gimbal_stats_stage(&stats, BK7259_GIMBAL_TEST_THINKING);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 50, 0, 300);
+    bk7259_gimbal_stats_reply(&stats, 105, 0, 0, 0, true);
+    bk7259_gimbal_stats_cancel_test_arrivals(&stats, 110);
+    bk7259_gimbal_stats_tx(&stats, 200, BK7259_GIMBAL_STATS_NORMAL, 50, 0, 300);
+    bk7259_gimbal_stats_reply(&stats, 205, 0, 0, 0, true);
+    assert(!bk7259_gimbal_stats_reply(&stats, 208, 6, 50, 0, true));
+    bk7259_gimbal_stats_expire_arrival(&stats, 200);
+    assert(!bk7259_gimbal_stats_reply(&stats, 500, 6, 50, 0, true));
+    bk7259_gimbal_stats_snapshot(&stats, 501, &snapshot);
+    const bk7259_gimbal_arrival_counts_t *counts = &snapshot.test_counts[BK7259_GIMBAL_TEST_THINKING].arrival;
+    assert(counts->cancelled == 1 && counts->expired == 1 && counts->reached == 0 && counts->pending == 0);
+
+    bk7259_gimbal_stats_tx(&stats, 600, BK7259_GIMBAL_STATS_HOME, 0, 0, 900);
+    const bk7259_gimbal_stats_request_t *match = bk7259_gimbal_stats_reply(&stats, 605, 4, 0, 0, false);
+    assert(match && match->arrival_pending && !match->arrived);
+    bk7259_gimbal_stats_reset(&stats, 608);
+    match = bk7259_gimbal_stats_reply(&stats, 630, 6, 0, 0, true);
+    assert(match && match->previous_run && match->arrived);
+    bk7259_gimbal_stats_snapshot(&stats, 631, &snapshot);
+    assert(snapshot.arrival_latency_samples == 0 && snapshot.groups[BK7259_GIMBAL_STATS_HOME].arrival.pending == 0);
+
+    bk7259_gimbal_stats_tx(&stats, 800, BK7259_GIMBAL_STATS_NORMAL, 70, 2, 250);
+    bk7259_gimbal_stats_cancel_arrival(&stats, 800);
+    match = bk7259_gimbal_stats_reply(&stats, 830, 6, 70, 2, true);
+    assert(match && !match->arrived && !match->arrival_pending);
+    bk7259_gimbal_stats_snapshot(&stats, 832, &snapshot);
+    assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].completion_fallback == 1);
+    assert(snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].arrival.cancelled == 1);
+    assert(snapshot.arrival_latency_samples == 0);
+}
+
+static void test_untagged_arrival_after_reset_and_preemption(void)
+{
+    bk7259_gimbal_stats_t stats = {0};
+    bk7259_gimbal_stats_reset(&stats, 100);
+    bk7259_gimbal_stats_tx(&stats, 100, BK7259_GIMBAL_STATS_NORMAL, 1, 0, 250);
+    bk7259_gimbal_stats_reset(&stats, 105);
+    bk7259_gimbal_stats_cancel_arrival(&stats, 100);
+    bk7259_gimbal_stats_tx(&stats, 110, BK7259_GIMBAL_STATS_NORMAL, 3, 0, 250);
+    bk7259_gimbal_stats_reply(&stats, 115, 0, 0, 0, true);
+    const bk7259_gimbal_stats_request_t *match = bk7259_gimbal_stats_reply(&stats, 120, 4, 0, 0, true);
+    assert(match && !match->arrived && match->arrival_pending);
+    match = bk7259_gimbal_stats_reply(&stats, 130, 6, 3, 0, true);
+    assert(match && match->arrived);
 }
 
 static void test_power_counts_and_latency(void)
@@ -561,6 +653,9 @@ int main(void)
     test_stage_reset_excludes_previous_requests();
     test_stage_motion_gap_uses_consecutive_successful_motion();
     test_latency_median_uses_only_isolated_short_replies();
+    test_arrivals_and_latency();
+    test_cancelled_and_fenced_arrivals();
+    test_untagged_arrival_after_reset_and_preemption();
     test_power_counts_and_latency();
     test_power_previous_reply_cannot_settle_new_request();
     test_power_latency_window_and_wrap();
