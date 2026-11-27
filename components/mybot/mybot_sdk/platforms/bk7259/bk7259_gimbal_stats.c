@@ -20,6 +20,75 @@ static bk7259_gimbal_test_counts_t *test_counts_for(bk7259_gimbal_stats_t *stats
     return &stats->snapshot.test_counts[stage];
 }
 
+typedef enum {
+    ARRIVAL_REACHED, ARRIVAL_REJECTED, ARRIVAL_EXPIRED, ARRIVAL_CANCELLED
+} arrival_result_t;
+
+static void count_arrival(bk7259_gimbal_arrival_counts_t *counts, arrival_result_t result)
+{
+    --counts->pending;
+    switch (result) {
+    case ARRIVAL_REACHED:   ++counts->reached; break;
+    case ARRIVAL_REJECTED:  ++counts->rejected; break;
+    case ARRIVAL_EXPIRED:   ++counts->expired; break;
+    case ARRIVAL_CANCELLED: ++counts->cancelled; break;
+    }
+}
+
+static void finish_arrival(bk7259_gimbal_stats_t *stats, bk7259_gimbal_stats_request_t *request,
+                           arrival_result_t result)
+{
+    if (!request->arrival_pending)
+        return;
+    request->arrival_pending = false;
+    request->arrived = result == ARRIVAL_REACHED;
+    if (!request->previous_run) {
+        count_arrival(&stats->snapshot.groups[request->group].arrival, result);
+        bk7259_gimbal_test_counts_t *stage = test_counts_for(stats, request->test_stage);
+        if (stage)
+            count_arrival(&stage->arrival, result);
+    }
+}
+
+static void close_arrival_at(bk7259_gimbal_stats_t *stats, uint32_t sent_at, arrival_result_t result)
+{
+    for (unsigned i = 0; i < stats->used; ++i) {
+        if (stats->requests[i].sent_at == sent_at && stats->requests[i].arrival_pending) {
+            finish_arrival(stats, &stats->requests[i], result);
+            return;
+        }
+    }
+}
+
+void bk7259_gimbal_stats_cancel_arrival(bk7259_gimbal_stats_t *stats, uint32_t sent_at)
+{
+    close_arrival_at(stats, sent_at, ARRIVAL_CANCELLED);
+}
+
+void bk7259_gimbal_stats_cancel_test_arrivals(bk7259_gimbal_stats_t *stats, uint32_t now)
+{
+    bk7259_gimbal_stats_tick(stats, now);
+    for (unsigned i = 0; i < stats->used; ++i) {
+        if (stats->requests[i].test_stage != BK7259_GIMBAL_TEST_NONE)
+            finish_arrival(stats, &stats->requests[i], ARRIVAL_CANCELLED);
+    }
+}
+
+void bk7259_gimbal_stats_expire_arrival(bk7259_gimbal_stats_t *stats, uint32_t sent_at)
+{
+    close_arrival_at(stats, sent_at, ARRIVAL_EXPIRED);
+}
+
+static uint32_t history_window(uint8_t group, uint32_t arrival_window_ms)
+{
+    /* A late completion from a slow, superseded movement can outlive the
+     * short ACK window. Home retries already provide a quiet 100 ms gap. */
+    uint32_t horizon = arrival_window_ms + BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS;
+    if (group == BK7259_GIMBAL_STATS_HOME || horizon < BK7259_GIMBAL_STATS_HOME_WINDOW_MS)
+        return BK7259_GIMBAL_STATS_HOME_WINDOW_MS;
+    return horizon;
+}
+
 static void expire_motion_request(bk7259_gimbal_stats_t *stats,
                                   bk7259_gimbal_stats_request_t *request)
 {
@@ -62,7 +131,7 @@ void bk7259_gimbal_stats_tick(bk7259_gimbal_stats_t *stats, uint32_t now)
 {
     stats->snapshot.window_ms = now - stats->started_at;
     advance_power(stats, now);
-    if (now - stats->overflow_at > BK7259_GIMBAL_STATS_HOME_WINDOW_MS)
+    if (now - stats->overflow_at > stats->overflow_window_ms)
         stats->overflow_guard = false;
 
     size_t kept = 0;
@@ -71,9 +140,11 @@ void bk7259_gimbal_stats_tick(bk7259_gimbal_stats_t *stats, uint32_t now)
         uint32_t age = now - request.sent_at;
         if (request.state == BK7259_GIMBAL_STATS_PENDING && age > response_window(request.group))
             expire_motion_request(stats, &request);
+        if (request.arrival_pending && age > request.arrival_window_ms)
+            finish_arrival(stats, &request, ARRIVAL_EXPIRED);
         /* Keep completed/expired targets for one bounded UART reply horizon.
          * A matching old target could otherwise masquerade as a new 06. */
-        if (age <= BK7259_GIMBAL_STATS_HOME_WINDOW_MS)
+        if (age <= history_window(request.group, request.arrival_window_ms))
             stats->requests[kept++] = request;
     }
     stats->used = (uint8_t)kept;
@@ -88,6 +159,7 @@ void bk7259_gimbal_stats_reset(bk7259_gimbal_stats_t *stats, uint32_t now)
         request->test_stage = BK7259_GIMBAL_TEST_NONE;
     }
     memset(&stats->snapshot, 0, sizeof(stats->snapshot));
+    memset(stats->arrival_histogram, 0, sizeof(stats->arrival_histogram));
     memset(stats->latency_histogram, 0, sizeof(stats->latency_histogram));
     memset(stats->power_latency_histogram, 0, sizeof(stats->power_latency_histogram));
     stats->power_request.previous_run = true;
@@ -123,7 +195,8 @@ static void record_test_motion_gap(bk7259_gimbal_stats_t *stats,
 }
 
 void bk7259_gimbal_stats_tx(bk7259_gimbal_stats_t *stats, uint32_t now,
-                           bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch)
+                           bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch,
+                           uint32_t arrival_window_ms)
 {
     bk7259_gimbal_stats_tick(stats, now);
     bk7259_gimbal_stats_counts_t *counts = &stats->snapshot.groups[group];
@@ -146,22 +219,30 @@ void bk7259_gimbal_stats_tx(bk7259_gimbal_stats_t *stats, uint32_t now,
         bool awaits_short_reply = previous->state == BK7259_GIMBAL_STATS_PENDING ||
                                   (previous->state == BK7259_GIMBAL_STATS_ACCEPTED_BY_COMPLETION &&
                                    !previous->short_uncertain);
-        if (!previous->previous_run && awaits_short_reply &&
-            age <= response_window(previous->group)) {
+        if (awaits_short_reply && age <= response_window(previous->group)) {
             previous->overlapping = true;
             overlapping = true;
         }
     }
+    uint32_t limit = group == BK7259_GIMBAL_STATS_HOME ? BK7259_GIMBAL_STATS_HOME_WINDOW_MS
+                                                       : BK7259_GIMBAL_ARRIVAL_MAX_MS;
+    if (arrival_window_ms > limit)
+        arrival_window_ms = limit;
     if (stats->used == BK7259_GIMBAL_STATS_CAPACITY) {
         ++counts->overflow;
         if (test_counts)
             ++test_counts->overflow;
+        uint32_t horizon = history_window((uint8_t)group, arrival_window_ms);
+        if (!stats->overflow_guard || horizon > stats->overflow_window_ms)
+            stats->overflow_window_ms = horizon;
         stats->overflow_guard = true;
         stats->overflow_at = now;
         return;
     }
     stats->requests[stats->used++] = (bk7259_gimbal_stats_request_t){
         .sent_at = now,
+        .arrival_window_ms = (uint16_t)arrival_window_ms,
+        .arrival_pending = true,
         .pan = pan,
         .pitch = pitch,
         .test_stage = stats->test_stage,
@@ -170,6 +251,9 @@ void bk7259_gimbal_stats_tx(bk7259_gimbal_stats_t *stats, uint32_t now,
         .overlapping = overlapping,
     };
     ++counts->pending;
+    ++counts->arrival.pending;
+    if (test_counts)
+        ++test_counts->arrival.pending;
 }
 
 void bk7259_gimbal_stats_tx_failed(bk7259_gimbal_stats_t *stats, bk7259_gimbal_stats_group_t group)
@@ -180,18 +264,22 @@ void bk7259_gimbal_stats_tx_failed(bk7259_gimbal_stats_t *stats, bk7259_gimbal_s
         ++test_counts->tx_failed;
 }
 
-static bk7259_gimbal_stats_request_t *first_pending(bk7259_gimbal_stats_t *stats)
+static bk7259_gimbal_stats_request_t *first_pending(bk7259_gimbal_stats_t *stats, uint8_t code)
 {
     for (size_t i = 0; i < stats->used; ++i) {
-        if (stats->requests[i].state == BK7259_GIMBAL_STATS_PENDING)
-            return &stats->requests[i];
+        bk7259_gimbal_stats_request_t *request = &stats->requests[i];
+        /* A unique 04 still confirms the target during a longer travel
+         * window, even when its short-response statistic already timed out. */
+        if (request->state == BK7259_GIMBAL_STATS_PENDING ||
+            (code == 4 && request->state == BK7259_GIMBAL_STATS_EXPIRED && request->arrival_pending))
+            return request;
     }
     return NULL;
 }
 
-static bk7259_gimbal_stats_request_t *match_short_reply(bk7259_gimbal_stats_t *stats)
+static bk7259_gimbal_stats_request_t *match_short_reply(bk7259_gimbal_stats_t *stats, uint8_t code)
 {
-    bk7259_gimbal_stats_request_t *request = first_pending(stats);
+    bk7259_gimbal_stats_request_t *request = first_pending(stats, code);
     /* An untagged reply may still belong to a predecessor. Keep the newer
      * candidate eligible for subsequent replies, but record the ambiguity
      * so it cannot propagate to another request if this one expires. */
@@ -225,10 +313,18 @@ static bk7259_gimbal_stats_request_t *match_completion(bk7259_gimbal_stats_t *st
                                                      int16_t pan, int16_t pitch)
 {
     bk7259_gimbal_stats_request_t *match = NULL;
+    bk7259_gimbal_stats_request_t *settled = NULL;
     for (size_t i = 0; i < stats->used; ++i) {
         bk7259_gimbal_stats_request_t *request = &stats->requests[i];
         if (request->pan != pan || request->pitch != pitch)
             continue;
+        /* Each accepted move produces at most one completion. A command
+         * already at its target or uniquely rejected starts no new move. */
+        if (request->arrived || (request->state == BK7259_GIMBAL_STATS_REJECTED &&
+                                 !request->short_uncertain && !request->overlapping)) {
+            settled = request;
+            continue;
+        }
         if (match || stats->overflow_guard) {
             ++stats->snapshot.ambiguous;
             return NULL;
@@ -236,20 +332,19 @@ static bk7259_gimbal_stats_request_t *match_completion(bk7259_gimbal_stats_t *st
         match = request;
     }
     if (!match) {
-        ++stats->snapshot.unmatched;
+        if (settled && settled->previous_run)
+            ++stats->snapshot.suppressed;
+        else if (!settled)
+            ++stats->snapshot.unmatched;
         return NULL;
     }
-    if (match->previous_run && match->state != BK7259_GIMBAL_STATS_PENDING) {
-        ++stats->snapshot.suppressed;
-        return NULL;
-    }
-    /* A normal transition from accepted to completed is observed in raw 06
-     * without counting the request again or reporting an unknown reply. */
-    if (match->state == BK7259_GIMBAL_STATS_ACCEPTED ||
-        match->state == BK7259_GIMBAL_STATS_ACCEPTED_BY_COMPLETION)
-        return NULL;
-    if (match->state != BK7259_GIMBAL_STATS_PENDING) {
-        ++stats->snapshot.unmatched;
+    /* A cancelled trajectory may still receive a unique 06 within the
+     * submission's response window. Account acceptance without releasing motion. */
+    if (!match->arrival_pending && match->state != BK7259_GIMBAL_STATS_PENDING) {
+        if (match->previous_run)
+            ++stats->snapshot.suppressed;
+        else if (!match->arrived)
+            ++stats->snapshot.unmatched;
         return NULL;
     }
     return match;
@@ -267,8 +362,21 @@ static void record_latency(bk7259_gimbal_stats_t *stats, uint32_t elapsed)
     ++stats->latency_histogram[elapsed];
 }
 
+static void record_arrival_latency(bk7259_gimbal_stats_t *stats, uint32_t elapsed)
+{
+    bk7259_gimbal_stats_snapshot_t *snapshot = &stats->snapshot;
+    if (!snapshot->arrival_latency_samples || elapsed < snapshot->arrival_latency_min_ms)
+        snapshot->arrival_latency_min_ms = elapsed;
+    if (elapsed > snapshot->arrival_latency_max_ms)
+        snapshot->arrival_latency_max_ms = elapsed;
+    ++snapshot->arrival_latency_samples;
+    snapshot->arrival_latency_total_ms += elapsed;
+    ++stats->arrival_histogram[elapsed];
+}
+
 const bk7259_gimbal_stats_request_t *bk7259_gimbal_stats_reply(
-    bk7259_gimbal_stats_t *stats, uint32_t now, uint8_t code, int16_t pan, int16_t pitch)
+    bk7259_gimbal_stats_t *stats, uint32_t now, uint8_t code, int16_t pan, int16_t pitch,
+    bool allow_home_arrival)
 {
     bk7259_gimbal_stats_tick(stats, now);
     switch (code) {
@@ -283,11 +391,31 @@ const bk7259_gimbal_stats_request_t *bk7259_gimbal_stats_reply(
     }
 
     bk7259_gimbal_stats_request_t *request =
-        code == 6 ? match_completion(stats, pan, pitch) : match_short_reply(stats);
+        code == 6 ? match_completion(stats, pan, pitch) : match_short_reply(stats, code);
     if (!request)
         return NULL;
 
     bool rejected = code == 1 || code == 2;
+    bool unique_short = !request->overlapping && !request->short_uncertain;
+    bool allowed = request->group != BK7259_GIMBAL_STATS_HOME || allow_home_arrival;
+    if (request->arrival_pending && allowed && (code == 6 || (code == 4 && unique_short))) {
+        finish_arrival(stats, request, ARRIVAL_REACHED);
+        if (!request->previous_run)
+            record_arrival_latency(stats, now - request->sent_at);
+    } else if (rejected && unique_short) {
+        finish_arrival(stats, request, ARRIVAL_REJECTED);
+    }
+
+    /* 00 can arrive before 06: only the first reply settles acceptance.
+     * Arrival has its own deadline and remains actionable across a stats reset. */
+    if (request->state != BK7259_GIMBAL_STATS_PENDING) {
+        /* The late 04 has consumed this expired request's only short reply. */
+        if (code == 4 && request->state == BK7259_GIMBAL_STATS_EXPIRED)
+            request->short_uncertain = true;
+        if (request->previous_run)
+            ++stats->snapshot.suppressed;
+        return request;
+    }
     if (rejected)
         request->state = BK7259_GIMBAL_STATS_REJECTED;
     else if (code == 6)
@@ -452,6 +580,8 @@ void bk7259_gimbal_stats_snapshot(bk7259_gimbal_stats_t *stats, uint32_t now,
 {
     bk7259_gimbal_stats_tick(stats, now);
     *output = stats->snapshot;
+    output->arrival_latency_median_twice_ms = latency_median_twice(stats->arrival_histogram,
+        output->arrival_latency_samples, output->arrival_latency_min_ms, output->arrival_latency_max_ms);
     output->latency_median_twice_ms = latency_median_twice(stats->latency_histogram,
         output->latency_samples, output->latency_min_ms, output->latency_max_ms);
     bk7259_gimbal_power_stats_t *power = &output->power;

@@ -386,7 +386,7 @@ static void receive_move_locked(const uint8_t *frame)
         deliver_reply_locked(accepted_frame, sizeof(accepted_frame));
         return;
     }
-    if (pan == controller.pan && pitch == controller.pitch) {
+    if (!controller.active && pan == controller.pan && pitch == controller.pitch) {
         deliver_reply_locked(already_at_target_frame, sizeof(already_at_target_frame));
         return;
     }
@@ -829,7 +829,9 @@ static void test_ordinary_motion_acknowledgement(void)
         uint8_t code;
         uint32_t ack_after;
         uint32_t send_after;
-    } cases[] = {{0, 80, 100}, {4, 140, 140}, {6, 180, 180}, {0, 250, 250}};
+        bool accepted_first;
+    } cases[] = {{4, 80, 100, false}, {4, 140, 140, false},
+                 {6, 180, 180, false}, {6, 200, 200, true}};
     for (unsigned i = 0; i < ARRAY_COUNT(cases); ++i) {
         reset_controller();
         controller.uart_open = true;
@@ -845,6 +847,12 @@ static void test_ordinary_motion_acknowledgement(void)
         poll_fixed_uart(&io, started);
         assert(controller.motion_count == 1 && motion_pan(0) == 17);
 
+        if (cases[i].accepted_first) {
+            inject_result_locked(0);
+            poll_fixed_uart(&io, started + 5U);
+            poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS);
+            assert(controller.motion_count == 1);
+        }
         poll_fixed_uart(&io, started + cases[i].ack_after - 1U);
         assert(controller.motion_count == 1);
         uint8_t code = cases[i].code;
@@ -863,6 +871,11 @@ static void test_ordinary_motion_acknowledgement(void)
         assert(controller.motion[1].at - controller.motion[0].at == cases[i].send_after);
         const bk7259_gimbal_stats_counts_t *normal = &s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL];
         assert(normal->tx == 2 && normal->accepted == 1 && normal->expired == 0);
+        assert(normal->arrival.reached == 1 && normal->arrival.pending == 1);
+        assert(s_gimbal.stats.snapshot.arrival_latency_samples == 1);
+        assert(s_gimbal.stats.snapshot.arrival_latency_max_ms == cases[i].ack_after);
+        if (cases[i].accepted_first)
+            assert(s_gimbal.stats.snapshot.latency_max_ms == 5U);
 
         controller.uart_open = false;
         s_gimbal = (gimbal_context_t){0};
@@ -901,17 +914,19 @@ static void test_ordinary_motion_ack_timeout(void)
     assert(s_gimbal.stats.snapshot.power.e6_00 == 1);
     assert(controller.motion_count == 1);
 
-    inject_result_locked(2);
+    inject_result_locked(0);
     poll_fixed_uart(&io, started + 200U);
-    assert(s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].rejected == 1);
+    assert(s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].accepted == 1);
     assert(controller.motion_count == 1);
     poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS - 1U);
     assert(controller.motion_count == 1);
     poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS);
     assert(controller.motion_count == 2 && motion_pan(1) == 63);
+    assert(s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].arrival.expired == 1);
     assert(controller.motion[1].at - controller.motion[0].at == EXPECTED_MOTION_REPLY_MS);
     poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS + EXPECTED_MOTION_PERIOD_MS - 1U);
     assert(controller.motion_count == 2);
+    complete_locked(motion_pan(1), motion_pitch(1));
     poll_fixed_uart(&io, started + EXPECTED_MOTION_REPLY_MS + EXPECTED_MOTION_PERIOD_MS);
     assert(controller.motion_count == 3 && motion_pan(2) == 80);
 
@@ -920,7 +935,7 @@ static void test_ordinary_motion_ack_timeout(void)
     fixed_test_time = 0;
 }
 
-static void test_ordinary_ack_attribution_across_reset(uint8_t current_ack)
+static void test_ordinary_ack_attribution_across_reset(void)
 {
     reset_controller();
     assert(mailbox_initialized() && s_wake);
@@ -939,38 +954,103 @@ static void test_ordinary_ack_attribution_across_reset(uint8_t current_ack)
     poll_fixed_uart(&io, started);
     assert(controller.motion_count == 1 && motion_pan(0) == 17);
 
+    inject_result_locked(0);
+    poll_fixed_uart(&io, started + 5U);
     fixed_test_time = started + 50U;
     assert(bk7259_gimbal_reset_stats() == 0);
     poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS);
     assert(controller.motion_count == 1);
     controller.drop_next_move = true;
-    inject_result_locked(0);
+    complete_locked(motion_pan(0), motion_pitch(0));
     poll_fixed_uart(&io, acknowledged);
     assert(controller.motion_count == 2 && motion_pan(1) == 63);
     const bk7259_gimbal_stats_snapshot_t *stats = &s_gimbal.stats.snapshot;
     const bk7259_gimbal_stats_counts_t *normal = &stats->groups[BK7259_GIMBAL_STATS_NORMAL];
-    assert(stats->suppressed == 1 && normal->tx == 1 && normal->accepted == 0);
+    assert(normal->tx == 1 && normal->accepted == 0 && stats->latency_samples == 0);
 
     controller.drop_next_move = true;
     poll_fixed_uart(&io, timed_out);
     assert(controller.motion_count == 3 && motion_pan(2) == 80);
     /* A short reply from the expired 6.3-degree frame is ambiguous. Its
      * coordinate-bearing completion also cannot acknowledge the 8-degree frame. */
-    inject_result_locked(0);
+    inject_result_locked(4);
     poll_fixed_uart(&io, timed_out + EXPECTED_MOTION_PERIOD_MS);
-    assert(controller.motion_count == 3 && stats->ambiguous == 1);
+    assert(controller.motion_count == 3 && stats->ambiguous >= 1);
     complete_locked(motion_pan(1), motion_pitch(1));
     poll_fixed_uart(&io, timed_out + EXPECTED_MOTION_PERIOD_MS + 10U);
     assert(controller.motion_count == 3);
 
-    if (current_ack == 6)
-        complete_locked(motion_pan(2), motion_pitch(2));
-    else
-        inject_result_locked(current_ack);
+    complete_locked(motion_pan(2), motion_pitch(2));
     poll_fixed_uart(&io, timed_out + EXPECTED_MOTION_PERIOD_MS + 20U);
     assert(controller.motion_count == 4 && motion_pan(3) == 71);
     assert(normal->tx == 3 && normal->accepted == 1 && normal->expired == 1);
 
+    controller.uart_open = false;
+    s_gimbal = (gimbal_context_t){0};
+    fixed_test_time = 0;
+}
+
+static void test_long_ordinary_move_waits_for_arrival(void)
+{
+    reset_controller();
+    const uint32_t started = 1000U;
+    controller.uart_open = true;
+    controller.drop_next_move = true;
+    /* Prior skipped samples leave the estimated pose well left of the next
+     * planned waypoint. The PPS on the wire makes this step take >250 ms. */
+    controller.pan = -400;
+    gimbal_io_t io = {.charge_due = 10000U, .pose_pan = {.start = -400, .target = -400}};
+    s_gimbal = (gimbal_context_t){.ready = true, .settings = {.motion_enabled = true}};
+    queue_scene(BK7259_GIMBAL_SCENE_ANGRY, started);
+    io.motion_revision = s_gimbal.motion.revision;
+    poll_fixed_uart(&io, started);
+    assert(controller.motion_count == 1 && motion_pan(0) == 17);
+    uint16_t pps = wire_u16(controller.motion[0].bytes + 8);
+    uint32_t travel_ms = controller_axis_ms(-400, motion_pan(0), pps);
+    assert(travel_ms > EXPECTED_MOTION_REPLY_MS);
+    inject_result_locked(0);
+    poll_fixed_uart(&io, started + 5U);
+    poll_fixed_uart(&io, started + travel_ms + 50U);
+    assert(controller.motion_count == 1 && io.waiting_motion_ack);
+    complete_locked(motion_pan(0), motion_pitch(0));
+    poll_fixed_uart(&io, started + travel_ms + 51U);
+    assert(controller.motion_count == 2 && motion_pan(1) == 63);
+    assert(s_gimbal.stats.snapshot.arrival_latency_max_ms == travel_ms + 51U);
+    controller.uart_open = false;
+    s_gimbal = (gimbal_context_t){0};
+    fixed_test_time = 0;
+}
+
+static void test_takeover_with_same_coordinates(void)
+{
+    reset_controller();
+    const uint32_t started = 1000U;
+    controller.uart_open = true;
+    controller.drop_next_move = true;
+    gimbal_io_t io = {.charge_due = 10000U};
+    s_gimbal = (gimbal_context_t){.ready = true, .settings = {.motion_enabled = true}};
+    queue_scene(BK7259_GIMBAL_SCENE_ANGRY, started);
+    poll_fixed_uart(&io, started);
+    assert(controller.motion_count == 1 && motion_pan(0) == 17);
+    inject_result_locked(0);
+    poll_fixed_uart(&io, started + 5U);
+    controller.drop_next_move = true;
+    s_gimbal.motion = (motion_request_t){
+        .kind = MOTION_TARGET, .revision = s_gimbal.motion.revision + 1U,
+        .target = {.pan = motion_pan(0)}, .started_at = started + 50U,
+    };
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS - 1U);
+    assert(controller.motion_count == 1);
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS);
+    assert(controller.motion_count == 2 && motion_pan(1) == motion_pan(0));
+    /* Same coordinates, two generations. A late 06 from the preempted
+     * command cannot confirm the current command. */
+    complete_locked(motion_pan(0), motion_pitch(0));
+    poll_fixed_uart(&io, started + EXPECTED_MOTION_PERIOD_MS + 10U);
+    assert(io.waiting_motion_ack);
+    const bk7259_gimbal_arrival_counts_t *arrival =
+        &s_gimbal.stats.snapshot.groups[BK7259_GIMBAL_STATS_NORMAL].arrival;
+    assert(arrival->cancelled == 1 && arrival->reached == 0 && arrival->pending == 1);
     controller.uart_open = false;
     s_gimbal = (gimbal_context_t){0};
     fixed_test_time = 0;
@@ -1059,10 +1139,6 @@ static void test_phase_takeover_uses_pose_at_transmit_slot(void)
     service_motion(&io, fixed_test_time);
     assert(controller.motion_count == 1);
     ++fixed_test_time;
-    service_motion(&io, fixed_test_time);
-    assert(controller.motion_count == 1);
-    inject_result_locked(0);
-    drain_frames(&io, fixed_test_time);
     service_motion(&io, fixed_test_time);
     assert(controller.motion_count == 1);
     assert(io.blend_pan == 11 && io.blend_at == opening_at + 132U);
@@ -2089,13 +2165,16 @@ static void test_boot_demo_and_stream_recovery(void)
     rtos_delay_milliseconds(100);
     assert(bk7259_gimbal_send_next_command() == BK7259_GIMBAL_NOT_READY);
 
+    uint8_t completion[11];
+    const uint8_t centered[] = {6, 0, 0, 0, 0};
+    size_t size = make_reply(completion, 0xe1, centered, sizeof(centered));
     assert(pthread_mutex_lock(&controller.mutex) == 0);
-    deliver_reply_locked(already_at_target_frame, 3);
+    deliver_reply_locked(completion, 3);
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
     rtos_delay_milliseconds(30);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     controller.motion_response = RESPONSE_NORMAL;
-    deliver_reply_locked(already_at_target_frame + 3, sizeof(already_at_target_frame) - 3);
+    deliver_reply_locked(completion + 3, size - 3);
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
     rtos_delay_milliseconds(100);
     assert(bk7259_gimbal_send_next_command() == 0);
@@ -2120,7 +2199,10 @@ static void test_scene_skips_missing_replies_and_confirms_home(void)
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     assert(motion_pan(1) > 0 && motion_pan(2) > motion_pan(1));
     assert_motion_pacing(1, controller.motion_count);
-    assert(controller.motion[3].at - controller.motion[1].at < 550U);
+    /* The first move has no replies and the second has only a start ACK.
+     * Both must wait for their arrival deadlines before the path advances. */
+    for (unsigned i = 2; i <= 3; ++i)
+        assert(controller.motion[i].at - controller.motion[i - 1U].at >= EXPECTED_MOTION_REPLY_MS);
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
 
     unsigned missed_home = wait_for_home(1);
@@ -2674,12 +2756,13 @@ int main(void)
     test_due_motion_waits_for_charge_tail();
     test_ordinary_motion_acknowledgement();
     test_ordinary_motion_ack_timeout();
+    test_long_ordinary_move_waits_for_arrival();
+    test_takeover_with_same_coordinates();
     test_path_write_failure(false);
     test_path_write_failure(true);
     test_terminal_target_write_failure();
     test_uart_stats_motion_and_reset();
-    test_ordinary_ack_attribution_across_reset(0);
-    test_ordinary_ack_attribution_across_reset(6);
+    test_ordinary_ack_attribution_across_reset();
     test_pending_motion_rehomes(false);
     test_pending_motion_rehomes(true);
     test_phase_takeover_uses_pose_at_transmit_slot();

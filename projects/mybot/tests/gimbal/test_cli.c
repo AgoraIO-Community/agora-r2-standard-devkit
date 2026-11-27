@@ -154,6 +154,8 @@ static void test_stats_output(void)
     assert(strstr(console_output, "charge_to_move pairs=0 min_idle_est=n/a\r\n"));
     assert(strstr(console_output, "motion tx=0 short_ok_rx=0 short_ok_matched=0 center_confirmed=0\r\n"));
     assert(strstr(console_output, "normal success=n/a") && strstr(console_output, "home success=n/a"));
+    assert(strstr(console_output, "arrival normal reached=0 timeout=0 rejected=0 cancelled=0 pending=0 success=n/a\r\n"));
+    assert(strstr(console_output, "arrival_latency n=0 min=n/a avg=n/a median=n/a max=n/a\r\n"));
     assert(strstr(console_output, "latency n=0 min=n/a avg=n/a median=n/a max=n/a"));
     assert(strstr(console_output, "power tx=0 tx_failed=0 accepted=0 rejected=0 timeout=0 pending=0 success=n/a"));
     assert(strstr(console_output, "power_latency n=0 min=n/a avg=n/a median=n/a max=n/a"));
@@ -162,6 +164,7 @@ static void test_stats_output(void)
     stats.groups[BK7259_GIMBAL_STATS_NORMAL] = (bk7259_gimbal_stats_counts_t){
         .tx = 90, .tx_failed = 2, .accepted = 64, .rejected = 4, .pending = 10,
         .expired = 8, .overflow = 4, .estimated = 12, .completion_fallback = 3,
+        .arrival = {.reached = 50, .expired = 20, .rejected = 1, .cancelled = 10, .pending = 5},
     };
     stats.groups[BK7259_GIMBAL_STATS_HOME] = (bk7259_gimbal_stats_counts_t){
         .tx = 12, .accepted = 3, .rejected = 1, .pending = 4, .expired = 4, .completion_fallback = 1,
@@ -186,6 +189,11 @@ static void test_stats_output(void)
     stats.latency_min_ms = 3;
     stats.latency_median_twice_ms = 15;
     stats.latency_max_ms = 17;
+    stats.arrival_latency_samples = 2;
+    stats.arrival_latency_min_ms = 85;
+    stats.arrival_latency_max_ms = 200;
+    stats.arrival_latency_total_ms = 285;
+    stats.arrival_latency_median_twice_ms = 285;
     stats.power.groups[BK7259_GIMBAL_POWER_STOP] = (bk7259_gimbal_power_counts_t){
         .tx = 5, .tx_failed = 1, .accepted = 3, .rejected = 0, .pending = 1, .expired = 1,
     };
@@ -206,12 +214,15 @@ static void test_stats_output(void)
     invoke("gimbal_stats", NULL, NULL, "gimbal_stats report sent");
     assert(strlen(console_output) > 252);
     assert(strstr(console_output, "window=12000ms reply_wait normal=250ms home=900ms"));
+    assert(strstr(console_output, "arrival_wait normal=250..2000ms home=900ms\r\n"));
     assert(strstr(console_output, "uart tx_guard=40ms ordinary_period=100ms\r\n"));
     assert(strstr(console_output, "move_to_charge pairs=8 min_idle_est=40ms\r\n"));
     assert(strstr(console_output, "charge_to_move pairs=7 min_idle_est=42ms\r\n"));
     assert(strstr(console_output, "motion tx=102 short_ok_rx=67 short_ok_matched=63 center_confirmed=2\r\n"));
     assert(strstr(console_output, "normal tx=90 tx_failed=2 accepted=64 rejected=4 timeout=8 pending=10"));
     assert(strstr(console_output, "normal success=80.0% overflow=4 estimated=12 completion_fallback=3"));
+    assert(strstr(console_output, "arrival normal reached=50 timeout=20 rejected=1 cancelled=10 pending=5 success=66.6%\r\n"));
+    assert(strstr(console_output, "arrival_latency n=2 min=85 avg=142.5 median=142.5 max=200 ms\r\n"));
     assert(strstr(console_output, "home tx=12 tx_failed=0 accepted=3 rejected=1 timeout=4 pending=4"));
     assert(strstr(console_output, "home success=37.5%"));
     assert(strstr(console_output, "E1 00=64 01=4 02=1 04=3 06=41"));
@@ -315,6 +326,7 @@ static void test_scheduled_test_output(void)
     stats.test_counts[BK7259_GIMBAL_TEST_SPEAKING] = (bk7259_gimbal_test_counts_t){
         .tx = 45, .accepted = 31, .rejected = 2, .expired = 8, .overflow = 4, .tx_failed = 3,
         .motion_pairs = 44, .min_motion_gap_ms = 60,
+        .arrival = {.reached = 27, .expired = 7, .rejected = 2, .cancelled = 5},
     };
     stats.test_counts[BK7259_GIMBAL_TEST_ANGRY] = (bk7259_gimbal_test_counts_t){
         .tx = UINT32_MAX, .accepted = UINT32_MAX, .rejected = UINT32_MAX,
@@ -328,6 +340,7 @@ static void test_scheduled_test_output(void)
     assert(strstr(console_output, "charge_to_move pairs=0 min_idle_est=n/a\r\n"));
     assert(strstr(console_output, "stage speaking tx=45 accepted=31 rejected=2 timeout=8 overflow=4 tx_failed=3\r\n"));
     assert(strstr(console_output, "stage speaking motion_pairs=44 min_motion_gap=60ms\r\n"));
+    assert(strstr(console_output, "arrival speaking reached=27 timeout=7 rejected=2 cancelled=5 pending=0 success=67.5%\r\n"));
     assert(strstr(console_output, "stage hangup motion_pairs=0 min_motion_gap=n/a\r\n"));
     assert(strstr(console_output, "stage angry tx=4294967295 accepted=4294967295 rejected=4294967295 "
                                   "timeout=4294967295 overflow=4294967295 tx_failed=4294967295\r\n"));
