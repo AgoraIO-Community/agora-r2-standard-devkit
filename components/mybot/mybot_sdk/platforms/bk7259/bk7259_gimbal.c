@@ -46,7 +46,7 @@
 #define MOTION_BLEND_MS 240U
 #define MOTION_LIMIT_TENTHS_PER_S 1600U
 #define LISTENING_INTERVAL_MS 3500U
-#define LISTENING_NOD_MS 1120U
+#define LISTENING_LEG_MS 560U
 #define THINKING_TURN_MS 700U
 #define SPEAKING_PERIOD_MS 1250U
 #define EB521_MOVE 0x61
@@ -830,32 +830,6 @@ static int16_t angle_units(float degrees)
     return (int16_t)(units >= 0 ? units + 0.5f : units - 0.5f);
 }
 
-static void dialogue_target(uint32_t now, int16_t *pan, int16_t *pitch, uint32_t *wait)
-{
-    const float turn = 2.0f * 3.14159265359f;
-    uint32_t elapsed = now - s_gimbal.phase_at;
-    switch (s_gimbal.phase) {
-    case BK7259_GIMBAL_PHASE_LISTENING: {
-        uint32_t cycle = elapsed % LISTENING_INTERVAL_MS;
-        if (elapsed >= LISTENING_INTERVAL_MS && cycle < LISTENING_NOD_MS) {
-            *pitch = angle_units(1.5f * (1.0f - cosf(turn * cycle / LISTENING_NOD_MS)));
-        } else {
-            *wait = LISTENING_INTERVAL_MS - cycle;
-        }
-        break;
-    }
-    case BK7259_GIMBAL_PHASE_THINKING:
-        *pan = angle_units(12.0f * smooth((float)elapsed / THINKING_TURN_MS));
-        break;
-    case BK7259_GIMBAL_PHASE_SPEAKING:
-        *pan = angle_units(6.0f * sinf(turn * (elapsed % SPEAKING_PERIOD_MS) / SPEAKING_PERIOD_MS));
-        break;
-    case BK7259_GIMBAL_PHASE_NEUTRAL:
-        *wait = IDLE_WAIT_MS;
-        break;
-    }
-}
-
 typedef enum { PATH_OPENING, PATH_ANGRY, PATH_SURPRISED } path_kind_t;
 
 typedef struct {
@@ -1066,6 +1040,60 @@ static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32
     }
 }
 
+static bool submit_planned_move(gimbal_io_t *io, int16_t pan, int16_t pitch,
+                                int16_t estimated_pan, int16_t estimated_pitch,
+                                uint32_t interval, unsigned int rate)
+{
+    unsigned int pan_distance = (unsigned int)abs(pan - estimated_pan);
+    unsigned int pitch_distance = (unsigned int)abs(pitch - estimated_pitch);
+    unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
+    /* EB521 executes an integer number of milliseconds per degree. Round
+     * that bound up so a catch-up move also respects the configured rate. */
+    uint32_t min_ms_per_degree = (10000U + rate - 1U) / rate;
+    uint32_t travel_ms = (distance * min_ms_per_degree + 9U) / 10U;
+    if (travel_ms < interval)
+        travel_ms = interval;
+    uint16_t pan_speed = choose_speed(pan_distance, travel_ms);
+    uint16_t pitch_speed = choose_speed(pitch_distance, travel_ms);
+    uint32_t window = arrival_window(pan_distance, pitch_distance, pan_speed, pitch_speed);
+    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed, window);
+    uint32_t attempted_at = submitted ? io->last_tx_return_at : rtos_get_time();
+    io->motion_due = attempted_at + (submitted ? travel_ms : interval);
+    if (submitted) {
+        await_motion_arrival(io, pan, pitch, pan_speed, pitch_speed, window);
+    } else {
+        io->has_motion_attempt = true;
+        io->motion_attempt_at = attempted_at;
+    }
+    return submitted;
+}
+
+/* Thinking has one endpoint. Listening starts at center and alternates down
+ * and back; its next nod stays anchored to the start of the listening phase. */
+static void service_dialogue_leg(gimbal_io_t *io, uint32_t now, bool changed,
+                                 int16_t estimated_pan, int16_t estimated_pitch)
+{
+    bool thinking = s_gimbal.phase == BK7259_GIMBAL_PHASE_THINKING;
+    bool down = !thinking && !changed && io->planned_pitch == 0;
+    int16_t pan = thinking ? 120 : 0;
+    int16_t pitch = down ? 30 : 0;
+    uint32_t duration = thinking ? THINKING_TURN_MS : LISTENING_LEG_MS;
+
+    /* A phase takeover can find the previous goal still moving away from
+     * the estimated pose. Send the new endpoint even if that pose is zero. */
+    if (thinking || !changed || estimated_pan || estimated_pitch ||
+        io->pose_pan.target || io->pose_pitch.target)
+        submit_planned_move(io, pan, pitch, estimated_pan, estimated_pitch, duration,
+                            DIALOGUE_MAX_STEP * 1000U / CONTROL_PERIOD_MS);
+    io->planned_pan = pan;
+    io->planned_pitch = pitch;
+    io->target_attempted = thinking;
+    if (down)
+        io->motion_due = now + CONTROL_PERIOD_MS;
+    else if (!thinking)
+        io->motion_due = now + LISTENING_INTERVAL_MS - ((now - s_gimbal.phase_at) % LISTENING_INTERVAL_MS);
+}
+
 static void service_motion(gimbal_io_t *io, uint32_t now)
 {
     cancel_superseded_motion(io, now);
@@ -1126,6 +1154,10 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
         }
         break;
     case MOTION_DIALOGUE:
+        if (s_gimbal.phase == BK7259_GIMBAL_PHASE_THINKING || s_gimbal.phase == BK7259_GIMBAL_PHASE_LISTENING) {
+            service_dialogue_leg(io, now, changed, estimated_pan, estimated_pitch);
+            return;
+        }
         if (io->opening) {
             keyed = path_target(io, path, &pan, &pitch, &interval);
             if (!keyed) {
@@ -1134,8 +1166,14 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
                 start_blend(io, request, now, estimated_pan, estimated_pitch);
             }
         }
-        if (!keyed)
-            dialogue_target(now, &pan, &pitch, &interval);
+        if (!keyed) {
+            if (s_gimbal.phase == BK7259_GIMBAL_PHASE_SPEAKING) {
+                uint32_t phase_ms = (now - s_gimbal.phase_at) % SPEAKING_PERIOD_MS;
+                pan = angle_units(6.0f * sinf(2.0f * 3.14159265359f * phase_ms / SPEAKING_PERIOD_MS));
+            } else {
+                interval = IDLE_WAIT_MS;
+            }
+        }
         break;
     case MOTION_NONE:
         return;
@@ -1181,36 +1219,17 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
     if (!terminal_target && same_point && (io->attempted_point || last_goal_matches))
         return;
 
-    unsigned int pan_distance = (unsigned int)abs(pan - estimated_pan);
-    unsigned int pitch_distance = (unsigned int)abs(pitch - estimated_pitch);
-    unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
     unsigned int rate = request->kind == MOTION_DIALOGUE && !keyed
                         ? DIALOGUE_MAX_STEP * 1000U / CONTROL_PERIOD_MS : MOTION_LIMIT_TENTHS_PER_S;
-    /* EB521 executes an integer number of milliseconds per degree. Round
-     * that bound up so a catch-up move also respects the configured rate. */
-    uint32_t min_ms_per_degree = (10000U + rate - 1U) / rate;
-    uint32_t travel_ms = (distance * min_ms_per_degree + 9U) / 10U;
-    if (travel_ms < interval)
-        travel_ms = interval;
-    uint16_t pan_speed = choose_speed(pan_distance, travel_ms);
-    uint16_t pitch_speed = choose_speed(pitch_distance, travel_ms);
-    uint32_t window = arrival_window(pan_distance, pitch_distance, pan_speed, pitch_speed);
     io->attempted_point = true;
     io->target_attempted = terminal_target;
-    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed, window);
-    uint32_t attempted_at = submitted ? io->last_tx_return_at : rtos_get_time();
-    io->motion_due = attempted_at + (submitted ? travel_ms : interval);
-    if (!submitted) {
-        io->has_motion_attempt = true;
-        io->motion_attempt_at = attempted_at;
-        if (terminal_target)
+    bool submitted = submit_planned_move(io, pan, pitch, estimated_pan, estimated_pitch, interval, rate);
+    if (terminal_target) {
+        if (submitted)
+            MYBOT_LOGI(TAG, "absolute movement sent: pan=%d pitch=%d", pan, pitch);
+        else
             MYBOT_LOGW(TAG, "absolute target not submitted: pan=%d pitch=%d", pan, pitch);
-        return;
     }
-
-    await_motion_arrival(io, pan, pitch, pan_speed, pitch_speed, window);
-    if (terminal_target)
-        MYBOT_LOGI(TAG, "absolute movement sent: pan=%d pitch=%d", pan, pitch);
 }
 
 /* Timed dialogue stages drive the same mailbox transitions as live dialogue.
