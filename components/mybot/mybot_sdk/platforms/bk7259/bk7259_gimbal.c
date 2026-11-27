@@ -26,6 +26,9 @@
 #define STOP_TIMEOUT_MS 3000U
 #define TEST_START_DELAY_MS 10000U
 #define TEST_HOME_TIMEOUT_MS 5000U
+#define LIMIT_DWELL_MS 500U
+#define LIMIT_PPS 1000U
+#define LIMIT_DIAGONAL_PITCH_PPS 250U
 #define HOME_PERIOD_MS 1000U
 #define HOME_RESPONSE_MS 900U
 #define HOME_GUARD_MS 250U
@@ -43,7 +46,7 @@
 #define MOTION_BLEND_MS 240U
 #define MOTION_LIMIT_TENTHS_PER_S 1600U
 #define LISTENING_INTERVAL_MS 3500U
-#define LISTENING_NOD_MS 1120U
+#define LISTENING_LEG_MS 560U
 #define THINKING_TURN_MS 700U
 #define SPEAKING_PERIOD_MS 1250U
 #define EB521_MOVE 0x61
@@ -88,6 +91,8 @@ typedef struct {
         bk7259_gimbal_test_stage_t stage;
         uint32_t due_at;
         uint32_t expected_home;
+        unsigned limit_index;
+        uint32_t limit_sent_at;
         bk7259_gimbal_stats_snapshot_t result;
     } test;
     uint32_t settings_revision;
@@ -133,6 +138,7 @@ typedef struct {
     bool home_sent;
     bool disable_home_sent;
     bool sent_ordinary_motion;
+    bool confirmed_at_center;
     bool recent_ordinary_zero;
     uint32_t ordinary_zero_at;
 
@@ -305,10 +311,10 @@ static bool send_frame(gimbal_io_t *io, uint8_t command, const uint8_t *payload,
     return true;
 }
 
-static bool send_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch,
-                      uint16_t pan_speed, uint16_t pitch_speed, uint32_t arrival_window_ms)
+static bool write_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch,
+                       uint16_t pan_speed, uint16_t pitch_speed, uint32_t arrival_window_ms)
 {
-    if (pan < -PAN_LIMIT || pan > PAN_LIMIT || pitch < PITCH_UP_LIMIT || pitch > PITCH_DOWN_LIMIT)
+    if (pan < -900 || pan > 900 || pitch < -300 || pitch > 150)
         return false;
     uint8_t payload[8];
     write_u16(payload, (uint16_t)pan);
@@ -321,6 +327,14 @@ static bool send_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_
     }
     bk7259_gimbal_stats_tx(&s_gimbal.stats, io->last_tx_return_at, group, pan, pitch, arrival_window_ms);
     return true;
+}
+
+static bool send_move(gimbal_io_t *io, bk7259_gimbal_stats_group_t group, int16_t pan, int16_t pitch,
+                      uint16_t pan_speed, uint16_t pitch_speed, uint32_t arrival_window_ms)
+{
+    if (pan < -PAN_LIMIT || pan > PAN_LIMIT || pitch < PITCH_UP_LIMIT || pitch > PITCH_DOWN_LIMIT)
+        return false;
+    return write_move(io, group, pan, pitch, pan_speed, pitch_speed, arrival_window_ms);
 }
 
 static bool send_home(gimbal_io_t *io)
@@ -346,13 +360,29 @@ static bool test_active(void)
            s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING;
 }
 
+static bool limit_running(void)
+{
+    return s_gimbal.test.result.limit_test && s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING;
+}
+
+static bk7259_gimbal_limit_step_t *limit_step(void)
+{
+    return &s_gimbal.stats.snapshot.limit_steps[s_gimbal.test.limit_index];
+}
+
 static void finish_test(bk7259_gimbal_test_state_t state, uint32_t now)
 {
     if (!test_active())
         return;
     if (s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING) {
-        if (state == BK7259_GIMBAL_TEST_INTERRUPTED)
+        if (state == BK7259_GIMBAL_TEST_INTERRUPTED) {
             bk7259_gimbal_stats_cancel_test_arrivals(&s_gimbal.stats, now);
+            if (limit_running() && limit_step()->result == BK7259_GIMBAL_LIMIT_PENDING) {
+                bool expired = (int32_t)(now - s_gimbal.test.due_at) > 0;
+                limit_step()->result = expired ? BK7259_GIMBAL_LIMIT_TIMEOUT : BK7259_GIMBAL_LIMIT_CANCELLED;
+                bk7259_gimbal_stats_cancel_arrival(&s_gimbal.stats, s_gimbal.test.limit_sent_at);
+            }
+        }
         bk7259_gimbal_stats_snapshot(&s_gimbal.stats, now, &s_gimbal.test.result);
         bk7259_gimbal_stats_stage(&s_gimbal.stats, BK7259_GIMBAL_TEST_NONE);
         s_gimbal.conversation = false;
@@ -475,6 +505,33 @@ static void record_pose_command(gimbal_io_t *io, uint32_t now, int16_t target_pa
     io->pose_started_at = now;
 }
 
+static void await_motion_arrival(gimbal_io_t *io, int16_t pan, int16_t pitch,
+                                 uint16_t pan_pps, uint16_t pitch_pps, uint32_t window)
+{
+    record_pose_command(io, io->last_tx_return_at, pan, pitch, pan_pps, pitch_pps);
+    io->motion_attempt_at = io->last_tx_return_at;
+    io->has_motion_attempt = true;
+    io->motion_arrival_window_ms = window;
+    io->waiting_motion_ack = true;
+    io->sent_ordinary_motion = true;
+    io->confirmed_at_center = false;
+    if (pan == 0 && pitch == 0) {
+        io->recent_ordinary_zero = true;
+        io->ordinary_zero_at = io->last_tx_return_at;
+    }
+}
+
+static uint32_t arrival_window(unsigned pan_distance, unsigned pitch_distance,
+                               uint16_t pan_pps, uint16_t pitch_pps)
+{
+    uint32_t pan_ms = (pan_distance * (5000U / pan_pps) + 9U) / 10U;
+    uint32_t pitch_ms = (pitch_distance * (5000U / pitch_pps) + 9U) / 10U;
+    uint32_t window = (pan_ms > pitch_ms ? pan_ms : pitch_ms) + ARRIVAL_MARGIN_MS;
+    if (window < BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS)
+        return BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS;
+    return window < BK7259_GIMBAL_ARRIVAL_MAX_MS ? window : BK7259_GIMBAL_ARRIVAL_MAX_MS;
+}
+
 static void confirm_home(gimbal_io_t *io)
 {
     ++s_gimbal.stats.snapshot.center_confirmed;
@@ -482,6 +539,7 @@ static void confirm_home(gimbal_io_t *io)
     s_gimbal.centered_ticket = s_gimbal.home_ticket;
     io->home_waiting = false;
     io->sent_ordinary_motion = false;
+    io->confirmed_at_center = true;
     io->recent_ordinary_zero = false;
     io->pose_pan = (pose_axis_t){0};
     io->pose_pitch = (pose_axis_t){0};
@@ -512,6 +570,26 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
         bk7259_gimbal_stats_reply(&s_gimbal.stats, now, code, pan, pitch, allow_home_arrival);
     if (!s_gimbal.settings.motion_enabled)
         return;
+    if (limit_running() && matched && matched->group == BK7259_GIMBAL_STATS_NORMAL &&
+        matched->sent_at == s_gimbal.test.limit_sent_at && limit_step()->result == BK7259_GIMBAL_LIMIT_PENDING) {
+        bk7259_gimbal_limit_step_t *step = limit_step();
+        uint16_t elapsed = (uint16_t)(now - matched->sent_at);
+        bool unique_short = immediate && !matched->overlapping && !matched->short_uncertain;
+        if ((unique_short || (code == 4 && matched->arrived)) && !step->has_ack) {
+            step->ack_ms = elapsed;
+            step->has_ack = true;
+        }
+        if (matched->arrived && (code == 4 || complete)) {
+            step->arrival_ms = elapsed;
+            step->has_arrival = true;
+            step->result = BK7259_GIMBAL_LIMIT_REACHED;
+            s_gimbal.test.due_at = now + LIMIT_DWELL_MS;
+        } else if (unique_short && (code == 1 || code == 2)) {
+            step->result = BK7259_GIMBAL_LIMIT_REJECTED;
+            recover_home(now);
+            return;
+        }
+    }
     if (code == 1) {
         io->home_waiting = false;
         if (s_gimbal.ready) {
@@ -527,6 +605,7 @@ static void on_move_reply(gimbal_io_t *io, const uint8_t *frame, size_t size, ui
         matched->sent_at == io->motion_attempt_at) {
         if (matched->arrived && (code == 4 || complete)) {
             io->waiting_motion_ack = false;
+            io->confirmed_at_center = matched->pan == 0 && matched->pitch == 0;
             io->pose_pan = (pose_axis_t){.start = matched->pan, .target = matched->pan};
             io->pose_pitch = (pose_axis_t){.start = matched->pitch, .target = matched->pitch};
         } else if (code == 2 && !matched->overlapping && !matched->short_uncertain) {
@@ -751,32 +830,6 @@ static int16_t angle_units(float degrees)
     return (int16_t)(units >= 0 ? units + 0.5f : units - 0.5f);
 }
 
-static void dialogue_target(uint32_t now, int16_t *pan, int16_t *pitch, uint32_t *wait)
-{
-    const float turn = 2.0f * 3.14159265359f;
-    uint32_t elapsed = now - s_gimbal.phase_at;
-    switch (s_gimbal.phase) {
-    case BK7259_GIMBAL_PHASE_LISTENING: {
-        uint32_t cycle = elapsed % LISTENING_INTERVAL_MS;
-        if (elapsed >= LISTENING_INTERVAL_MS && cycle < LISTENING_NOD_MS) {
-            *pitch = angle_units(1.5f * (1.0f - cosf(turn * cycle / LISTENING_NOD_MS)));
-        } else {
-            *wait = LISTENING_INTERVAL_MS - cycle;
-        }
-        break;
-    }
-    case BK7259_GIMBAL_PHASE_THINKING:
-        *pan = angle_units(12.0f * smooth((float)elapsed / THINKING_TURN_MS));
-        break;
-    case BK7259_GIMBAL_PHASE_SPEAKING:
-        *pan = angle_units(6.0f * sinf(turn * (elapsed % SPEAKING_PERIOD_MS) / SPEAKING_PERIOD_MS));
-        break;
-    case BK7259_GIMBAL_PHASE_NEUTRAL:
-        *wait = IDLE_WAIT_MS;
-        break;
-    }
-}
-
 typedef enum { PATH_OPENING, PATH_ANGRY, PATH_SURPRISED } path_kind_t;
 
 typedef struct {
@@ -987,6 +1040,60 @@ static void start_blend(gimbal_io_t *io, const motion_request_t *request, uint32
     }
 }
 
+static bool submit_planned_move(gimbal_io_t *io, int16_t pan, int16_t pitch,
+                                int16_t estimated_pan, int16_t estimated_pitch,
+                                uint32_t interval, unsigned int rate)
+{
+    unsigned int pan_distance = (unsigned int)abs(pan - estimated_pan);
+    unsigned int pitch_distance = (unsigned int)abs(pitch - estimated_pitch);
+    unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
+    /* EB521 executes an integer number of milliseconds per degree. Round
+     * that bound up so a catch-up move also respects the configured rate. */
+    uint32_t min_ms_per_degree = (10000U + rate - 1U) / rate;
+    uint32_t travel_ms = (distance * min_ms_per_degree + 9U) / 10U;
+    if (travel_ms < interval)
+        travel_ms = interval;
+    uint16_t pan_speed = choose_speed(pan_distance, travel_ms);
+    uint16_t pitch_speed = choose_speed(pitch_distance, travel_ms);
+    uint32_t window = arrival_window(pan_distance, pitch_distance, pan_speed, pitch_speed);
+    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed, window);
+    uint32_t attempted_at = submitted ? io->last_tx_return_at : rtos_get_time();
+    io->motion_due = attempted_at + (submitted ? travel_ms : interval);
+    if (submitted) {
+        await_motion_arrival(io, pan, pitch, pan_speed, pitch_speed, window);
+    } else {
+        io->has_motion_attempt = true;
+        io->motion_attempt_at = attempted_at;
+    }
+    return submitted;
+}
+
+/* Thinking has one endpoint. Listening starts at center and alternates down
+ * and back; its next nod stays anchored to the start of the listening phase. */
+static void service_dialogue_leg(gimbal_io_t *io, uint32_t now, bool changed,
+                                 int16_t estimated_pan, int16_t estimated_pitch)
+{
+    bool thinking = s_gimbal.phase == BK7259_GIMBAL_PHASE_THINKING;
+    bool down = !thinking && !changed && io->planned_pitch == 0;
+    int16_t pan = thinking ? 120 : 0;
+    int16_t pitch = down ? 30 : 0;
+    uint32_t duration = thinking ? THINKING_TURN_MS : LISTENING_LEG_MS;
+
+    /* A phase takeover can find the previous goal still moving away from
+     * the estimated pose. Send the new endpoint even if that pose is zero. */
+    if (thinking || !changed || estimated_pan || estimated_pitch ||
+        io->pose_pan.target || io->pose_pitch.target)
+        submit_planned_move(io, pan, pitch, estimated_pan, estimated_pitch, duration,
+                            DIALOGUE_MAX_STEP * 1000U / CONTROL_PERIOD_MS);
+    io->planned_pan = pan;
+    io->planned_pitch = pitch;
+    io->target_attempted = thinking;
+    if (down)
+        io->motion_due = now + CONTROL_PERIOD_MS;
+    else if (!thinking)
+        io->motion_due = now + LISTENING_INTERVAL_MS - ((now - s_gimbal.phase_at) % LISTENING_INTERVAL_MS);
+}
+
 static void service_motion(gimbal_io_t *io, uint32_t now)
 {
     cancel_superseded_motion(io, now);
@@ -1047,6 +1154,10 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
         }
         break;
     case MOTION_DIALOGUE:
+        if (s_gimbal.phase == BK7259_GIMBAL_PHASE_THINKING || s_gimbal.phase == BK7259_GIMBAL_PHASE_LISTENING) {
+            service_dialogue_leg(io, now, changed, estimated_pan, estimated_pitch);
+            return;
+        }
         if (io->opening) {
             keyed = path_target(io, path, &pan, &pitch, &interval);
             if (!keyed) {
@@ -1055,8 +1166,14 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
                 start_blend(io, request, now, estimated_pan, estimated_pitch);
             }
         }
-        if (!keyed)
-            dialogue_target(now, &pan, &pitch, &interval);
+        if (!keyed) {
+            if (s_gimbal.phase == BK7259_GIMBAL_PHASE_SPEAKING) {
+                uint32_t phase_ms = (now - s_gimbal.phase_at) % SPEAKING_PERIOD_MS;
+                pan = angle_units(6.0f * sinf(2.0f * 3.14159265359f * phase_ms / SPEAKING_PERIOD_MS));
+            } else {
+                interval = IDLE_WAIT_MS;
+            }
+        }
         break;
     case MOTION_NONE:
         return;
@@ -1102,49 +1219,17 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
     if (!terminal_target && same_point && (io->attempted_point || last_goal_matches))
         return;
 
-    unsigned int pan_distance = (unsigned int)abs(pan - estimated_pan);
-    unsigned int pitch_distance = (unsigned int)abs(pitch - estimated_pitch);
-    unsigned int distance = pan_distance > pitch_distance ? pan_distance : pitch_distance;
     unsigned int rate = request->kind == MOTION_DIALOGUE && !keyed
                         ? DIALOGUE_MAX_STEP * 1000U / CONTROL_PERIOD_MS : MOTION_LIMIT_TENTHS_PER_S;
-    /* EB521 executes an integer number of milliseconds per degree. Round
-     * that bound up so a catch-up move also respects the configured rate. */
-    uint32_t min_ms_per_degree = (10000U + rate - 1U) / rate;
-    uint32_t travel_ms = (distance * min_ms_per_degree + 9U) / 10U;
-    if (travel_ms < interval)
-        travel_ms = interval;
-    uint16_t pan_speed = choose_speed(pan_distance, travel_ms);
-    uint16_t pitch_speed = choose_speed(pitch_distance, travel_ms);
-    uint32_t pan_ms = (pan_distance * (5000U / pan_speed) + 9U) / 10U;
-    uint32_t pitch_ms = (pitch_distance * (5000U / pitch_speed) + 9U) / 10U;
-    uint32_t window = (pan_ms > pitch_ms ? pan_ms : pitch_ms) + ARRIVAL_MARGIN_MS;
-    if (window < BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS)
-        window = BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS;
-    if (window > BK7259_GIMBAL_ARRIVAL_MAX_MS)
-        window = BK7259_GIMBAL_ARRIVAL_MAX_MS;
     io->attempted_point = true;
     io->target_attempted = terminal_target;
-    bool submitted = send_move(io, BK7259_GIMBAL_STATS_NORMAL, pan, pitch, pan_speed, pitch_speed, window);
-    uint32_t attempted_at = submitted ? io->last_tx_return_at : rtos_get_time();
-    io->has_motion_attempt = true;
-    io->motion_attempt_at = attempted_at;
-    io->motion_due = attempted_at + (submitted ? travel_ms : interval);
-    if (!submitted) {
-        if (terminal_target)
+    bool submitted = submit_planned_move(io, pan, pitch, estimated_pan, estimated_pitch, interval, rate);
+    if (terminal_target) {
+        if (submitted)
+            MYBOT_LOGI(TAG, "absolute movement sent: pan=%d pitch=%d", pan, pitch);
+        else
             MYBOT_LOGW(TAG, "absolute target not submitted: pan=%d pitch=%d", pan, pitch);
-        return;
     }
-
-    record_pose_command(io, attempted_at, pan, pitch, pan_speed, pitch_speed);
-    io->motion_arrival_window_ms = window;
-    io->waiting_motion_ack = true;
-    io->sent_ordinary_motion = true;
-    if (pan == 0 && pitch == 0) {
-        io->recent_ordinary_zero = true;
-        io->ordinary_zero_at = attempted_at;
-    }
-    if (terminal_target)
-        MYBOT_LOGI(TAG, "absolute movement sent: pan=%d pitch=%d", pan, pitch);
 }
 
 /* Timed dialogue stages drive the same mailbox transitions as live dialogue.
@@ -1191,20 +1276,102 @@ static void reset_stats_window(uint32_t now)
     s_gimbal.stats_has_tx = false;
 }
 
-static void service_test(uint32_t now)
+/* Absolute angles in tenths of a degree. On a corner-to-corner stroke,
+ * 180 degrees of pan at 1000 PPS and 45 degrees of pitch at 250 PPS both take 900 ms. */
+static const struct {
+    int16_t pan, pitch;
+    uint16_t pitch_pps;
+} k_limit_targets[BK7259_GIMBAL_LIMIT_STEP_COUNT] = {
+    {0, -300, LIMIT_PPS}, {0, 0, LIMIT_PPS},
+    {0,  150, LIMIT_PPS}, {0, 0, LIMIT_PPS},
+    {-900, 0, LIMIT_PPS}, {0, 0, LIMIT_PPS},
+    { 900, 0, LIMIT_PPS}, {0, 0, LIMIT_PPS},
+    {-900, -300, LIMIT_PPS}, { 900,  150, LIMIT_DIAGONAL_PITCH_PPS},
+    { 900, -300, LIMIT_PPS}, {-900,  150, LIMIT_DIAGONAL_PITCH_PPS},
+    { 900,  150, LIMIT_PPS}, {-900, -300, LIMIT_DIAGONAL_PITCH_PPS},
+    {-900,  150, LIMIT_PPS}, { 900, -300, LIMIT_DIAGONAL_PITCH_PPS},
+    {0, 0, LIMIT_PPS},
+};
+
+static void service_limit_test(gimbal_io_t *io, uint32_t now)
+{
+    bk7259_gimbal_limit_step_t *step = limit_step();
+    if (step->result == BK7259_GIMBAL_LIMIT_PENDING) {
+        /* RX has already been drained, including replies at the deadline. */
+        if ((int32_t)(now - s_gimbal.test.due_at) <= 0)
+            return;
+        step->result = BK7259_GIMBAL_LIMIT_TIMEOUT;
+        bk7259_gimbal_stats_expire_arrival(&s_gimbal.stats, s_gimbal.test.limit_sent_at);
+        recover_home(now);
+        return;
+    }
+    if (step->result == BK7259_GIMBAL_LIMIT_REACHED) {
+        if (!due(now, s_gimbal.test.due_at))
+            return;
+        if (s_gimbal.test.limit_index + 1U == BK7259_GIMBAL_LIMIT_STEP_COUNT) {
+            finish_test(BK7259_GIMBAL_TEST_COMPLETED, now);
+            return;
+        }
+        ++s_gimbal.test.limit_index;
+        step = limit_step();
+    }
+    if (!tx_ready(io, EB521_MOVE))
+        return;
+    /* Each step begins at a confirmed endpoint, including the initial center. */
+    unsigned pan_distance = (unsigned)abs(step->pan - io->pose_pan.target);
+    unsigned pitch_distance = (unsigned)abs(step->pitch - io->pose_pitch.target);
+    uint32_t window = arrival_window(pan_distance, pitch_distance, step->pan_pps, step->pitch_pps);
+    if (!write_move(io, BK7259_GIMBAL_STATS_NORMAL, step->pan, step->pitch,
+                    step->pan_pps, step->pitch_pps, window)) {
+        step->result = BK7259_GIMBAL_LIMIT_TX_FAILED;
+        recover_home(rtos_get_time());
+        return;
+    }
+    step->tx = 1;
+    step->result = BK7259_GIMBAL_LIMIT_PENDING;
+    s_gimbal.test.limit_sent_at = io->last_tx_return_at;
+    s_gimbal.test.due_at = io->last_tx_return_at + window;
+    io->motion_revision = s_gimbal.motion.revision;
+    await_motion_arrival(io, step->pan, step->pitch, step->pan_pps, step->pitch_pps, window);
+}
+
+static void service_test(gimbal_io_t *io, uint32_t now)
 {
     if (!test_active())
         return;
     if (s_gimbal.test.state == BK7259_GIMBAL_TEST_SCHEDULED) {
-        if (!due(now, s_gimbal.test.due_at))
+        if (s_gimbal.test.expected_home) {
+            if (!s_gimbal.ready) {
+                if (due(now, s_gimbal.test.due_at))
+                    finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, now);
+                return;
+            }
+        } else if (!due(now, s_gimbal.test.due_at)) {
             return;
+        }
         if (!s_gimbal.ready || !s_gimbal.accepting) {
             finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, now);
             return;
         }
+        if (s_gimbal.test.result.limit_test && !io->confirmed_at_center) {
+            start_home();
+            s_gimbal.test.expected_home = s_gimbal.home_ticket;
+            s_gimbal.test.due_at = now + TEST_HOME_TIMEOUT_MS;
+            return;
+        }
         reset_stats_window(now);
         s_gimbal.test.state = BK7259_GIMBAL_TEST_RUNNING;
-        enter_test_stage(BK7259_GIMBAL_TEST_OPENING, now);
+        if (s_gimbal.test.result.limit_test) {
+            s_gimbal.stats.snapshot.limit_test = true;
+            memcpy(s_gimbal.stats.snapshot.limit_steps, s_gimbal.test.result.limit_steps,
+                   sizeof(s_gimbal.stats.snapshot.limit_steps));
+        } else {
+            enter_test_stage(BK7259_GIMBAL_TEST_OPENING, now);
+        }
+        return;
+    }
+    if (limit_running()) {
+        service_limit_test(io, now);
         return;
     }
     bk7259_gimbal_test_stage_t stage = s_gimbal.test.stage;
@@ -1274,18 +1441,18 @@ static void worker(void *arg)
             unlock();
             break;
         }
-        service_test(now);
+        service_test(&io, now);
         sync_home(&io, now);
         if (!s_gimbal.stopping && s_gimbal.settings.motion_enabled) {
-            if (s_gimbal.ready) {
+            if (s_gimbal.ready && !limit_running()) {
                 service_motion(&io, now);
-            } else {
+            } else if (!s_gimbal.ready) {
                 io.opening = false;
                 service_home(&io, now);
             }
         }
         bool motion_work = s_gimbal.settings.motion_enabled &&
-                           (!s_gimbal.ready || s_gimbal.motion.kind != MOTION_NONE);
+                           (!s_gimbal.ready || s_gimbal.motion.kind != MOTION_NONE || limit_running());
         unsigned wait = io.charge_waiting || motion_work ? RX_POLL_MS : IDLE_WAIT_MS;
         bk7259_gimbal_settings_t settings = s_gimbal.settings;
         uint32_t settings_revision = s_gimbal.settings_revision;
@@ -1433,7 +1600,9 @@ int bk7259_gimbal_update_dialogue(bool active, bk7259_gimbal_phase_t phase)
         unlock();
         return active ? -1 : 0;
     }
-    if (test_active())
+    if (limit_running())
+        recover_home(rtos_get_time());
+    else if (test_active())
         finish_test(BK7259_GIMBAL_TEST_INTERRUPTED, rtos_get_time());
     int result = update_dialogue(active, phase, rtos_get_time());
     unlock();
@@ -1665,7 +1834,7 @@ int bk7259_gimbal_reset_stats(void)
     return result;
 }
 
-int bk7259_gimbal_schedule_test(void)
+static int schedule_test(bool limits)
 {
     if (!mailbox_initialized() || rtos_lock_mutex(&s_lock) != BK_OK)
         return -1;
@@ -1674,12 +1843,32 @@ int bk7259_gimbal_schedule_test(void)
         result = BK7259_GIMBAL_BUSY;
     if (result == 0) {
         memset(&s_gimbal.test, 0, sizeof(s_gimbal.test));
+        if (limits) {
+            s_gimbal.test.result.limit_test = true;
+            for (unsigned i = 0; i < BK7259_GIMBAL_LIMIT_STEP_COUNT; ++i) {
+                bk7259_gimbal_limit_step_t *step = &s_gimbal.test.result.limit_steps[i];
+                step->pan = k_limit_targets[i].pan;
+                step->pitch = k_limit_targets[i].pitch;
+                step->pan_pps = LIMIT_PPS;
+                step->pitch_pps = k_limit_targets[i].pitch_pps;
+            }
+        }
         s_gimbal.test.state = BK7259_GIMBAL_TEST_SCHEDULED;
         s_gimbal.test.due_at = rtos_get_time() + TEST_START_DELAY_MS;
         notify(&s_wake);
     }
     unlock();
     return result;
+}
+
+int bk7259_gimbal_schedule_test(void)
+{
+    return schedule_test(false);
+}
+
+int bk7259_gimbal_schedule_limit_test(void)
+{
+    return schedule_test(true);
 }
 
 static int wait_for_charge_off(uint32_t ticket, uint32_t timeout_ms)

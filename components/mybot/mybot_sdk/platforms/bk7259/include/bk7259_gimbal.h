@@ -83,6 +83,27 @@ typedef enum {
     BK7259_GIMBAL_TEST_INTERRUPTED
 } bk7259_gimbal_test_state_t;
 
+#define BK7259_GIMBAL_LIMIT_STEP_COUNT 17U
+
+typedef enum {
+    BK7259_GIMBAL_LIMIT_NOT_RUN,
+    BK7259_GIMBAL_LIMIT_PENDING,
+    BK7259_GIMBAL_LIMIT_REACHED,
+    BK7259_GIMBAL_LIMIT_TIMEOUT,
+    BK7259_GIMBAL_LIMIT_REJECTED,
+    BK7259_GIMBAL_LIMIT_TX_FAILED,
+    BK7259_GIMBAL_LIMIT_CANCELLED,
+} bk7259_gimbal_limit_result_t;
+
+typedef struct {
+    int16_t pan, pitch; /* Absolute targets in tenths of a degree. */
+    uint16_t pan_pps, pitch_pps;
+    uint16_t ack_ms, arrival_ms;
+    uint8_t result; /* bk7259_gimbal_limit_result_t */
+    uint8_t tx;
+    bool has_ack, has_arrival;
+} bk7259_gimbal_limit_step_t;
+
 typedef struct {
     uint32_t tx, accepted, rejected, expired, overflow, tx_failed;
     bk7259_gimbal_arrival_counts_t arrival;
@@ -125,6 +146,8 @@ typedef struct {
 typedef struct {
     bk7259_gimbal_test_state_t test_state;
     bk7259_gimbal_test_stage_t test_stage;
+    bool limit_test;
+    bk7259_gimbal_limit_step_t limit_steps[BK7259_GIMBAL_LIMIT_STEP_COUNT];
     bk7259_gimbal_test_counts_t test_counts[BK7259_GIMBAL_TEST_STAGE_COUNT];
     bk7259_gimbal_stats_counts_t groups[BK7259_GIMBAL_STATS_GROUP_COUNT];
     bk7259_gimbal_power_stats_t power;
@@ -174,6 +197,7 @@ int bk7259_gimbal_request_probe(void);
 int bk7259_gimbal_get_stats(bk7259_gimbal_stats_snapshot_t *out);
 int bk7259_gimbal_reset_stats(void);
 int bk7259_gimbal_schedule_test(void);
+int bk7259_gimbal_schedule_limit_test(void);
 /* Cancel motion and wait for confirmed center. Skips centering while disabled. */
 int bk7259_gimbal_center_wait(uint32_t timeout_ms);
 /* Publish requested policies without waiting for flash or UART. Switching
@@ -198,6 +222,7 @@ static inline int bk7259_gimbal_get_stats(bk7259_gimbal_stats_snapshot_t *out)
 { (void)out; return -1; }
 static inline int bk7259_gimbal_reset_stats(void) { return -1; }
 static inline int bk7259_gimbal_schedule_test(void) { return -1; }
+static inline int bk7259_gimbal_schedule_limit_test(void) { return -1; }
 static inline int bk7259_gimbal_request(bk7259_gimbal_scene_t scene)
 { (void)scene; return 0; }
 static inline int bk7259_gimbal_center_wait(uint32_t timeout_ms)
