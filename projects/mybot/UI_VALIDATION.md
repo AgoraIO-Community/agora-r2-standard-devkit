@@ -8,7 +8,7 @@ This page records the current reproducible checks and remaining release blockers
 It replaces the former chronological development log. Older intermediate
 diagnostics remain available in Git history and are not current instructions.
 
-On 2026-11-26, the Chinese and English video builds passed with EB521 V1.2
+On 2026-11-27, the Chinese and English video builds passed with EB521 V1.2
 enabled. On an earlier hardware test image, two consecutive `happy` runs completed
 and returned to center. The current builds still require board validation.
 
@@ -38,13 +38,13 @@ The build script verified the generated configuration and service endpoint for e
 
 | Item | Chinese | English |
 | --- | ---: | ---: |
-| AP Flash | 1,960,112 B | 1,960,104 B |
-| AP RAM | 164,724 B | 164,724 B |
+| AP Flash | 1,959,504 B | 1,959,496 B |
+| AP RAM | 164,708 B | 164,708 B |
 | AP DTCM | 35,744 B | 35,744 B |
 | CP Flash | 1,295,948 B | 1,295,948 B |
-| Combined image | 3,467,456 B | 3,467,456 B |
-| OTA package | 2,076,624 B | 2,076,224 B |
-| OTA headroom | 20,528 B | 20,928 B |
+| Combined image | 3,466,848 B | 3,466,848 B |
+| OTA package | 2,076,080 B | 2,075,728 B |
+| OTA headroom | 21,072 B | 21,424 B |
 
 ## Host Test Matrix
 
@@ -75,7 +75,7 @@ Coverage includes:
 - EB521 V1.2 probing, four motion scenes, motion ACK matching and the 250 ms timeout, charging
   heartbeats during motion, charge-stop fencing, and worker cleanup.
 
-All nine product host suites and 21 build-tool tests passed.
+All eight product host suites passed in a serial run. An earlier gimbal run recorded fewer than six alternating peaks in the four-second speaking test. All 21 build-tool tests passed.
 
 ## Release Blockers
 

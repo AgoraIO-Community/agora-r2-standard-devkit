@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_gimbal.h"
-#include "bk7259_audio_dialogue.h"
 #include "bk7259_gimbal_prefs.h"
 #include "bk7259_gimbal_stats.h"
 #include "bk7259_platform_log.h"
@@ -46,9 +45,8 @@
 #define LISTENING_NOD_MS 1120U
 #define THINKING_TURN_MS 700U
 #define THINKING_HOLD_MS 3000U
-#define WOBBLE_PERIOD_MS 1250U
+#define SPEAKING_PERIOD_MS 1250U
 #define PROCESSING_PERIOD_MS 3000U
-#define SPEAKING_ENVELOPE_MS 80U
 #define EB521_MOVE 0x61
 #define EB521_CHARGE 0x66
 #define EB521_MOVE_REPLY 0xe1
@@ -176,8 +174,6 @@ typedef struct {
     uint32_t blend_ms;
     int16_t blend_pan;
     int16_t blend_pitch;
-    float speaking_amplitude;
-    uint32_t envelope_at;
 } gimbal_io_t;
 
 static gimbal_context_t s_gimbal;
@@ -382,9 +378,6 @@ static int update_dialogue(bool active, bk7259_gimbal_phase_t phase, uint32_t no
         s_gimbal.conversation = active;
         s_gimbal.phase = phase;
         s_gimbal.phase_at = now;
-        bk7259_audio_dialogue_set_speaking(active && s_gimbal.test.state != BK7259_GIMBAL_TEST_RUNNING &&
-                                           s_gimbal.settings.motion_enabled &&
-                                           phase == BK7259_GIMBAL_PHASE_SPEAKING);
         if (ended) {
             if (s_gimbal.ready) {
                 start_home();
@@ -478,7 +471,6 @@ static void confirm_home(gimbal_io_t *io)
     io->pose_pitch = (pose_axis_t){0};
     io->has_motion_attempt = false;
     io->waiting_motion_ack = false;
-    io->speaking_amplitude = 0;
     /* Timing starts here after returning from an offline interval. */
     s_gimbal.phase_at = rtos_get_time();
     io->pose_started_at = s_gimbal.phase_at;
@@ -734,8 +726,7 @@ static int16_t angle_units(float degrees)
     return (int16_t)(units >= 0 ? units + 0.5f : units - 0.5f);
 }
 
-static void dialogue_target(gimbal_io_t *io, uint32_t now, int16_t *pan, int16_t *pitch,
-                            uint32_t *wait)
+static void dialogue_target(uint32_t now, int16_t *pan, int16_t *pitch, uint32_t *wait)
 {
     const float turn = 2.0f * 3.14159265359f;
     uint32_t elapsed = now - s_gimbal.phase_at;
@@ -764,23 +755,9 @@ static void dialogue_target(gimbal_io_t *io, uint32_t now, int16_t *pan, int16_t
             *pan = angle_units(15.0f * (1.0f - blend) + sway * blend);
         }
         break;
-    case BK7259_GIMBAL_PHASE_SPEAKING: {
-        unsigned level;
-        if (s_gimbal.test.state == BK7259_GIMBAL_TEST_RUNNING)
-            level = elapsed < 1400U ? 30U : elapsed < 3200U ? 95U : 0U;
-        else
-            level = bk7259_audio_dialogue_level();
-        if (level > 100)
-            level = 100;
-        uint32_t sample_ms = now - io->envelope_at;
-        io->envelope_at = now;
-        float desired = 0.06f * level;
-        io->speaking_amplitude += (desired - io->speaking_amplitude) *
-                                  ((float)sample_ms / ((float)sample_ms + SPEAKING_ENVELOPE_MS));
-        *pan = angle_units(io->speaking_amplitude * sinf(turn * (elapsed % WOBBLE_PERIOD_MS) /
-                                                         WOBBLE_PERIOD_MS));
+    case BK7259_GIMBAL_PHASE_SPEAKING:
+        *pan = angle_units(6.0f * sinf(turn * (elapsed % SPEAKING_PERIOD_MS) / SPEAKING_PERIOD_MS));
         break;
-    }
     case BK7259_GIMBAL_PHASE_NEUTRAL:
         *wait = IDLE_WAIT_MS;
         break;
@@ -1028,8 +1005,6 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
         io->opening = s_gimbal.opening_pending;
         reset_path(io, estimated_pan, estimated_pitch);
         start_blend(io, request, now, estimated_pan, estimated_pitch);
-        io->speaking_amplitude = 0;
-        io->envelope_at = now;
     }
 
     uint32_t interval = CONTROL_PERIOD_MS;
@@ -1066,7 +1041,7 @@ static void service_motion(gimbal_io_t *io, uint32_t now)
             }
         }
         if (!keyed)
-            dialogue_target(io, now, &pan, &pitch, &interval);
+            dialogue_target(now, &pan, &pitch, &interval);
         break;
     case MOTION_NONE:
         return;
@@ -1313,7 +1288,6 @@ static void worker(void *arg)
         s_gimbal.stopping = true;
         s_gimbal.pending_probe = false;
         s_gimbal.probe_running = false;
-        bk7259_audio_dialogue_set_speaking(false);
         if (s_gimbal.settings.pending) {
             s_gimbal.settings.pending = false;
             s_gimbal.settings.save_failed = true;
@@ -1508,7 +1482,6 @@ int bk7259_gimbal_request_probe(void)
 static uint32_t request_center(void)
 {
     s_gimbal.conversation = false;
-    bk7259_audio_dialogue_set_speaking(false);
     if (s_gimbal.ready) {
         start_home();
     } else {
@@ -1593,8 +1566,6 @@ int bk7259_gimbal_request_motion_enabled(bool enabled)
         s_gimbal.settings.motion_enabled = enabled;
         s_gimbal.disable_home_pending = !enabled;
         start_home();
-        bk7259_audio_dialogue_set_speaking(enabled && s_gimbal.conversation &&
-                                           s_gimbal.phase == BK7259_GIMBAL_PHASE_SPEAKING);
         notify(&s_centered);
         schedule_settings_save();
     } else if (s_gimbal.settings.save_failed) {
@@ -1728,7 +1699,6 @@ int bk7259_gimbal_stop_charging_wait(uint32_t timeout_ms)
     s_gimbal.conversation = false;
     s_gimbal.motion.kind = MOTION_NONE;
     ++s_gimbal.motion.revision;
-    bk7259_audio_dialogue_set_speaking(false);
     uint32_t ticket = request_charge_off();
     unlock();
     return wait_for_charge_off(ticket, timeout_ms);

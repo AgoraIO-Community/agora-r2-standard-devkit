@@ -57,7 +57,7 @@ typedef struct {
     wire_record_t motion[1536], charge[128];
     tx_event_t tx_events[1700];
     unsigned motion_count, charge_count, tx_event_count, boot_replies;
-    unsigned stop_attempts, probe_count, dialogue_level;
+    unsigned stop_attempts, probe_count;
     motion_response_t motion_response;
     int16_t pan, pitch, target_pan, target_pitch;
     uint32_t completes_at;
@@ -83,19 +83,6 @@ static bool deny_done_wait, deny_thread_create;
 static unsigned aosl_references, aosl_constructors, aosl_destructors;
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned log_calls;
-
-unsigned bk7259_audio_dialogue_level(void)
-{
-    assert(pthread_mutex_lock(&controller.mutex) == 0);
-    unsigned level = controller.dialogue_level;
-    assert(pthread_mutex_unlock(&controller.mutex) == 0);
-    return level;
-}
-
-void bk7259_audio_dialogue_set_speaking(bool speaking)
-{
-    (void)speaking;
-}
 
 void aosl_ctor(void) { ++aosl_references; ++aosl_constructors; }
 void aosl_dtor(void)
@@ -1353,6 +1340,23 @@ static void assert_motion_pacing(unsigned first, unsigned end)
     }
 }
 
+/* Four seconds of speaking should reach both sides on three full cycles. */
+static void assert_speaking_swing(unsigned first, unsigned end)
+{
+    unsigned peaks = 0;
+    int side = 0;
+    for (unsigned i = first; i < end; ++i) {
+        int pan = motion_pan(i);
+        assert(abs(pan) <= 60 && motion_pitch(i) == 0 && !home_frame(i));
+        int direction = pan > 0 ? 1 : -1;
+        if (abs(pan) >= 55 && direction != side) {
+            side = direction;
+            ++peaks;
+        }
+    }
+    assert(peaks >= 6);
+}
+
 typedef struct {
     int pan;
     uint32_t travel_ms;
@@ -1443,7 +1447,7 @@ static void assert_test_stage_motion(const bk7259_gimbal_stats_snapshot_t *stats
         case BK7259_GIMBAL_TEST_LISTENING: assert(maximum_pitch > 0); break;
         case BK7259_GIMBAL_TEST_THINKING: assert(maximum_pan >= 100); break;
         case BK7259_GIMBAL_TEST_SPEAKING:
-            assert(maximum_pan > 0 && minimum_pan < 0);
+            assert_speaking_swing(first, end);
             assert_test_stage_motion_gap(&stats->test_counts[stage], first, end, "speaking");
             break;
         case BK7259_GIMBAL_TEST_HANGUP: assert(home_frame(end - 1)); break;
@@ -1488,7 +1492,6 @@ static void test_scheduled_uart_motion_sequence(void)
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     assert(controller.charge_count >= 4 && controller.charging);
     assert_charge_periods_locked(0, controller.charge_count, true);
-    controller.dialogue_level = 100;
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
 
     (void)wait_for_test_state(BK7259_GIMBAL_TEST_RUNNING, BK7259_GIMBAL_TEST_OPENING);
@@ -1869,13 +1872,6 @@ static int peak_pan(unsigned begin, unsigned end)
     return peak;
 }
 
-static void set_dialogue_level(unsigned level)
-{
-    assert(pthread_mutex_lock(&controller.mutex) == 0);
-    controller.dialogue_level = level;
-    assert(pthread_mutex_unlock(&controller.mutex) == 0);
-}
-
 static void assert_delayed_motion_gap(const char *motion, uint32_t delay_ms)
 {
     assert(pthread_mutex_lock(&controller.mutex) == 0);
@@ -2001,9 +1997,6 @@ static void test_motion_write_pacing(void)
     start_and_wait_for_home();
     unsigned before_dialogue = motion_count();
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_SPEAKING) == 0);
-    rtos_delay_milliseconds(800);
-    assert(motion_count() == before_dialogue);
-    set_dialogue_level(100);
     wait_for_count(&controller.motion_count, before_dialogue + 3U);
     assert_delayed_motion_gap("speaking", 55U);
 
@@ -2041,27 +2034,14 @@ static void test_thinking_and_speaking_are_eased(void)
     rtos_delay_milliseconds(650);
     assert(peak_pan(cursor, motion_count()) <= 30);
 
+    unsigned first = motion_count();
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_SPEAKING) == 0);
-    rtos_delay_milliseconds(700);
-    unsigned quiet = motion_count();
-    rtos_delay_milliseconds(400);
-    assert(motion_count() == quiet);
-    set_dialogue_level(100);
-    rtos_delay_milliseconds(200);
-    unsigned rising = motion_count();
-    rtos_delay_milliseconds(1400);
-    unsigned loud = motion_count();
-    int rising_peak = peak_pan(quiet, rising);
-    int loud_peak = peak_pan(rising, loud);
-    assert(rising_peak > 0 && rising_peak < loud_peak && loud_peak >= 45 && loud_peak <= 60);
-    set_dialogue_level(0);
-    rtos_delay_milliseconds(900);
-    unsigned settled = motion_count();
-    rtos_delay_milliseconds(500);
-    assert(motion_count() == settled);
+    rtos_delay_milliseconds(4000);
+    unsigned end = motion_count();
     assert(bk7259_gimbal_update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL) == 0);
     assert(bk7259_gimbal_center_wait(3000) == 0);
     shutdown_and_join();
+    assert_speaking_swing(first, end);
     assert(controller.pan == 0 && controller.pitch == 0);
 }
 
@@ -2256,7 +2236,6 @@ static void test_peer_loss_discards_cli_and_reloads_dialogue(void)
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_SPEAKING) == BK7259_GIMBAL_NOT_READY);
     assert(pthread_mutex_lock(&controller.mutex) == 0);
     controller.online = true;
-    controller.dialogue_level = 100;
     controller.pan = 100;
     controller.boot_replies = 1;
     complete_locked(0, 100); /* Queued stale CLI completion after reconnect. */
@@ -2304,9 +2283,6 @@ static void test_cli_and_dialogue_share_motion(void)
     assert(controller.motion[cursor - 1].at - controller.motion[first_bridge].at >= 240);
     assert(pthread_mutex_unlock(&controller.mutex) == 0);
 
-    assert(pthread_mutex_lock(&controller.mutex) == 0);
-    controller.dialogue_level = 100;
-    assert(pthread_mutex_unlock(&controller.mutex) == 0);
     assert(bk7259_gimbal_update_dialogue(true, BK7259_GIMBAL_PHASE_SPEAKING) == 0);
     (void)wait_for_target(&cursor, 45, 60);
     assert(bk7259_gimbal_update_dialogue(false, BK7259_GIMBAL_PHASE_NEUTRAL) == 0);
