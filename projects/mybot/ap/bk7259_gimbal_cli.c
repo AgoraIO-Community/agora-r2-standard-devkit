@@ -212,6 +212,18 @@ static void stats_percent(char *percent, size_t capacity, uint64_t accepted, uin
     (void)snprintf(percent, capacity, "%u.%u%%", tenths / 10U, tenths % 10U);
 }
 
+static void stats_arrival(stats_output_t *output, const char *name,
+                          const bk7259_gimbal_arrival_counts_t *arrival, uint32_t overflow)
+{
+    uint64_t settled = (uint64_t)arrival->reached + arrival->expired + arrival->rejected + overflow;
+    char percent[16];
+    stats_percent(percent, sizeof(percent), arrival->reached, settled);
+    stats_line(output, "arrival %s reached=%" PRIu32 " timeout=%" PRIu32 " rejected=%" PRIu32
+               " cancelled=%" PRIu32 " pending=%" PRIu32 " success=%s\r\n",
+               name, arrival->reached, arrival->expired, arrival->rejected,
+               arrival->cancelled, arrival->pending, percent);
+}
+
 static void stats_group(stats_output_t *output, const char *name, const bk7259_gimbal_stats_counts_t *counts)
 {
     stats_line(output, "%s tx=%" PRIu32 " tx_failed=%" PRIu32 " accepted=%" PRIu32
@@ -224,6 +236,7 @@ static void stats_group(stats_output_t *output, const char *name, const bk7259_g
     stats_line(output, "%s success=%s overflow=%" PRIu32 " estimated=%" PRIu32
                " completion_fallback=%" PRIu32 "\r\n", name, percent, counts->overflow,
                counts->estimated, counts->completion_fallback);
+    stats_arrival(output, name, &counts->arrival, counts->overflow);
 }
 
 static void stats_test(stats_output_t *output, const bk7259_gimbal_stats_snapshot_t *stats)
@@ -268,6 +281,7 @@ static void stats_test(stats_output_t *output, const bk7259_gimbal_stats_snapsho
         } else {
             stats_line(output, "stage %s motion_pairs=0 min_motion_gap=n/a\r\n", stages[i]);
         }
+        stats_arrival(output, stages[i], &counts->arrival, counts->overflow);
     }
 }
 
@@ -352,6 +366,8 @@ static void gimbal_stats_command(char *buffer, int length, int argc, char **argv
     stats_line(&output, "gimbal_stats window=%" PRIu32 "ms reply_wait normal=%ums home=%ums power=%ums\r\n",
                stats.window_ms, BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS, BK7259_GIMBAL_STATS_HOME_WINDOW_MS,
                BK7259_GIMBAL_STATS_POWER_WINDOW_MS);
+    stats_line(&output, "arrival_wait normal=%u..%ums home=%ums\r\n", BK7259_GIMBAL_STATS_NORMAL_WINDOW_MS,
+               BK7259_GIMBAL_ARRIVAL_MAX_MS, BK7259_GIMBAL_STATS_HOME_WINDOW_MS);
     stats_line(&output, "uart tx_guard=%ums ordinary_period=%ums\r\n",
                BK7259_GIMBAL_TX_GUARD_MS, BK7259_GIMBAL_MOTION_PERIOD_MS);
     stats_idle_gap(&output, "move_to_charge", stats.move_to_charge_pairs, stats.min_move_to_charge_idle_ms);
@@ -375,6 +391,9 @@ static void gimbal_stats_command(char *buffer, int length, int argc, char **argv
                stats.bad_reply, stats.unmatched, stats.ambiguous, stats.suppressed);
     stats_latency(&output, "latency", stats.latency_samples, stats.latency_min_ms,
                   stats.latency_total_ms, stats.latency_median_twice_ms, stats.latency_max_ms);
+    stats_latency(&output, "arrival_latency", stats.arrival_latency_samples, stats.arrival_latency_min_ms,
+                  stats.arrival_latency_total_ms, stats.arrival_latency_median_twice_ms,
+                  stats.arrival_latency_max_ms);
     stats_power(&output, &stats.power);
     stats_flush(&output);
     command_reply(buffer, length, output.failed ? "gimbal_stats output incomplete" : "gimbal_stats report sent");
