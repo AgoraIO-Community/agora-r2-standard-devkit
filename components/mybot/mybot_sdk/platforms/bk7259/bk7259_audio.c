@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "bk7259_ops.h"
-#include "bk7259_audio_dialogue.h"
 
 #include <api/aosl_mm.h>
 #include <api/aosl_thread.h>
@@ -255,11 +254,6 @@ static bool io_begin_stop(audio_context_t *ctx) {
     }
     state->started = false;
     state->stopping = true;
-#if defined(CONFIG_MYBOT_GIMBAL) && CONFIG_MYBOT_GIMBAL
-    if (ctx->playback_owner_reserved) {
-        bk7259_audio_dialogue_set_playback_running(false);
-    }
-#endif
     aosl_lock_unlock(state->lock);
     return true;
 }
@@ -414,11 +408,6 @@ static int audio_context_start(audio_context_t *ctx) {
         return -1;
     }
     ctx->io.started = true;
-#if defined(CONFIG_MYBOT_GIMBAL) && CONFIG_MYBOT_GIMBAL
-    if (ctx->playback_owner_reserved) {
-        bk7259_audio_dialogue_set_playback_running(true);
-    }
-#endif
     aosl_lock_unlock(ctx->io.lock);
     MYBOT_LOGI(TAG, "audio pipeline started");
     return 0;
@@ -805,9 +794,6 @@ static int playback_write(void *opaque, const void *buf, int frames) {
         frames > INT_MAX / (int)sizeof(int16_t)) {
         return -1;
     }
-#if defined(CONFIG_MYBOT_GIMBAL) && CONFIG_MYBOT_GIMBAL
-    uint32_t dialogue_generation = bk7259_audio_dialogue_begin_write();
-#endif
     if (!io_begin(&ctx->io)) {
         return -1;
     }
@@ -823,13 +809,7 @@ static int playback_write(void *opaque, const void *buf, int frames) {
         (bytes % (int)sizeof(int16_t)) != 0) {
         return -1;
     }
-    int accepted_frames = bytes / (int)sizeof(int16_t);
-#if defined(CONFIG_MYBOT_GIMBAL) && CONFIG_MYBOT_GIMBAL
-    if (!stopping) {
-        bk7259_audio_dialogue_accept(dialogue_generation, buf, (unsigned)accepted_frames);
-    }
-#endif
-    return accepted_frames;
+    return bytes / (int)sizeof(int16_t);
 }
 
 static int playback_stop(void *opaque) {

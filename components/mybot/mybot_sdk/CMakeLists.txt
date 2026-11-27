@@ -111,7 +111,6 @@ endif()
 
 if(CONFIG_MYBOT_GIMBAL)
     list(APPEND platform_srcs
-        platforms/bk7259/bk7259_audio_dialogue.c
         platforms/bk7259/bk7259_gimbal.c
         platforms/bk7259/bk7259_gimbal_prefs.c
         platforms/bk7259/bk7259_gimbal_stats.c

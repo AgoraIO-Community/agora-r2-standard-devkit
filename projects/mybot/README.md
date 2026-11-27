@@ -136,8 +136,9 @@ The LVGL 9.5.0 UI follows the product's process-gray pixel-glasses design. It
 shows provisioning, pairing, ready, conversation phase, error, and factory-reset
 pages with Chinese or English guidance. During a conversation it displays
 listening, thinking, or speaking state and voiceprint status from SDK indicators.
-Dialogue phases also drive the gimbal, with speaking amplitude derived from
-accepted playback PCM. Manually selected local expressions update the display only.
+Dialogue phases also drive the gimbal. Throughout the speaking phase, its pan
+target follows a ±6° sine wave with a 1.25-second period and its pitch target is 0°.
+Manually selected local expressions update the display only.
 
 The display owner applies copied snapshots on one UI task and submits completed
 RGB565 frames through the DSI panel/DPU path. SDK LCD init/destroy only attach and
